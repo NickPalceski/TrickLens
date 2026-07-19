@@ -1,0 +1,107 @@
+name: tricklens
+
+services:
+  # ---------------------------------------------------------------------
+  # Postgres. Locally this is a container; in production it is Neon.
+  # Same engine, same driver, same migrations — only DATABASE_URL differs.
+  # ---------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: tricklens
+      POSTGRES_PASSWORD: tricklens
+      POSTGRES_DB: tricklens
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tricklens -d tricklens"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  # ---------------------------------------------------------------------
+  # LocalStack: S3 + SQS emulated on localhost. Lets the whole
+  # upload -> queue -> analyze pipeline run with no AWS account and no cost.
+  # ---------------------------------------------------------------------
+  localstack:
+    image: localstack/localstack:3
+    environment:
+      SERVICES: s3,sqs
+      AWS_DEFAULT_REGION: us-east-1
+      DEBUG: "0"
+    ports:
+      - "4566:4566"
+    volumes:
+      # Anything in ready.d runs once LocalStack is up. This is what makes
+      # `docker compose up` self-provisioning — no manual setup steps.
+      - ./scripts/localstack-init.sh:/etc/localstack/init/ready.d/init.sh:ro
+    healthcheck:
+      # Deliberately checks for the *bucket*, not just the service. This only
+      # passes once init.sh has finished, so `api` never starts too early.
+      test: ["CMD-SHELL", "awslocal s3api head-bucket --bucket tricklens-media"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+
+  # ---------------------------------------------------------------------
+  # One-shot migration runner. Same image as the API. Runs to completion on
+  # every `up`, so a fresh clone comes up already migrated.
+  # ---------------------------------------------------------------------
+  migrate:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    entrypoint: []
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    volumes:
+      - ./backend/alembic:/var/task/alembic
+      - ./backend/app:/var/task/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ---------------------------------------------------------------------
+  # The API.
+  #
+  # NOTE: this image is built on the AWS Lambda base image and is the exact
+  # image that will run in production — same layers, same digest. The only
+  # difference is that we override the entrypoint here to run uvicorn with
+  # hot-reload instead of the Lambda runtime. Dev and prod run the same
+  # artifact; only the process differs.
+  # ---------------------------------------------------------------------
+  api:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/app:/var/task/app
+      - ./backend/alembic:/var/task/alembic
+    entrypoint: []
+    command:
+      - python
+      - -m
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --reload
+      - --reload-dir
+      - /var/task/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
