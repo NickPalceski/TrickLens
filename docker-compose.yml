@@ -82,6 +82,7 @@ services:
     volumes:
       - ./backend/app:/var/task/app
       - ./backend/alembic:/var/task/alembic
+      - ./backend/tests:/var/task/tests
     entrypoint: []
     command:
       - python

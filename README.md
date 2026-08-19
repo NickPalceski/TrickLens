@@ -7,11 +7,12 @@ cleanly it was landed (pop, landing stability, roll-away, stomp, body
 compactness, catch). Follow skaters and teams, and see the week's best on
 Discover.
 
-> **Status: step 1 of 6 complete — local development foundation.**
-> Postgres, LocalStack (S3 + SQS), and the FastAPI service run under Docker
-> Compose, with Alembic migrations applying on startup. No auth, no uploads,
-> no analysis yet. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the
-> full design.
+> **Status: step 2 of 6 complete — Cognito auth, users, profiles.** Postgres,
+> LocalStack, FastAPI, Alembic (step 1) and JWT verification, JIT user
+> registration, and the `/users` endpoints (step 2) are all up and verified
+> end-to-end against a real Cognito dev pool — see [Auth setup](#auth-setup)
+> if you're setting up a fresh clone. No uploads, no analysis yet. See
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ## Stack
 
@@ -45,6 +46,10 @@ Discover.
 
   Every `make` target is a thin wrapper; if you would rather not install it,
   the equivalent `docker compose` commands are in the table below.
+- **An AWS account, for Cognito only.** Everything else (Postgres, S3, SQS)
+  runs locally with zero AWS account needed. Cognito is the one exception —
+  see [Auth setup](#auth-setup) for why and what it costs (nothing, at this
+  scale).
 
 ## Quick start
 
@@ -70,6 +75,55 @@ A healthy `make health` looks like:
 }
 ```
 
+## Auth setup
+
+Cognito is the one piece of AWS that isn't emulated locally — LocalStack only
+emulates it on a paid plan, and even there its JWKS support has known bugs.
+Cognito's own free tier is 50k MAU forever, so there's no cost reason to
+emulate it either; dev and prod just use two different real pools. Do this
+once, on the host (not in Docker):
+
+1. Create an AWS account and an IAM user with Cognito permissions (the
+   `AmazonCognitoPowerUser` managed policy is enough), then `aws configure`
+   with that user's access key.
+2. Run the bootstrap script — creates a `tricklens-dev` user pool and a
+   public app client, and is safe to re-run (it reuses what already exists):
+   ```bash
+   ./scripts/cognito-bootstrap.sh
+   ```
+3. Paste the two IDs it prints into `.env`:
+   ```
+   COGNITO_USER_POOL_ID=...
+   COGNITO_CLIENT_ID=...
+   ```
+4. Restart the API (`make down && make up`) so it picks up the new env vars.
+
+**Creating a test user**, since there's no frontend yet (step 4):
+
+```bash
+aws cognito-idp sign-up --client-id "$COGNITO_CLIENT_ID" \
+  --username skater@example.com --password 'Sk8-or-die1' \
+  --user-attributes Name=email,Value=skater@example.com
+
+# Skips real email verification — fine for a dev pool.
+aws cognito-idp admin-confirm-sign-up --user-pool-id "$COGNITO_USER_POOL_ID" \
+  --username skater@example.com
+
+aws cognito-idp initiate-auth --client-id "$COGNITO_CLIENT_ID" \
+  --auth-flow USER_PASSWORD_AUTH \
+  --auth-parameters USERNAME=skater@example.com,PASSWORD='Sk8-or-die1'
+# → AuthenticationResult.IdToken is the bearer token below
+```
+
+```bash
+curl -X POST localhost:8000/users \
+  -H "Authorization: Bearer $ID_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"username": "nick"}'
+
+curl localhost:8000/users/me -H "Authorization: Bearer $ID_TOKEN"
+```
+
 ## Commands
 
 | Command | Does | Without `make` |
@@ -84,6 +138,7 @@ A healthy `make health` looks like:
 | `make psql` | Open a psql session | `docker compose exec postgres psql -U tricklens -d tricklens` |
 | `make shell` | Bash into the API container | `docker compose exec api /bin/bash` |
 | `make fmt` | Format and lint | `docker compose run --rm api python -m ruff format app` |
+| `make test` | Run the test suite | `docker compose run --rm api python -m pytest` |
 
 ## Services
 
@@ -96,7 +151,10 @@ A healthy `make health` looks like:
 
 `docker compose up` is self-provisioning: `scripts/localstack-init.sh` creates
 the bucket (with CORS and a lifecycle rule) and both queues automatically, and
-`migrate` runs before the API starts. A fresh clone needs no manual setup.
+`migrate` runs before the API starts. A fresh clone needs no manual setup
+*except* Cognito — `scripts/cognito-bootstrap.sh` touches a real AWS account,
+so unlike LocalStack it's a one-time step you run by hand. See
+[Auth setup](#auth-setup).
 
 ## Layout
 
@@ -110,10 +168,11 @@ backend/
     models/            SQLAlchemy models
     schemas/           Pydantic request/response models
     api/routes/        Endpoints
-    services/          storage.py (S3) + queue.py (SQS) — the only AWS-aware code
+    services/          storage.py (S3), queue.py (SQS), auth.py (Cognito) —
+                       the only AWS-aware code
   alembic/             Migrations
 docs/ARCHITECTURE.md   System design and decisions
-scripts/               LocalStack bootstrap
+scripts/               LocalStack + Cognito bootstrap
 ```
 
 ## Notes
@@ -124,8 +183,14 @@ scripts/               LocalStack bootstrap
   `app.lambda_handler.handler`. Same image, same digest, both places.
 - **Two database URLs.** The app uses `asyncpg`, Alembic uses `psycopg`. Same
   database, two drivers. Expected, not a bug.
-- **`AWS_ENDPOINT_URL` is the whole local↔cloud seam.** Set, boto3 talks to
-  LocalStack. Empty, it talks to real AWS. No code branches on environment.
+- **`AWS_ENDPOINT_URL` is the whole local↔cloud seam — except Cognito.** Set,
+  boto3 talks to LocalStack for S3/SQS. Empty, it talks to real AWS. Cognito
+  is always real AWS, dev included (see [Auth setup](#auth-setup)); dev and
+  prod are just two different pools, both set explicitly via
+  `COGNITO_USER_POOL_ID`.
+- **The id token, not the access token, is the bearer credential.** Chosen so
+  `email` comes from the token itself — no extra Cognito call needed the
+  first time a user registers.
 
 ## Troubleshooting
 
@@ -135,3 +200,4 @@ scripts/               LocalStack bootstrap
 | `api` exits immediately | `migrate` failed. Check `docker compose logs migrate`. |
 | Edits do not hot-reload | Repo is on the Windows filesystem. Move it into WSL. |
 | `/health/deep` returns 503 | Read the failing check's `error` field — it names the specific dependency. |
+| `cognito` check fails in `/health/deep`, or every request 401s | `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` are empty or wrong. Run `./scripts/cognito-bootstrap.sh` (see [Auth setup](#auth-setup)) and restart. |

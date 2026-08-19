@@ -23,9 +23,12 @@ alters behaviour but leaves the docs stale is incomplete.
 
 - **Config**: everything comes from `app.config.get_settings()`. Never read
   `os.environ` directly outside that module.
-- **AWS access**: only through `app/services/storage.py` and
-  `app/services/queue.py`. These are the sole dev↔prod seam (LocalStack vs
-  real AWS is an env var, nothing more).
+- **AWS access**: only through `app/services/storage.py`,
+  `app/services/queue.py`, and `app/services/auth.py`. The first two are the
+  dev↔prod seam (LocalStack vs real AWS is an env var, nothing more);
+  `auth.py` is the exception — Cognito is always the real service, dev
+  included, because LocalStack only emulates it on a paid plan and even then
+  has known JWKS bugs. See ARCHITECTURE.md §9.
 - **Serialization**: never return ORM objects from a route. Always go
   through a Pydantic schema in `app/schemas/`.
 - **Media**: store S3 *keys* in the database, never full URLs. URLs are
@@ -61,31 +64,35 @@ alters behaviour but leaves the docs stale is incomplete.
 
 ## Current state
 
-**Step 1 complete and verified** (see Build order below). Running locally:
+**Steps 1–2 complete and verified** (see Build order below). Running locally:
 
 ```bash
 cd ~/git-repos/TrickLens
 docker compose up -d
-curl -s localhost:8000/health/deep    # expect 200, all three checks green
+curl -s localhost:8000/health/deep    # expect 200, all four checks green
 ```
 
 - `postgres`, `localstack` (S3 + SQS), `api` (FastAPI on the Lambda base
   image), and a one-shot `migrate` service, all under Compose.
-- Schema at revision `0001`: `users` + `profiles`, enum types `stance` and
-  `skate_style`, functional unique index on `lower(username)`.
+- Schema at revision `0002`: `users` (`cognito_sub` now required) +
+  `profiles`, enum types `stance` and `skate_style`, functional unique index
+  on `lower(username)`.
 - LocalStack self-provisions the `tricklens-media` bucket (CORS + 7-day
   `raw/` lifecycle rule) and the `tricklens-analysis` queue with a DLQ.
+- A real Cognito dev pool (`scripts/cognito-bootstrap.sh`) backs auth — see
+  README's Auth setup. JWT verification, JIT registration (`POST /users`),
+  and `/users/me`, `/users/me/profile`, `/users/{username}` are live and
+  verified end-to-end (sign-up → confirm → login → register → read).
 - Hot-reload verified at ~850ms. `ruff check` clean. Migration
   upgrade/downgrade round trip verified.
 
-**Not done yet:** no auth (`cognito_sub` is nullable), no endpoints beyond
-health, no git repo initialised, no frontend, no Terraform.
+**Not done yet:** no uploads, no frontend, no Terraform.
 
 ## Build order
 
 1. ✅ Local dev foundation — compose, Postgres, LocalStack, FastAPI, Alembic
-2. ⬜ Auth (Cognito) + users + profiles  ← next
-3. ⬜ Upload → S3 → SQS → worker (stubbed analyzer)
+2. ✅ Auth (Cognito) + users + profiles
+3. ⬜ Upload → S3 → SQS → worker (stubbed analyzer)  ← next
 4. ⬜ Social app: feed, likes, comments, teams, discover
 5. ⬜ Terraform + GitHub Actions → deploy to AWS
 6. ⬜ Replace the stub with the real steeze analyzer

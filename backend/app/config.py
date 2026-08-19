@@ -31,7 +31,12 @@ class Settings(BaseSettings):
     # --- API ---
     cors_origins: str = "http://localhost:3000"
 
-    # --- Cognito (step 2) ---
+    # --- Cognito ---
+    # Unlike S3/SQS, this is *always* real Cognito, dev included — LocalStack
+    # only emulates Cognito on a paid plan, and its JWKS support has known
+    # bugs (hardcoded `kid`). Cognito's free tier (50k MAU) makes emulating it
+    # pointless anyway. Dev and prod are simply two different pools, both set
+    # here explicitly — there is no endpoint-override seam for this one.
     cognito_user_pool_id: str = ""
     cognito_client_id: str = ""
 
@@ -47,6 +52,10 @@ class Settings(BaseSettings):
     def boto_endpoint(self) -> str | None:
         """boto3 wants None (not "") to mean 'use the real AWS endpoint'."""
         return self.aws_endpoint_url or None
+
+    @property
+    def cognito_issuer(self) -> str:
+        return f"https://cognito-idp.{self.aws_region}.amazonaws.com/{self.cognito_user_pool_id}"
 
 
 @lru_cache

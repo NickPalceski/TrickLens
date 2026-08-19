@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help init up down clean logs ps health migrate revision shell psql fmt
+.PHONY: help init up down clean logs ps health migrate revision shell psql fmt test
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -47,3 +47,6 @@ psql: ## Open a psql session
 fmt: ## Format and lint
 	docker compose run --rm api python -m ruff format app
 	docker compose run --rm api python -m ruff check --fix app
+
+test: ## Run the test suite
+	docker compose run --rm api python -m pytest

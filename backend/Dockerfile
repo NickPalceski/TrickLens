@@ -13,6 +13,7 @@ COPY requirements.txt ${LAMBDA_TASK_ROOT}/
 RUN pip install --no-cache-dir -r ${LAMBDA_TASK_ROOT}/requirements.txt
 
 COPY alembic.ini ${LAMBDA_TASK_ROOT}/
+COPY pyproject.toml ${LAMBDA_TASK_ROOT}/
 COPY alembic/ ${LAMBDA_TASK_ROOT}/alembic/
 COPY app/ ${LAMBDA_TASK_ROOT}/app/
 

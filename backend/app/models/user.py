@@ -27,10 +27,9 @@ class User(Base, UUIDPrimaryKey, TimestampMixin):
         Index("ix_users_username_lower", text("lower(username)"), unique=True),
     )
 
-    # Links to the Cognito user pool. Nullable until step 2 wires up auth.
-    # unique=True already creates the backing index — index=True as well would
-    # build a second, redundant one.
-    cognito_sub: Mapped[str | None] = mapped_column(String(64), unique=True)
+    # Links to the Cognito user pool. unique=True already creates the backing
+    # index — index=True as well would build a second, redundant one.
+    cognito_sub: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
 
     username: Mapped[str] = mapped_column(String(30), nullable=False)
     display_name: Mapped[str | None] = mapped_column(String(60))

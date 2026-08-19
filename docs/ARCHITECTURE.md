@@ -3,8 +3,8 @@
 Conceptual overview of the system: what each component is, what it does, and
 how it connects to the others. Kept current as the build progresses.
 
-**Current state: step 1 of 6 complete.** Sections marked *(planned)* are
-designed but not yet built.
+**Current state: step 2 of 6 complete — Cognito auth, users, profiles.**
+Sections marked *(planned)* are designed but not yet built.
 
 ---
 
@@ -166,12 +166,48 @@ deferred, not abandoned.
 
 ---
 
-## 5. Data model
-
-**Built (step 1):**
+## 5. Auth flow
 
 ```
-users     id, cognito_sub, username, display_name, bio, avatar_key, timestamps
+1. Client → Cognito directly: SignUp, ConfirmSignUp (email verification),
+   InitiateAuth (USER_PASSWORD_AUTH)     → IdToken, AccessToken, RefreshToken
+2. POST /users  Authorization: Bearer <IdToken>  {username}
+                                        → verifies token, no row yet for this
+                                          sub → creates it → 201 UserMe
+3. Every later request: Authorization: Bearer <IdToken>
+                                        → verifies token, row exists → 200
+```
+
+**Why the client talks to Cognito directly, not through this API.** The app
+client is public — no secret, since a browser can't hide one — so there is
+nothing for the API to mediate. Proxying signup/login would be an extra hop
+with no security benefit, and would need the API to hold broader Cognito IAM
+permissions than the credential-free verification it does today (JWKS
+endpoints are public; checking a token needs no AWS access at all).
+
+**Why a separate `POST /users` step, instead of a Cognito trigger
+auto-creating the row.** Cognito has no idea what the app's `username` is —
+that's chosen by the user and unique in this database, not in the pool. A
+post-confirmation Lambda trigger could create a placeholder row, but
+registration would still need a second call to set the username, plus
+handling for the placeholder already existing. One JIT endpoint after first
+login is simpler than both put together.
+
+**Why the id token, not the access token, is the bearer credential.** The id
+token carries `email`; the access token does not. Using it means JIT
+registration and `GET /users/me` get `email` for free, at the cost of
+departing from the more common pattern of access-token-for-API,
+id-token-for-client.
+
+---
+
+## 6. Data model
+
+**Built (steps 1–2):**
+
+```
+users     id, cognito_sub (not null, unique), username, display_name, bio,
+          avatar_key, timestamps
 profiles  user_id → users, stance, style, board, board_size, wheels,
           wheel_size, trucks, bearings
 ```
@@ -203,6 +239,12 @@ team_score_history team_id, score, captured_at
   read, and `users` is joined on nearly every query.
 - **`avatar_key`, not `avatar_url`** — storing URLs breaks every row the day
   a CDN is introduced.
+- **`email` is never stored in `users`** — Cognito is the system of record
+  for identity attributes. The API reads it off the verified id token per
+  request instead of duplicating it and risking drift.
+- **`cognito_sub` is non-nullable as of step 2.** Step 1 left it nullable on
+  purpose, before auth existed to populate it; every row now comes through
+  JIT registration with a sub already in hand.
 - **`follows` is polymorphic** — the home feed includes clips from followed
   *users and teams*, so follows target both.
 - **`team_score_history` exists because Discover ranks teams by score
@@ -213,7 +255,7 @@ team_score_history team_id, score, captured_at
 
 ---
 
-## 6. Feed and ranking strategy
+## 7. Feed and ranking strategy
 
 **Home feed — fan-out-on-read.** Join `follows` against `clips`, order by
 `published_at`, keyset-paginated (`WHERE (published_at, id) < (?, ?)`).
@@ -231,25 +273,29 @@ every load.
 
 ---
 
-## 7. Environments
+## 8. Environments
 
-There is one seam between local and cloud: **`AWS_ENDPOINT_URL`**.
+The seam between local and cloud is **`AWS_ENDPOINT_URL`** — for S3, SQS, and
+Postgres. Cognito is the one exception: it's always the real service, dev
+included (see §5 and the decision below), so dev and prod differ only in
+*which pool* `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` point at.
 
 | | Local | Production |
 |---|---|---|
 | Database | Postgres container | Neon |
 | S3 / SQS | LocalStack | Real AWS |
+| Cognito | Real AWS, `tricklens-dev` pool | Real AWS, prod pool (Terraform, step 5) |
 | `AWS_ENDPOINT_URL` | `http://localstack:4566` | *(empty)* |
 | API process | uvicorn `--reload` | Lambda runtime |
 | Image | `backend/Dockerfile` | **the same image** |
 
-No application code branches on environment. `app/services/storage.py` and
-`app/services/queue.py` are the only modules aware AWS exists; everything else
-goes through them.
+No application code branches on environment. `app/services/storage.py`,
+`app/services/queue.py`, and `app/services/auth.py` are the only modules
+aware AWS exists; everything else goes through them.
 
 ---
 
-## 8. Decisions
+## 9. Decisions
 
 ### Neon instead of RDS
 
@@ -280,6 +326,27 @@ later is a connection-string change.
 Fargate is the documented migration path if sustained traffic ever makes cold
 starts or per-invocation billing the wrong trade.
 
+### Cognito is real everywhere, not LocalStack
+
+LocalStack only emulates Cognito on a paid plan — `cognito-idp` isn't in the
+free tier's service list at all. Even on Pro, its JWKS endpoint has a known
+bug (every key reports the same hardcoded `kid`), and issuer/signature
+validation coverage has had documented gaps — exactly the surface this app's
+token verification depends on being correct. Meanwhile Cognito's own free
+tier (50k MAU, no 12-month expiry unlike S3's) removes any cost motive to
+emulate it: there is nothing to save by faking a free service.
+
+So dev and prod both use real Cognito — two different pools, created
+directly (`scripts/cognito-bootstrap.sh` for dev, Terraform for prod in step
+5) rather than through the `AWS_ENDPOINT_URL` seam every other AWS service
+uses.
+
+**Trade-off:** local dev now needs a real AWS account and network access for
+auth specifically, breaking the "fresh clone, zero AWS account" property
+LocalStack gives every other service. Accepted, since Cognito is the one
+service here where faithful local emulation isn't actually available for
+free.
+
 ### Trick classification deferred
 
 Covered in §4. Users tag their own tricks; the analyzer scores execution
@@ -296,14 +363,14 @@ bugs.
 
 ---
 
-## 9. Cost
+## 10. Cost
 
 | Service | Free allowance | Expected |
 |---|---|---|
 | Lambda | 1M requests + 400k GB-s/mo, always free | $0 |
 | SQS | 1M requests/mo, always free | $0 |
 | CloudFront | 1TB egress/mo, always free | $0 |
-| Cognito | 50k MAU, always free | $0 |
+| Cognito | 50k MAU, always free — dev and prod pools both count against this | $0 |
 | EventBridge | Free | $0 |
 | S3 | 5GB free 12mo, then ~$0.023/GB | ~$0.20 |
 | ECR | 500MB free 12mo | ~$0.40 |
@@ -315,12 +382,12 @@ policy keeping the last 5 images, and an AWS Budget alarm at $5.
 
 ---
 
-## 10. Build order
+## 11. Build order
 
 | Step | Scope | Status |
 |---|---|---|
 | 1 | Local dev foundation — Compose, Postgres, LocalStack, FastAPI, Alembic | **done** |
-| 2 | Auth (Cognito) + users + profiles | |
+| 2 | Auth (Cognito) + users + profiles | **done** |
 | 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | |
 | 4 | Social app — feed, likes, comments, teams, discover | |
 | 5 | Terraform + GitHub Actions → deploy to AWS | |

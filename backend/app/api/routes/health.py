@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import DbSession
 from app.config import get_settings
+from app.services import auth
 from app.services.queue import get_queue
 from app.services.storage import get_storage
 
@@ -62,6 +63,7 @@ async def health_deep(db: DbSession, response: Response) -> dict[str, Any]:
         _timed("postgres", _check_db(db)),
         _timed("s3", get_storage().check()),
         _timed("sqs", get_queue().depth()),
+        _timed("cognito", auth.check()),
     )
 
     healthy = all(c["ok"] for c in checks)
