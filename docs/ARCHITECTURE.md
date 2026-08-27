@@ -3,8 +3,9 @@
 Conceptual overview of the system: what each component is, what it does, and
 how it connects to the others. Kept current as the build progresses.
 
-**Current state: step 2 of 6 complete — Cognito auth, users, profiles.**
-Sections marked *(planned)* are designed but not yet built.
+**Current state: step 3 of 6 complete — upload → S3 → SQS → worker
+(stubbed analyzer).** Sections marked *(planned)* are designed but not yet
+built.
 
 ---
 
@@ -58,7 +59,7 @@ Sections marked *(planned)* are designed but not yet built.
 |---|---|---|
 | **Next.js** | UI | Deploys free on Vercel; shadcn/ui gives a good-looking baseline without deep frontend work |
 | **API Lambda** | HTTP, auth, CRUD, presigning | Scales to zero — no idle cost |
-| **Worker Lambda** | Video analysis | Separate image (~2GB vs ~200MB) and separate scaling from the API |
+| **Worker Lambda** | Video analysis | Separate image (~2GB vs ~200MB) and separate scaling from the API — *from step 6*; the step 3 stub shares the API's image (see §9) |
 | **Postgres** | All relational state | The domain is deeply relational: follows, teams, likes, comments |
 | **S3** | Video and image bytes | Never in the database — the DB stores keys only |
 | **CloudFront** | Media delivery | Speed, *and* the 1TB/mo always-free egress tier. Without it, bandwidth would be the largest bill |
@@ -69,7 +70,7 @@ Sections marked *(planned)* are designed but not yet built.
 
 ---
 
-## 3. The upload → publish flow *(planned, step 3)*
+## 3. The upload → publish flow
 
 ```
 1. POST /clips                → row created (status=draft), presigned S3 URL returned
@@ -77,12 +78,14 @@ Sections marked *(planned)* are designed but not yet built.
 3. POST /clips/{id}/complete  → API verifies the object exists, status=queued,
                                 message onto SQS
 4. SQS triggers worker        → status=analyzing
-                                ffmpeg normalize → localize tricks → score
-                                writes processed/ + thumbs/ to S3
+                                (stub, step 3) fabricates a scored breakdown
+                                (real, step 6) ffmpeg normalize → localize
+                                tricks → score → writes processed/ + thumbs/
                                 status=analyzed (or unanalyzable + reason)
 5. GET /clips/{id}            → client polls until terminal status
-6. User tags trick(s), reviews score
-7. POST /clips/{id}/publish   → status=published, enters feeds
+6. POST /clips/{id}/tricks    → user tags trick(s), reviews score
+7. POST /clips/{id}/publish   → requires ≥1 tagged trick, status=published
+                                (does not yet "enter feeds" — that's step 4)
 ```
 
 **Why the browser uploads directly to S3:** routing a 30s video through the
@@ -91,6 +94,17 @@ relay. The API issues a short-lived signed URL and steps out of the way.
 
 **Why a clip stays a draft until published:** a failed analysis must never
 reach a feed, and the user gets to correct the trick tag first.
+
+**Two step-3 scoping calls, both revisited later:**
+
+- **`duration_ms`/`source_fps` are client-reported, not server-verified.**
+  The step-3 worker has no ffmpeg/ffprobe — that's step 6's fat image — so
+  the browser reads them off its `<video>` element and sends them in
+  `POST /clips`. Not a trust boundary that matters yet; step 6 can
+  cross-check them once the worker actually decodes the video.
+- **No `processed/` video exists yet.** `GET /clips/{id}` presigns the *raw*
+  key regardless of status — there's no transcode step until step 6, so
+  `thumb_key` just stays null.
 
 ---
 
@@ -203,24 +217,24 @@ id-token-for-client.
 
 ## 6. Data model
 
-**Built (steps 1–2):**
+**Built (steps 1–3):**
 
 ```
 users     id, cognito_sub (not null, unique), username, display_name, bio,
           avatar_key, timestamps
 profiles  user_id → users, stance, style, board, board_size, wheels,
           wheel_size, trucks, bearings
+clips     id, user_id, status, s3_key, thumb_key?, duration_ms?, source_fps?,
+          steeze_score?, published_at?, timestamps   (no team_id yet — see below)
+analyses  id, clip_id, model_version, confidence,
+          steeze_breakdown jsonb?, failure_reason?, created_at
+tricks    id, canonical_name (unique), aliases[]
+clip_tricks  clip_id, trick_id, position   (pk: clip_id+position; source: user_tagged)
 ```
 
 **Planned:**
 
 ```
-clips              id, user_id, team_id?, status, s3_key, thumb_key,
-                   duration_ms, source_fps, steeze_score, published_at
-analyses           id, clip_id, model_version, confidence,
-                   steeze_breakdown jsonb, failure_reason?
-clip_tricks        clip_id, trick_id, position         (source: user_tagged)
-tricks             id, canonical_name, aliases[]
 teams              id, name, slug, description, level, owner_id, join_policy
 team_members       team_id, user_id, role, joined_at
 team_join_requests team_id, user_id, status
@@ -245,6 +259,16 @@ team_score_history team_id, score, captured_at
 - **`cognito_sub` is non-nullable as of step 2.** Step 1 left it nullable on
   purpose, before auth existed to populate it; every row now comes through
   JIT registration with a sub already in hand.
+- **`clips` has no `team_id` yet**, unlike earlier drafts of this schema —
+  `teams` doesn't exist until step 4, and a FK can't point at a table that
+  isn't there. Step 4 adds the column once it can.
+- **`tricks.canonical_name` is a plain unique column, not a functional
+  `lower()` index like `users.username`.** The API pre-normalizes it before
+  insert, and — unlike a username — there's no display casing worth
+  preserving for a trick name.
+- **`clip_tricks`' primary key is `(clip_id, position)`, not `(clip_id,
+  trick_id)`.** Position is what actually needs to be unique per clip (one
+  trick per slot in a line); a trick could in principle repeat.
 - **`follows` is polymorphic** — the home feed includes clips from followed
   *users and teams*, so follows target both.
 - **`team_score_history` exists because Discover ranks teams by score
@@ -292,6 +316,20 @@ included (see §5 and the decision below), so dev and prod differ only in
 No application code branches on environment. `app/services/storage.py`,
 `app/services/queue.py`, and `app/services/auth.py` are the only modules
 aware AWS exists; everything else goes through them.
+
+One wrinkle in `storage.py`: presigned URLs are *signed* against
+`AWS_ENDPOINT_URL` (LocalStack's Docker-network hostname, needed for the
+signature to be valid) but are handed to callers *outside* that network —
+curl, Postman, a browser. `AWS_PUBLIC_ENDPOINT_URL` (`http://localhost:4566`
+in dev, empty in prod) is a second, narrower env var used only to rewrite
+the host on the way out. Production doesn't need it: the real S3 endpoint is
+already externally reachable, so there's nothing to rewrite.
+
+The worker (`app/worker.py`) has its own small seam, orthogonal to the
+above: locally it long-polls SQS in a loop; in production (from step 5) an
+SQS event-source-mapping invokes `app.worker.lambda_handler` once per
+message instead. Same processing function either way — only the trigger
+differs.
 
 ---
 
@@ -347,6 +385,18 @@ LocalStack gives every other service. Accepted, since Cognito is the one
 service here where faithful local emulation isn't actually available for
 free.
 
+### The worker shares the API's image until step 6, not a separate one
+
+The component map above describes the worker as a separate ~2GB image from
+the API — that's the step-6 target state, once real CV dependencies
+(ffmpeg, YOLO, MediaPipe) actually make it fat. A stub needs none of that,
+so splitting the image now would be premature: `app/worker.py` reuses
+`app.db`, `app.models`, and `app.services.queue`/`storage` exactly like
+every API route does, and ships in the same Docker image, with a third
+entrypoint alongside the API's two (uvicorn locally, `app.lambda_handler`
+in Lambda) — see the Environments section above. The image only needs to
+actually split when step 6 adds the dependencies that make it necessary.
+
 ### Trick classification deferred
 
 Covered in §4. Users tag their own tricks; the analyzer scores execution
@@ -388,7 +438,7 @@ policy keeping the last 5 images, and an AWS Budget alarm at $5.
 |---|---|---|
 | 1 | Local dev foundation — Compose, Postgres, LocalStack, FastAPI, Alembic | **done** |
 | 2 | Auth (Cognito) + users + profiles | **done** |
-| 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | |
+| 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | **done** |
 | 4 | Social app — feed, likes, comments, teams, discover | |
 | 5 | Terraform + GitHub Actions → deploy to AWS | |
 | 6 | Replace the stub with the real steeze analyzer | |

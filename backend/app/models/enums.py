@@ -6,6 +6,8 @@ same vocabulary.
 
 from enum import StrEnum
 
+from sqlalchemy import Enum as SAEnum
+
 
 class Stance(StrEnum):
     REGULAR = "regular"
@@ -32,3 +34,19 @@ class ClipStatus(StrEnum):
     ANALYZED = "analyzed"  # scored, awaiting user tagging + publish
     UNANALYZABLE = "unanalyzable"  # confidence gate rejected it (see failure_reason)
     PUBLISHED = "published"  # visible in feeds
+
+
+def sa_enum(enum_cls: type[StrEnum], name: str) -> SAEnum:
+    """Build the SQLAlchemy column type for one of the StrEnums above.
+
+    SQLAlchemy's Enum type defaults to sending the Python member's *name*
+    ("DRAFT") to the database, not its .value ("draft") — even for a
+    StrEnum. Every native Postgres enum type here was created (via Alembic)
+    with the lowercase values, so without values_callable every insert of a
+    non-null enum column fails with "invalid input value for enum ...:
+    DRAFT". Centralized here so the fix lives in one place instead of being
+    repeated at every call site.
+    """
+    return SAEnum(
+        enum_cls, name=name, native_enum=True, values_callable=lambda e: [m.value for m in e]
+    )

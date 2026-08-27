@@ -104,5 +104,32 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # ---------------------------------------------------------------------
+  # The worker. Same image as the API (see app/worker.py's module docstring)
+  # — locally it long-polls SQS in a loop; in production (step 5) an SQS
+  # event-source-mapping invokes app.worker.lambda_handler per message
+  # instead. `restart: unless-stopped` because this is a long-running
+  # process, unlike the one-shot `migrate`.
+  # ---------------------------------------------------------------------
+  worker:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    entrypoint: []
+    command: ["python", "-m", "app.worker"]
+    volumes:
+      - ./backend/app:/var/task/app
+      - ./backend/alembic:/var/task/alembic
+      - ./backend/tests:/var/task/tests
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
 volumes:
   pgdata:

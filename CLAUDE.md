@@ -39,6 +39,19 @@ alters behaviour but leaves the docs stale is incomplete.
 
 ## Environment
 
+Developed from two machines: a Windows/WSL2 box and a native-Linux (Omarchy)
+dual-boot. They're independent clones, not a synced setup — dual-booting
+means one physical machine can't see the other OS's filesystem, so each side
+needs its own `git clone` and its own `.env` (gitignored, regenerate with
+`make init`). The two things worth carrying over rather than redoing: the
+Cognito dev pool (copy `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` into the
+new `.env`, or re-run `cognito-bootstrap.sh` — it finds the existing pool by
+name instead of duplicating it) and, optionally, the same AWS CLI access
+key. Postgres/LocalStack state is throwaway container state either way;
+`make up` rebuilds it from nothing on both.
+
+### Windows/WSL2
+
 - **Repo lives inside WSL2**: `~/git-repos/TrickLens` on the Ubuntu distro.
   Never work from `/mnt/c` — bind mounts across the Windows↔Linux boundary
   make file watching slow and cannot set the executable bit that
@@ -47,24 +60,55 @@ alters behaviour but leaves the docs stale is incomplete.
 - `make` may not be installed (`sudo apt install make`). Every target is a
   thin wrapper; raw `docker compose` equivalents are in the README.
 
+### Native Linux (Omarchy / Arch)
+
+None of the WSL-specific friction above applies — there's no Windows↔Linux
+filesystem boundary, so file watching, executable bits, and shell quoting
+all behave normally wherever the repo is cloned.
+
+- Install Docker directly rather than Docker Desktop: `sudo pacman -S docker`
+  (the `docker compose` plugin comes with it), then
+  `sudo systemctl enable --now docker` and `sudo usermod -aG docker $USER`
+  (re-login after). No "WSL integration" step exists.
+- `make`, `git`, `aws-cli` likewise via `pacman`/AUR instead of `apt`.
+- The flaky-first-boot-DNS and `wsl.exe` shell-quoting gotchas below are
+  specific to WSL2's virtualized networking and the `wsl.exe` bridge — they
+  don't occur on bare metal.
+
 ### Gotchas already hit — do not rediscover these
 
 - **Postgres enums in Alembic.** If you create an enum explicitly *and*
   reference the same object in `create_table()`, SQLAlchemy emits `CREATE
   TYPE` twice and the migration dies on "type already exists". Use
   `postgresql.ENUM(..., create_type=False)` and call `.create(bind,
-  checkfirst=True)` yourself. `ClipStatus` will hit this in step 3.
+  checkfirst=True)` yourself. Hit this for real in migration 0003
+  (`clip_status`) — same fix as `stance`/`skate_style` in 0001.
 - **`unique=True` already builds an index.** Adding `index=True` alongside it
   creates a second, redundant one.
+- **SQLAlchemy `Enum` sends the Python member's `.name`, not `.value`, by
+  default** — even for a `StrEnum`. Every enum here (`Stance`, `SkateStyle`,
+  `ClipStatus`) has uppercase names but lowercase values matching what the
+  Postgres enum type actually contains, so without `values_callable` every
+  insert of a non-null enum column fails with `invalid input value for enum
+  ...: "DRAFT"`. Fixed once, centrally, via `app.models.enums.sa_enum()` —
+  use that helper for any new enum column instead of `SAEnum(...)` directly.
 - **Shell quoting through `wsl.exe`.** Multi-line commands and nested quotes
   get mangled. Write a script file and execute it instead. Prefix Bash-tool
   calls with `MSYS_NO_PATHCONV=1` or Git Bash rewrites `/home/...` paths.
 - **First WSL boot has flaky DNS.** A Docker pull may fail to resolve
   `public.ecr.aws`; it resolves a minute later. Retry before debugging.
+- **Presigned S3 URLs come back unreachable from outside Docker.**
+  `boto3.generate_presigned_url()` bakes in whatever endpoint the client was
+  configured with — `AWS_ENDPOINT_URL`'s Docker-network `localstack`
+  hostname, which curl/Postman/a browser on the host can't resolve. Fixed by
+  `Storage._externalize()` swapping in `AWS_PUBLIC_ENDPOINT_URL`
+  (`http://localhost:4566`) before the URL leaves the API. Any new code that
+  hands a presigned URL to an external caller needs to go through it.
 
 ## Current state
 
-**Steps 1–2 complete and verified** (see Build order below). Running locally:
+**Steps 1–3 complete and verified** (see Build order below). Running
+locally:
 
 ```bash
 cd ~/git-repos/TrickLens
@@ -73,27 +117,40 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 ```
 
 - `postgres`, `localstack` (S3 + SQS), `api` (FastAPI on the Lambda base
-  image), and a one-shot `migrate` service, all under Compose.
-- Schema at revision `0002`: `users` (`cognito_sub` now required) +
-  `profiles`, enum types `stance` and `skate_style`, functional unique index
-  on `lower(username)`.
+  image), a `worker` (SQS poll loop, stubbed analyzer), and a one-shot
+  `migrate` service, all under Compose.
+- Schema at revision `0003`: `users` + `profiles` (step 1–2) plus `clips`,
+  `analyses`, `tricks`, `clip_tricks` (step 3, no `team_id` yet — that's
+  step 4). Enum types `stance`, `skate_style`, `clip_status`.
 - LocalStack self-provisions the `tricklens-media` bucket (CORS + 7-day
   `raw/` lifecycle rule) and the `tricklens-analysis` queue with a DLQ.
 - A real Cognito dev pool (`scripts/cognito-bootstrap.sh`) backs auth — see
   README's Auth setup. JWT verification, JIT registration (`POST /users`),
   and `/users/me`, `/users/me/profile`, `/users/{username}` are live and
   verified end-to-end (sign-up → confirm → login → register → read).
-- Hot-reload verified at ~850ms. `ruff check` clean. Migration
-  upgrade/downgrade round trip verified.
+- `/clips` endpoints (create → complete → worker → tag → publish) and
+  `app/worker.py`'s stub analyzer are live and verified end-to-end via the
+  Postman collection (`postman/TrickLens.postman_collection.json`): a real
+  clip went draft → queued → analyzed (correct six-subscore breakdown,
+  `steeze_score` matching the average) → tagged → published.
+- Presigned S3 URLs are rewritten from the internal `localstack` Docker
+  hostname to `AWS_PUBLIC_ENDPOINT_URL` before leaving the API — see the
+  gotcha above. Required for *any* external client (Postman, curl, the
+  eventual frontend) to be able to actually use them.
+- Hot-reload verified at ~850ms. `ruff check` clean as of step 2; not yet
+  re-run over step 3's files — run `make fmt` before starting step 4.
+  Migration upgrade/downgrade round trip verified through `0002`; `0003`
+  applied and exercised, not yet round-tripped downgrade-then-upgrade.
 
-**Not done yet:** no uploads, no frontend, no Terraform.
+**Not done yet:** no frontend code (a visual prototype exists as a separate
+Artifact canvas, outside the repo), no Terraform.
 
 ## Build order
 
 1. ✅ Local dev foundation — compose, Postgres, LocalStack, FastAPI, Alembic
 2. ✅ Auth (Cognito) + users + profiles
-3. ⬜ Upload → S3 → SQS → worker (stubbed analyzer)  ← next
-4. ⬜ Social app: feed, likes, comments, teams, discover
+3. ✅ Upload → S3 → SQS → worker (stubbed analyzer)
+4. ⬜ Social app: feed, likes, comments, teams, discover  ← next
 5. ⬜ Terraform + GitHub Actions → deploy to AWS
 6. ⬜ Replace the stub with the real steeze analyzer
 

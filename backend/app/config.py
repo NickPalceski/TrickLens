@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     sqs_analysis_queue_url: str
     cdn_base_url: str
 
+    # Presigned URLs are signed against boto_endpoint (LocalStack's
+    # Docker-network hostname) — that's what the API container needs to
+    # reach LocalStack, but it's also unreachable from anything outside the
+    # compose network (a browser, Postman, curl on the host). Empty in
+    # production, where boto_endpoint is already the real, externally
+    # reachable S3 endpoint and there's nothing to rewrite.
+    aws_public_endpoint_url: str = ""
+
     # --- API ---
     cors_origins: str = "http://localhost:3000"
 

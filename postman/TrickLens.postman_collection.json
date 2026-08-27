@@ -1,0 +1,214 @@
+{
+  "info": {
+    "name": "TrickLens",
+    "description": "Local dev collection for the TrickLens API. Requires a confirmed Cognito test user (see README's Auth setup — sign-up + admin-confirm-sign-up via AWS CLI is a one-time step this collection doesn't do for you, since admin actions need AWS credentials this collection deliberately never asks for). Everything else — logging in, registering, and the full clip upload -> publish flow — is one click per step, with each response's IDs auto-saved into the next request's variables.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{id_token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8000" },
+    { "key": "aws_region", "value": "us-east-1" },
+    { "key": "cognito_client_id", "value": "", "description": "From .env — COGNITO_CLIENT_ID" },
+    { "key": "test_email", "value": "skater@example.com" },
+    { "key": "test_password", "value": "Sk8-or-die1" },
+    { "key": "username", "value": "nick", "description": "The app-side username to register" },
+    { "key": "id_token", "value": "" },
+    { "key": "clip_id", "value": "" },
+    { "key": "upload_url", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login (Cognito)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-amz-json-1.1" },
+              { "key": "X-Amz-Target", "value": "AWSCognitoIdentityProviderService.InitiateAuth" }
+            ],
+            "url": {
+              "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+              "protocol": "https",
+              "host": ["cognito-idp", "{{aws_region}}", "amazonaws", "com"],
+              "path": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"AuthFlow\": \"USER_PASSWORD_AUTH\",\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"AuthParameters\": {\n    \"USERNAME\": \"{{test_email}}\",\n    \"PASSWORD\": \"{{test_password}}\"\n  }\n}"
+            },
+            "description": "Unauthenticated Cognito action — no AWS credentials needed, just the (public) app client id. The user must already exist and be confirmed; this collection doesn't sign up or confirm users (those need either email verification or admin-confirm-sign-up, which requires real AWS credentials — see README)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.AuthenticationResult && data.AuthenticationResult.IdToken) {",
+                  "    pm.collectionVariables.set('id_token', data.AuthenticationResult.IdToken);",
+                  "    console.log('id_token saved to collection variables');",
+                  "} else {",
+                  "    console.warn('No IdToken in response — is the user signed up AND confirmed? See README Auth setup.', data);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Register (POST /users)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/users",
+              "host": ["{{base_url}}"],
+              "path": ["users"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\"\n}"
+            },
+            "description": "Only needed once per Cognito user — 409s if this login is already registered, which is fine to ignore."
+          }
+        },
+        {
+          "name": "Get Me (GET /users/me)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/users/me",
+              "host": ["{{base_url}}"],
+              "path": ["users", "me"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Clips",
+      "item": [
+        {
+          "name": "1. Create Clip (POST /clips)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/clips",
+              "host": ["{{base_url}}"],
+              "path": ["clips"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"content_type\": \"video/mp4\",\n  \"duration_ms\": 5000,\n  \"source_fps\": 60\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "pm.collectionVariables.set('clip_id', data.clip.id);",
+                  "pm.collectionVariables.set('upload_url', data.upload_url);",
+                  "console.log('clip_id:', data.clip.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Upload to S3 (PUT presigned URL)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "video/mp4" }],
+            "url": "{{upload_url}}",
+            "body": {
+              "mode": "raw",
+              "raw": "fake video bytes for testing — the stub analyzer never decodes this"
+            },
+            "description": "Uses upload_url saved by step 1 — run that request first. Not authenticated with the bearer token; presigned URLs carry their own auth in the query string."
+          }
+        },
+        {
+          "name": "3. Complete Upload (POST /clips/:clip_id/complete)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/complete",
+              "host": ["{{base_url}}"],
+              "path": ["clips", "{{clip_id}}", "complete"]
+            }
+          }
+        },
+        {
+          "name": "4. Get Clip Status (GET /clips/:clip_id)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["clips", "{{clip_id}}"]
+            },
+            "description": "Re-send this one to poll. status goes queued -> analyzing -> analyzed (or unanalyzable) once the worker picks it up — watch `docker compose logs -f worker` alongside this."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "console.log('status:', data.status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "5. Tag Tricks (POST /clips/:clip_id/tricks)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/tricks",
+              "host": ["{{base_url}}"],
+              "path": ["clips", "{{clip_id}}", "tricks"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tricks\": [\"kickflip\"]\n}"
+            },
+            "description": "409s unless the clip's status is analyzed."
+          }
+        },
+        {
+          "name": "6. Publish (POST /clips/:clip_id/publish)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/publish",
+              "host": ["{{base_url}}"],
+              "path": ["clips", "{{clip_id}}", "publish"]
+            },
+            "description": "422s if no trick has been tagged yet — try this before step 5 once, on a fresh clip, to see that guard fire."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -7,11 +7,11 @@ cleanly it was landed (pop, landing stability, roll-away, stomp, body
 compactness, catch). Follow skaters and teams, and see the week's best on
 Discover.
 
-> **Status: step 2 of 6 complete — Cognito auth, users, profiles.** Postgres,
-> LocalStack, FastAPI, Alembic (step 1) and JWT verification, JIT user
-> registration, and the `/users` endpoints (step 2) are all up and verified
-> end-to-end against a real Cognito dev pool — see [Auth setup](#auth-setup)
-> if you're setting up a fresh clone. No uploads, no analysis yet. See
+> **Status: step 3 of 6 complete — upload → S3 → SQS → worker (stubbed
+> analyzer).** Steps 1-3 are done and verified end-to-end: local dev
+> foundation, Cognito auth/users/profiles, and now a clip's full path from
+> draft through a stubbed analysis to published. See
+> [Clips](#clips) to try it yourself, and
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ## Stack
@@ -20,7 +20,7 @@ Discover.
 |---|---|
 | Frontend | Next.js + Tailwind + shadcn/ui *(step 4)* |
 | API | Python 3.12, FastAPI, SQLAlchemy 2.0 (async), Alembic |
-| ML worker | Python, ffmpeg, YOLOv8, MediaPipe *(step 6)* |
+| ML worker | Python (stubbed scorer, step 3); ffmpeg, YOLOv8, MediaPipe *(step 6)* |
 | Database | PostgreSQL — Neon in production |
 | Media | S3 + CloudFront |
 | Queue | SQS |
@@ -70,7 +70,8 @@ A healthy `make health` looks like:
   "checks": [
     { "name": "postgres", "ok": true, "ms": 2.1 },
     { "name": "s3",       "ok": true, "ms": 8.4 },
-    { "name": "sqs",      "ok": true, "ms": 6.9, "detail": { "waiting": 0, "in_flight": 0 } }
+    { "name": "sqs",      "ok": true, "ms": 6.9, "detail": { "waiting": 0, "in_flight": 0 } },
+    { "name": "cognito",  "ok": true, "ms": 41.2 }
   ]
 }
 ```
@@ -124,6 +125,63 @@ curl -X POST localhost:8000/users \
 curl localhost:8000/users/me -H "Authorization: Bearer $ID_TOKEN"
 ```
 
+## Clips
+
+**Postman collection** (recommended): [`postman/TrickLens.postman_collection.json`](postman/TrickLens.postman_collection.json)
+covers the whole flow — login, register, and each clip step — with response
+values (token, clip id, upload URL) auto-saved into the next request's
+variables via each request's Tests script, so there's no manual copy-pasting
+between steps.
+
+1. **Import:** Postman → *Import* → select the file (or drag it in). It's a
+   single collection with variables, not a separate environment.
+2. **Fill in variables:** collection → *...* → *Edit* → *Variables* tab.
+   Required: `cognito_client_id` (from `.env`'s `COGNITO_CLIENT_ID`). The
+   rest (`base_url`, `test_email`/`test_password`, `username`) already have
+   working defaults matching the Auth setup section below, unless you used
+   different values there.
+3. **Prerequisite:** the test user must already exist and be confirmed —
+   that's the one part this collection doesn't do for you, since
+   `admin-confirm-sign-up` needs real AWS credentials the collection
+   deliberately never asks for. Run the sign-up + confirm commands from
+   [Auth setup](#auth-setup) once first if you haven't.
+4. **Run it:** *Auth → Login*, then *Users → Register* (only needed once —
+   409 after that is fine), then *Clips* 1 through 6 in order. Re-send
+   *4. Get Clip Status* to poll — `docker compose logs -f worker` alongside
+   it shows the same transition happening server-side.
+
+**Without Postman**, the equivalent curl flow, continuing from an
+`$ID_TOKEN` obtained as in [Auth setup](#auth-setup):
+
+```bash
+# 1. Create a draft + get a presigned upload URL
+resp=$(curl -s -X POST localhost:8000/clips \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
+  -d '{"content_type": "video/mp4", "duration_ms": 5000, "source_fps": 60}')
+clip_id=$(echo "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin)["clip"]["id"])')
+upload_url=$(echo "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin)["upload_url"])')
+
+# 2. Upload straight to S3 (LocalStack) — a real video isn't required for the stub
+curl -X PUT "$upload_url" -H "Content-Type: video/mp4" --data-binary @/path/to/clip.mp4
+
+# 3. Confirm the upload landed and queue it for analysis
+curl -X POST "localhost:8000/clips/$clip_id/complete" -H "Authorization: Bearer $ID_TOKEN"
+
+# 4. Poll until the worker (docker compose logs -f worker) has picked it up
+curl "localhost:8000/clips/$clip_id" -H "Authorization: Bearer $ID_TOKEN"
+
+# 5. Once status is "analyzed", tag it and publish
+curl -X POST "localhost:8000/clips/$clip_id/tricks" \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
+  -d '{"tricks": ["kickflip"]}'
+curl -X POST "localhost:8000/clips/$clip_id/publish" -H "Authorization: Bearer $ID_TOKEN"
+```
+
+The scorer is a stub (see docs/ARCHITECTURE.md §4/§5) — it fabricates a
+plausible six-subscore breakdown (or, ~10% of the time, an `unanalyzable`
+result with a specific reason) rather than actually analyzing the video.
+Real analysis is step 6.
+
 ## Commands
 
 | Command | Does | Without `make` |
@@ -148,6 +206,7 @@ curl localhost:8000/users/me -H "Authorization: Bearer $ID_TOKEN"
 | `postgres` | 5432 | Local database |
 | `localstack` | 4566 | Emulated S3 + SQS |
 | `migrate` | — | One-shot; runs `alembic upgrade head` and exits |
+| `worker` | — | Long-polls SQS and runs the (stubbed) analyzer; `docker compose logs -f worker` to watch it |
 
 `docker compose up` is self-provisioning: `scripts/localstack-init.sh` creates
 the bucket (with CORS and a lifecycle rule) and both queues automatically, and
@@ -165,6 +224,8 @@ backend/
     db.py              Async engine + session dependency
     main.py            FastAPI assembly
     lambda_handler.py  Production entrypoint (Mangum)
+    worker.py          SQS consumer + stubbed analyzer (dev: poll loop,
+                       prod: app.worker.lambda_handler per message)
     models/            SQLAlchemy models
     schemas/           Pydantic request/response models
     api/routes/        Endpoints
@@ -173,6 +234,7 @@ backend/
   alembic/             Migrations
 docs/ARCHITECTURE.md   System design and decisions
 scripts/               LocalStack + Cognito bootstrap
+postman/               Postman collection for manual API testing
 ```
 
 ## Notes
@@ -201,3 +263,5 @@ scripts/               LocalStack + Cognito bootstrap
 | Edits do not hot-reload | Repo is on the Windows filesystem. Move it into WSL. |
 | `/health/deep` returns 503 | Read the failing check's `error` field — it names the specific dependency. |
 | `cognito` check fails in `/health/deep`, or every request 401s | `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` are empty or wrong. Run `./scripts/cognito-bootstrap.sh` (see [Auth setup](#auth-setup)) and restart. |
+| A clip never leaves `queued` | Check `docker compose logs -f worker` — it should log `polling <queue url>` on startup and one line per message it processes. |
+| Uploading to the presigned URL fails to connect / DNS error | `AWS_PUBLIC_ENDPOINT_URL` is missing from `.env` (needs `http://localhost:4566`) or the API wasn't restarted after adding it. Presigned URLs are signed against the Docker-network `localstack` hostname, which nothing outside `docker compose` can resolve — see CLAUDE.md's gotchas. |

@@ -11,5 +11,16 @@ ignore = ["B008"]  # FastAPI's Depends() in defaults is the documented idiom
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"
+# Session-scoped, not function-scoped: app/db.py's `engine`/`SessionLocal`
+# are module-level singletons (deliberate — Lambda reuses them across warm
+# invocations), so their asyncpg connection pool is bound to whichever event
+# loop first touched it. A fresh loop per test function breaks that pool on
+# the second test that uses it ("Future attached to a different loop"); one
+# loop for the whole session matches the app's actual lifecycle.
+asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
+filterwarnings = [
+    # botocore's own SigV4 signing code, not ours — harmless, and not
+    # something a pinned third-party dependency gives us a way to fix.
+    "ignore::DeprecationWarning:botocore.*",
+]

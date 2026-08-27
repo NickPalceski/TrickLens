@@ -56,6 +56,34 @@ class AnalysisQueue:
             "in_flight": int(attrs.get("ApproximateNumberOfMessagesNotVisible", 0)),
         }
 
+    async def receive_messages(
+        self, max_messages: int = 1, wait_time_seconds: int = 20
+    ) -> list[dict[str, str]]:
+        """Long-poll for messages. Returns [] on a normal empty-queue timeout.
+
+        wait_time_seconds > 0 makes this a long poll: SQS holds the request
+        open instead of returning immediately, which is both cheaper (far
+        fewer empty responses) and lower-latency than short-polling in a loop.
+        """
+        resp = await asyncio.to_thread(
+            _client().receive_message,
+            QueueUrl=self.queue_url,
+            MaxNumberOfMessages=max_messages,
+            WaitTimeSeconds=wait_time_seconds,
+        )
+        return [
+            {"message_id": m["MessageId"], "receipt_handle": m["ReceiptHandle"], "body": m["Body"]}
+            for m in resp.get("Messages", [])
+        ]
+
+    async def delete_message(self, receipt_handle: str) -> None:
+        """Remove a message after it's been fully processed and committed —
+        not before, or a crash mid-processing loses the message for good
+        instead of just triggering a harmless redelivery."""
+        await asyncio.to_thread(
+            _client().delete_message, QueueUrl=self.queue_url, ReceiptHandle=receipt_handle
+        )
+
     async def check(self) -> None:
         """Health probe. Raises if the queue is unreachable."""
         await self.depth()

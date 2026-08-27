@@ -38,8 +38,11 @@ def _client():
 
 class Storage:
     def __init__(self) -> None:
-        self.bucket = get_settings().s3_bucket
-        self.cdn_base = get_settings().cdn_base_url.rstrip("/")
+        settings = get_settings()
+        self.bucket = settings.s3_bucket
+        self.cdn_base = settings.cdn_base_url.rstrip("/")
+        self._internal_endpoint = settings.boto_endpoint
+        self._public_endpoint = settings.aws_public_endpoint_url.rstrip("/") or None
 
     def public_url(self, key: str) -> str:
         """Build a delivery URL from a stored key.
@@ -48,6 +51,16 @@ class Storage:
         CloudFront domain later is a single env var.
         """
         return f"{self.cdn_base}/{key}"
+
+    def _externalize(self, url: str) -> str:
+        """Swap LocalStack's Docker-network host for one reachable from
+        outside the compose network. A no-op in production, where
+        boto_endpoint is already the real (externally reachable) S3
+        endpoint and aws_public_endpoint_url is unset — see config.py.
+        """
+        if self._public_endpoint and self._internal_endpoint:
+            return url.replace(self._internal_endpoint, self._public_endpoint, 1)
+        return url
 
     async def presign_upload(
         self, key: str, content_type: str, expires_in: int = 900
@@ -64,15 +77,16 @@ class Storage:
             Params={"Bucket": self.bucket, "Key": key, "ContentType": content_type},
             ExpiresIn=expires_in,
         )
-        return {"url": url, "key": key}
+        return {"url": self._externalize(url), "key": key}
 
     async def presign_download(self, key: str, expires_in: int = 3600) -> str:
-        return await asyncio.to_thread(
+        url = await asyncio.to_thread(
             _client().generate_presigned_url,
             ClientMethod="get_object",
             Params={"Bucket": self.bucket, "Key": key},
             ExpiresIn=expires_in,
         )
+        return self._externalize(url)
 
     async def head(self, key: str) -> dict | None:
         """Object metadata, or None if it does not exist.

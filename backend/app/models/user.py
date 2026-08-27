@@ -3,13 +3,12 @@
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Enum as SAEnum
 from sqlalchemy import ForeignKey, Index, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKey
-from app.models.enums import SkateStyle, Stance
+from app.models.enums import SkateStyle, Stance, sa_enum
 
 
 class User(Base, UUIDPrimaryKey, TimestampMixin):
@@ -57,10 +56,8 @@ class Profile(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
     )
 
-    stance: Mapped[Stance | None] = mapped_column(SAEnum(Stance, name="stance", native_enum=True))
-    style: Mapped[SkateStyle | None] = mapped_column(
-        SAEnum(SkateStyle, name="skate_style", native_enum=True)
-    )
+    stance: Mapped[Stance | None] = mapped_column(sa_enum(Stance, "stance"))
+    style: Mapped[SkateStyle | None] = mapped_column(sa_enum(SkateStyle, "skate_style"))
 
     board: Mapped[str | None] = mapped_column(String(80))
     board_size: Mapped[Decimal | None] = mapped_column(Numeric(4, 2))  # inches, e.g. 8.25
