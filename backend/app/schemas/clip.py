@@ -11,6 +11,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.enums import ClipStatus
+from app.schemas.user import UserBrief
 
 
 class ClipCreate(BaseModel):
@@ -45,6 +46,7 @@ class AnalysisOut(BaseModel):
 class ClipOut(BaseModel):
     id: uuid.UUID
     status: ClipStatus
+    author: UserBrief
     video_url: str  # presigned at response time — never the raw key
     duration_ms: int | None = None
     source_fps: int | None = None
@@ -61,6 +63,14 @@ class ClipCreateOut(BaseModel):
 
     clip: ClipOut
     upload_url: str
+
+
+class FeedPage(BaseModel):
+    """One page of the home feed. `next_cursor` is null at the end — pass it
+    back as `?cursor=` to get the following page (keyset, not offset)."""
+
+    items: list[ClipOut]
+    next_cursor: str | None = None
 
 
 class TagTricksRequest(BaseModel):

@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import clips, health, users
+from app.api.routes import clips, feed, health, users
 from app.config import get_settings
 from app.db import engine
 
@@ -64,3 +64,4 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 app.include_router(health.router)
 app.include_router(users.router)
 app.include_router(clips.router)
+app.include_router(feed.router)

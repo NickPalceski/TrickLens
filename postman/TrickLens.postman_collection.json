@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "TrickLens",
-    "description": "Local dev collection for the TrickLens API. Requires a confirmed Cognito test user (see README's Auth setup — sign-up + admin-confirm-sign-up via AWS CLI is a one-time step this collection doesn't do for you, since admin actions need AWS credentials this collection deliberately never asks for). Everything else — logging in, registering, and the full clip upload -> publish flow — is one click per step, with each response's IDs auto-saved into the next request's variables.",
+    "description": "Local dev collection for the TrickLens API. The 'New User' folder creates a confirmed Cognito user and registers them (sign-up is credential-free; the confirm step uses Postman's AWS Signature auth — fill aws_access_key_id / aws_secret_access_key, the same keys `aws configure` uses, in the VARIABLES tab's Current Value column only so they don't sync). Everything else — logging in, the clip pipeline, follows, the feed — is one click per step, with each response's IDs auto-saved into the next request's variables.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -12,12 +12,21 @@
     { "key": "base_url", "value": "http://localhost:8000" },
     { "key": "aws_region", "value": "us-east-1" },
     { "key": "cognito_client_id", "value": "", "description": "From .env — COGNITO_CLIENT_ID" },
+    { "key": "cognito_user_pool_id", "value": "", "description": "From .env — COGNITO_USER_POOL_ID (only the 'New User' confirm step needs it)" },
+    { "key": "aws_access_key_id", "value": "", "description": "Current Value only. Same key `aws configure` uses. Needed only for 'New User' -> Admin Confirm." },
+    { "key": "aws_secret_access_key", "value": "", "description": "Current Value only — never Initial Value, which syncs to Postman's cloud." },
     { "key": "test_email", "value": "skater@example.com" },
     { "key": "test_password", "value": "Sk8-or-die1" },
     { "key": "username", "value": "nick", "description": "The app-side username to register" },
+    { "key": "new_user_email", "value": "skater2@example.com" },
+    { "key": "new_user_password", "value": "Sk8-or-die1" },
+    { "key": "new_username", "value": "nick2", "description": "App-side username for the second user" },
+    { "key": "follow_username", "value": "", "description": "Another registered username, for the follow requests (set to new_username's value)" },
     { "key": "id_token", "value": "" },
+    { "key": "new_user_id_token", "value": "" },
     { "key": "clip_id", "value": "" },
-    { "key": "upload_url", "value": "" }
+    { "key": "upload_url", "value": "" },
+    { "key": "feed_cursor", "value": "" }
   ],
   "item": [
     {
@@ -65,6 +74,124 @@
       ]
     },
     {
+      "name": "New User",
+      "description": "Create + register a second (or third...) user. Set new_user_email / new_user_password / new_username first, then run 1-4 in order. Re-run with different values for more users.\n\nStep 2 needs AWS credentials (aws_access_key_id / aws_secret_access_key). If you'd rather not put them in Postman, skip step 2 and run this one line instead:\n  aws cognito-idp admin-confirm-sign-up --user-pool-id $COGNITO_USER_POOL_ID --username <new_user_email>",
+      "item": [
+        {
+          "name": "1. Sign Up",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-amz-json-1.1" },
+              { "key": "X-Amz-Target", "value": "AWSCognitoIdentityProviderService.SignUp" }
+            ],
+            "url": {
+              "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+              "protocol": "https",
+              "host": ["cognito-idp", "{{aws_region}}", "amazonaws", "com"],
+              "path": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"Username\": \"{{new_user_email}}\",\n  \"Password\": \"{{new_user_password}}\",\n  \"UserAttributes\": [\n    { \"Name\": \"email\", \"Value\": \"{{new_user_email}}\" }\n  ]\n}"
+            },
+            "description": "Unauthenticated. Creates the Cognito user in UNCONFIRMED state. A UsernameExistsException here just means you already made this one — move on."
+          }
+        },
+        {
+          "name": "2. Admin Confirm (AWS creds)",
+          "request": {
+            "auth": {
+              "type": "awsv4",
+              "awsv4": [
+                { "key": "accessKey", "value": "{{aws_access_key_id}}", "type": "string" },
+                { "key": "secretKey", "value": "{{aws_secret_access_key}}", "type": "string" },
+                { "key": "region", "value": "{{aws_region}}", "type": "string" },
+                { "key": "service", "value": "cognito-idp", "type": "string" }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-amz-json-1.1" },
+              { "key": "X-Amz-Target", "value": "AWSCognitoIdentityProviderService.AdminConfirmSignUp" }
+            ],
+            "url": {
+              "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+              "protocol": "https",
+              "host": ["cognito-idp", "{{aws_region}}", "amazonaws", "com"],
+              "path": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"UserPoolId\": \"{{cognito_user_pool_id}}\",\n  \"Username\": \"{{new_user_email}}\"\n}"
+            },
+            "description": "Confirms the user without the emailed code — the dev-pool bypass. Needs an IAM key with cognito-idp permissions (AmazonCognitoPowerUser). Returns an empty 200 on success."
+          }
+        },
+        {
+          "name": "3. Log In As New User",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-amz-json-1.1" },
+              { "key": "X-Amz-Target", "value": "AWSCognitoIdentityProviderService.InitiateAuth" }
+            ],
+            "url": {
+              "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+              "protocol": "https",
+              "host": ["cognito-idp", "{{aws_region}}", "amazonaws", "com"],
+              "path": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"AuthFlow\": \"USER_PASSWORD_AUTH\",\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"AuthParameters\": {\n    \"USERNAME\": \"{{new_user_email}}\",\n    \"PASSWORD\": \"{{new_user_password}}\"\n  }\n}"
+            },
+            "description": "Saves the token to new_user_id_token — a separate variable, so your main id_token (from Auth -> Login) is untouched."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.AuthenticationResult && data.AuthenticationResult.IdToken) {",
+                  "    pm.collectionVariables.set('new_user_id_token', data.AuthenticationResult.IdToken);",
+                  "    console.log('new_user_id_token saved');",
+                  "} else {",
+                  "    console.warn('No IdToken — did step 2 (confirm) succeed?', data);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Register New User (POST /users)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{new_user_id_token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/users",
+              "host": ["{{base_url}}"],
+              "path": ["users"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{new_username}}\"\n}"
+            },
+            "description": "Uses new_user_id_token, not the collection's default token. After this, set follow_username to new_username's value and use the Social folder as your main user."
+          }
+        }
+      ]
+    },
+    {
       "name": "Users",
       "item": [
         {
@@ -94,6 +221,76 @@
               "path": ["users", "me"]
             }
           }
+        },
+        {
+          "name": "Get Public Profile (GET /users/:username)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/users/{{follow_username}}",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{follow_username}}"]
+            },
+            "description": "Public. Shows follower_count / following_count, and followed_by_me when called with a token."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Social",
+      "item": [
+        {
+          "name": "Follow User (POST /users/:username/follow)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/users/{{follow_username}}/follow",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{follow_username}}", "follow"]
+            },
+            "description": "Set follow_username to another registered user first. 409 if already following, 422 if it's you."
+          }
+        },
+        {
+          "name": "Unfollow User (DELETE /users/:username/follow)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/users/{{follow_username}}/follow",
+              "host": ["{{base_url}}"],
+              "path": ["users", "{{follow_username}}", "follow"]
+            },
+            "description": "Idempotent — 200 even if you weren't following."
+          }
+        },
+        {
+          "name": "Home Feed (GET /feed)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/feed?limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["feed"],
+              "query": [
+                { "key": "limit", "value": "20" },
+                { "key": "cursor", "value": "{{feed_cursor}}", "disabled": true }
+              ]
+            },
+            "description": "Published clips from everyone you follow, newest first. Enable the cursor param (and it auto-fills from the last response) to page."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "pm.collectionVariables.set('feed_cursor', data.next_cursor || '');",
+                  "console.log('items:', data.items.length, 'next_cursor:', data.next_cursor);"
+                ]
+              }
+            }
+          ]
         }
       ]
     },

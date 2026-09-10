@@ -13,16 +13,10 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import delete, select
 
 from app.api.deps import CurrentUser, DbSession
+from app.api.serializers import clip_out
 from app.models.clip import Clip, ClipTrick, Trick
 from app.models.enums import ClipStatus
-from app.schemas.clip import (
-    AnalysisOut,
-    ClipCreate,
-    ClipCreateOut,
-    ClipOut,
-    TagTricksRequest,
-    TrickOut,
-)
+from app.schemas.clip import ClipCreate, ClipCreateOut, ClipOut, TagTricksRequest
 from app.services.queue import get_queue
 from app.services.storage import PREFIX_RAW, get_storage
 
@@ -36,22 +30,6 @@ _EXTENSIONS = {
     "video/quicktime": "mov",
     "video/webm": "webm",
 }
-
-
-async def _to_out(clip: Clip) -> ClipOut:
-    latest = clip.analyses[0] if clip.analyses else None
-    return ClipOut(
-        id=clip.id,
-        status=clip.status,
-        video_url=await get_storage().presign_download(clip.s3_key),
-        duration_ms=clip.duration_ms,
-        source_fps=clip.source_fps,
-        steeze_score=clip.steeze_score,
-        published_at=clip.published_at,
-        tricks=[TrickOut.model_validate(ct.trick) for ct in clip.clip_tricks],
-        analysis=AnalysisOut.model_validate(latest) if latest else None,
-        created_at=clip.created_at,
-    )
 
 
 async def _get_owned(clip_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Clip:
@@ -83,10 +61,10 @@ async def create_clip(body: ClipCreate, user: CurrentUser, db: DbSession) -> Cli
     presigned = await get_storage().presign_upload(clip.s3_key, body.content_type)
 
     # Re-fetch through a query so server-generated columns and the
-    # relationships _to_out reads are populated consistently — same reason
+    # relationships clip_out reads are populated consistently — same reason
     # as the equivalent re-fetch in routes/users.py's register().
     clip = await db.scalar(select(Clip).where(Clip.id == clip_id))
-    return ClipCreateOut(clip=await _to_out(clip), upload_url=presigned["url"])
+    return ClipCreateOut(clip=await clip_out(clip), upload_url=presigned["url"])
 
 
 @router.post("/{clip_id}/complete")
@@ -108,7 +86,7 @@ async def complete_clip(clip_id: uuid.UUID, user: CurrentUser, db: DbSession) ->
     await db.commit()
 
     await get_queue().enqueue({"clip_id": str(clip.id), "s3_key": clip.s3_key})
-    return await _to_out(clip)
+    return await clip_out(clip)
 
 
 @router.post("/{clip_id}/tricks")
@@ -137,7 +115,7 @@ async def tag_tricks(
     # explicit refresh rather than a re-SELECT (which would just return the
     # same identity-mapped, still-stale object).
     await db.refresh(clip, attribute_names=["clip_tricks"])
-    return await _to_out(clip)
+    return await clip_out(clip)
 
 
 @router.post("/{clip_id}/publish")
@@ -153,7 +131,7 @@ async def publish_clip(clip_id: uuid.UUID, user: CurrentUser, db: DbSession) -> 
     clip.status = ClipStatus.PUBLISHED
     clip.published_at = datetime.now(UTC)
     await db.flush()
-    return await _to_out(clip)
+    return await clip_out(clip)
 
 
 @router.get("/{clip_id}")
@@ -166,4 +144,4 @@ async def read_clip(clip_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Cli
         raise HTTPException(status.HTTP_404_NOT_FOUND, "clip not found")
     if clip.status != ClipStatus.PUBLISHED and clip.user_id != user.id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "clip not found")
-    return await _to_out(clip)
+    return await clip_out(clip)

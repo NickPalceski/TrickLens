@@ -107,8 +107,8 @@ all behave normally wherever the repo is cloned.
 
 ## Current state
 
-**Steps 1–3 complete and verified** (see Build order below). Running
-locally:
+**Steps 1–3 complete and verified; step 4 in progress — 4a (follows + home
+feed) done and verified.** Running locally:
 
 ```bash
 cd ~/git-repos/TrickLens
@@ -119,9 +119,10 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 - `postgres`, `localstack` (S3 + SQS), `api` (FastAPI on the Lambda base
   image), a `worker` (SQS poll loop, stubbed analyzer), and a one-shot
   `migrate` service, all under Compose.
-- Schema at revision `0003`: `users` + `profiles` (step 1–2) plus `clips`,
-  `analyses`, `tricks`, `clip_tricks` (step 3, no `team_id` yet — that's
-  step 4). Enum types `stance`, `skate_style`, `clip_status`.
+- Schema at revision `0004`: `users` + `profiles` (step 1–2); `clips`,
+  `analyses`, `tricks`, `clip_tricks` (step 3, no `team_id` yet); `follows`
+  (step 4a — two nullable FKs + XOR check, `followee_team_id`'s FK deferred
+  to 4c). Enum types `stance`, `skate_style`, `clip_status`.
 - LocalStack self-provisions the `tricklens-media` bucket (CORS + 7-day
   `raw/` lifecycle rule) and the `tricklens-analysis` queue with a DLQ.
 - A real Cognito dev pool (`scripts/cognito-bootstrap.sh`) backs auth — see
@@ -137,10 +138,16 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   hostname to `AWS_PUBLIC_ENDPOINT_URL` before leaving the API — see the
   gotcha above. Required for *any* external client (Postman, curl, the
   eventual frontend) to be able to actually use them.
-- Hot-reload verified at ~850ms. `ruff check` clean as of step 2; not yet
-  re-run over step 3's files — run `make fmt` before starting step 4.
-  Migration upgrade/downgrade round trip verified through `0002`; `0003`
-  applied and exercised, not yet round-tripped downgrade-then-upgrade.
+- **Step 4a (follows + home feed)** live and verified end-to-end via the
+  Postman collection (Social folder): `POST/DELETE /users/{username}/follow`,
+  `GET /feed` (keyset-paginated, `next_cursor`), and
+  `followed_by_me`/`follower_count`/`following_count` on `UserPublic`.
+  ORM→schema conversion moved into `app/api/serializers.py`. `get_optional_user`
+  in deps.py is the viewer path for public routes.
+- Hot-reload verified at ~850ms. `ruff check` clean as of step 2; not
+  re-run over step 3 or 4a's files — run `make fmt`. Migration
+  upgrade/downgrade round trip verified through `0002`; `0003`/`0004`
+  applied and exercised, not round-tripped.
 
 **Not done yet:** no frontend code (a visual prototype exists as a separate
 Artifact canvas, outside the repo), no Terraform.
@@ -150,7 +157,11 @@ Artifact canvas, outside the repo), no Terraform.
 1. ✅ Local dev foundation — compose, Postgres, LocalStack, FastAPI, Alembic
 2. ✅ Auth (Cognito) + users + profiles
 3. ✅ Upload → S3 → SQS → worker (stubbed analyzer)
-4. ⬜ Social app: feed, likes, comments, teams, discover  ← next
+4. 🔶 Social app  ← in progress, built in sub-phases:
+   - 4a ✅ follows + home feed *(verified)*
+   - 4b ⬜ likes + comments
+   - 4c ⬜ teams (+ `clips.team_id`, `follows.followee_team_id` FK)
+   - 4d ⬜ Discover (precomputed rankings + team score history)
 5. ⬜ Terraform + GitHub Actions → deploy to AWS
 6. ⬜ Replace the stub with the real steeze analyzer
 

@@ -7,11 +7,11 @@ cleanly it was landed (pop, landing stability, roll-away, stomp, body
 compactness, catch). Follow skaters and teams, and see the week's best on
 Discover.
 
-> **Status: step 3 of 6 complete — upload → S3 → SQS → worker (stubbed
-> analyzer).** Steps 1-3 are done and verified end-to-end: local dev
-> foundation, Cognito auth/users/profiles, and now a clip's full path from
-> draft through a stubbed analysis to published. See
-> [Clips](#clips) to try it yourself, and
+> **Status: step 4 in progress — the social app.** Steps 1–3 are done and
+> verified (local dev foundation, Cognito auth/users/profiles, a clip's full
+> path from draft through a stubbed analysis to published). Step 4a
+> (following users + the home feed) is done and verified end-to-end. See
+> [Clips](#clips) and [Feed & follows](#feed--follows) to try it, and
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ## Stack
@@ -137,18 +137,22 @@ between steps.
    single collection with variables, not a separate environment.
 2. **Fill in variables:** collection → *...* → *Edit* → *Variables* tab.
    Required: `cognito_client_id` (from `.env`'s `COGNITO_CLIENT_ID`). The
-   rest (`base_url`, `test_email`/`test_password`, `username`) already have
-   working defaults matching the Auth setup section below, unless you used
-   different values there.
-3. **Prerequisite:** the test user must already exist and be confirmed —
-   that's the one part this collection doesn't do for you, since
-   `admin-confirm-sign-up` needs real AWS credentials the collection
-   deliberately never asks for. Run the sign-up + confirm commands from
-   [Auth setup](#auth-setup) once first if you haven't.
-4. **Run it:** *Auth → Login*, then *Users → Register* (only needed once —
-   409 after that is fine), then *Clips* 1 through 6 in order. Re-send
-   *4. Get Clip Status* to poll — `docker compose logs -f worker` alongside
-   it shows the same transition happening server-side.
+   rest have working defaults matching the Auth setup section below.
+3. **Make a user:** run the *New User* folder (1 → 4). Sign-up is
+   credential-free; the *Admin Confirm* step uses Postman's AWS Signature
+   auth, so fill `aws_access_key_id` / `aws_secret_access_key` (the same
+   keys `aws configure` uses) and `cognito_user_pool_id` first — put the AWS
+   keys in the **Current Value** column only, never Initial Value, which
+   syncs to Postman's cloud. Prefer not to? Skip step 2 and run
+   `aws cognito-idp admin-confirm-sign-up --user-pool-id $COGNITO_USER_POOL_ID --username <new_user_email>`
+   instead. Re-run the folder with different `new_user_*` values for more
+   users.
+4. **Run it:** *Auth → Login*, then *Users → Register* (once — 409 after
+   that is fine), then *Clips* 1 through 6 in order. Re-send *4. Get Clip
+   Status* to poll — `docker compose logs -f worker` alongside it shows the
+   same transition server-side. The *Social* folder (follow / unfollow /
+   home feed) needs `follow_username` set to another registered user's name
+   (e.g. `new_username`'s value).
 
 **Without Postman**, the equivalent curl flow, continuing from an
 `$ID_TOKEN` obtained as in [Auth setup](#auth-setup):
@@ -181,6 +185,28 @@ The scorer is a stub (see docs/ARCHITECTURE.md §4/§5) — it fabricates a
 plausible six-subscore breakdown (or, ~10% of the time, an `unanalyzable`
 result with a specific reason) rather than actually analyzing the video.
 Real analysis is step 6.
+
+## Feed & follows
+
+The Postman collection's **Social** folder covers this; the `follow_username`
+variable needs a second registered username. By curl, with two `$ID_TOKEN`s:
+
+```bash
+# nick follows another user
+curl -X POST localhost:8000/users/otheruser/follow -H "Authorization: Bearer $ID_TOKEN"
+
+# nick's home feed — published clips from everyone nick follows, newest first
+curl "localhost:8000/feed?limit=20" -H "Authorization: Bearer $ID_TOKEN"
+
+# page: pass the previous response's next_cursor back
+curl "localhost:8000/feed?limit=20&cursor=<next_cursor>" -H "Authorization: Bearer $ID_TOKEN"
+
+curl -X DELETE localhost:8000/users/otheruser/follow -H "Authorization: Bearer $ID_TOKEN"
+```
+
+`GET /users/{username}` now also reports `follower_count`, `following_count`,
+and (when called with a token) `followed_by_me`. Team follows and Discover
+come in the rest of step 4.
 
 ## Commands
 
@@ -229,6 +255,7 @@ backend/
     models/            SQLAlchemy models
     schemas/           Pydantic request/response models
     api/routes/        Endpoints
+    api/serializers.py ORM model -> response schema conversion, defined once
     services/          storage.py (S3), queue.py (SQS), auth.py (Cognito) —
                        the only AWS-aware code
   alembic/             Migrations

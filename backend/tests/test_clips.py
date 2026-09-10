@@ -14,6 +14,7 @@ import pytest_asyncio
 
 from app import worker
 from app.api import deps
+from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
 from app.models.user import User
@@ -48,6 +49,17 @@ async def authed_client():
     app.dependency_overrides.clear()
 
 
+def _reachable_from_container(url: str) -> str:
+    """The API rewrites presigned URLs to AWS_PUBLIC_ENDPOINT_URL
+    (localhost:4566) for clients on the host. This test suite runs *inside*
+    the api container, where LocalStack is the Docker-network host — undo the
+    rewrite so the PUT actually connects."""
+    s = get_settings()
+    if s.aws_public_endpoint_url and s.boto_endpoint:
+        return url.replace(s.aws_public_endpoint_url, s.boto_endpoint, 1)
+    return url
+
+
 async def _create_and_upload(client: httpx.AsyncClient) -> dict:
     resp = await client.post(
         "/clips", json={"content_type": "video/mp4", "duration_ms": 5000, "source_fps": 60}
@@ -56,7 +68,9 @@ async def _create_and_upload(client: httpx.AsyncClient) -> dict:
     body = resp.json()
 
     put = httpx.put(
-        body["upload_url"], content=b"fake video bytes", headers={"Content-Type": "video/mp4"}
+        _reachable_from_container(body["upload_url"]),
+        content=b"fake video bytes",
+        headers={"Content-Type": "video/mp4"},
     )
     assert put.status_code == 200, put.text
     return body["clip"]

@@ -45,6 +45,17 @@ class ProfileUpdate(BaseModel):
     bearings: str | None = Field(default=None, max_length=80)
 
 
+class UserBrief(BaseModel):
+    """Minimal user card, for embedding in other payloads — a clip's author,
+    a comment's author, a team member. Built by app.api.serializers, not
+    from_attributes: avatar_url has to be derived from avatar_key."""
+
+    id: uuid.UUID
+    username: str
+    display_name: str | None = None
+    avatar_url: str | None = None
+
+
 class UserPublic(BaseModel):
     """Safe to show anyone."""
 
@@ -56,6 +67,9 @@ class UserPublic(BaseModel):
     bio: str | None = None
     avatar_url: str | None = None  # built from avatar_key at response time
     profile: ProfileOut | None = None
+    follower_count: int = 0
+    following_count: int = 0
+    followed_by_me: bool = False  # always false for your own profile / anon viewers
     created_at: datetime
 
 

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKey
 from app.models.enums import ClipStatus, sa_enum
+from app.models.user import User
 
 
 class Clip(Base, UUIDPrimaryKey, TimestampMixin):
@@ -47,6 +48,10 @@ class Clip(Base, UUIDPrimaryKey, TimestampMixin):
 
     steeze_score: Mapped[Decimal | None] = mapped_column(Numeric(4, 1))
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # Read-only, eager: the feed and every clip response embed the author.
+    # The cascade on delete is handled by user_id's FK, not here.
+    user: Mapped[User] = relationship(lazy="selectin", viewonly=True)
 
     # Newest first, so `clip.analyses[0]` is always the latest pass — a clip
     # could in principle be re-analyzed later (a model upgrade), so this

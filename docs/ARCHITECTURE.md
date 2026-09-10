@@ -3,9 +3,9 @@
 Conceptual overview of the system: what each component is, what it does, and
 how it connects to the others. Kept current as the build progresses.
 
-**Current state: step 3 of 6 complete — upload → S3 → SQS → worker
-(stubbed analyzer).** Sections marked *(planned)* are designed but not yet
-built.
+**Current state: step 4 in progress — social app. 4a (follows + home feed)
+done and verified; likes/comments, teams, and Discover still to come.**
+Sections marked *(planned)* are designed but not yet built.
 
 ---
 
@@ -230,6 +230,9 @@ analyses  id, clip_id, model_version, confidence,
           steeze_breakdown jsonb?, failure_reason?, created_at
 tricks    id, canonical_name (unique), aliases[]
 clip_tricks  clip_id, trick_id, position   (pk: clip_id+position; source: user_tagged)
+follows   id, follower_id → users,
+          followee_user_id → users?, followee_team_id?,   (4a; team FK added in 4c)
+          CHECK exactly one followee set
 ```
 
 **Planned:**
@@ -238,7 +241,6 @@ clip_tricks  clip_id, trick_id, position   (pk: clip_id+position; source: user_t
 teams              id, name, slug, description, level, owner_id, join_policy
 team_members       team_id, user_id, role, joined_at
 team_join_requests team_id, user_id, status
-follows            follower_id, followee_type, followee_id   ← polymorphic
 likes              user_id, clip_id
 comments           id, clip_id, user_id, body, parent_id?
 clip_views         clip_id, user_id?, viewed_at
@@ -269,8 +271,14 @@ team_score_history team_id, score, captured_at
 - **`clip_tricks`' primary key is `(clip_id, position)`, not `(clip_id,
   trick_id)`.** Position is what actually needs to be unique per clip (one
   trick per slot in a line); a trick could in principle repeat.
-- **`follows` is polymorphic** — the home feed includes clips from followed
-  *users and teams*, so follows target both.
+- **`follows` targets a user *or* a team, as two nullable FKs + a check
+  constraint** — not the untyped `(followee_type, followee_id)` pair earlier
+  drafts of this doc sketched. The home feed pulls clips from followed users
+  *and* teams, so the target genuinely is polymorphic; two real FK columns
+  keep Postgres enforcing referential integrity and cascade-deletes on both
+  sides, which a bare `followee_id` couldn't. `followee_team_id`'s FK to
+  `teams` lands in 4c, when that table exists — the column and the check are
+  in 4a's migration already.
 - **`team_score_history` exists because Discover ranks teams by score
   *increase*.** A delta is uncomputable without history, and this is painful
   to retrofit.
@@ -281,10 +289,16 @@ team_score_history team_id, score, captured_at
 
 ## 7. Feed and ranking strategy
 
-**Home feed — fan-out-on-read.** Join `follows` against `clips`, order by
-`published_at`, keyset-paginated (`WHERE (published_at, id) < (?, ?)`).
-Keyset rather than `OFFSET` because offset pagination degrades linearly and
-skips rows when new clips arrive mid-scroll.
+**Home feed — fan-out-on-read.** `GET /feed` joins `follows` against
+`clips`, filters to `published`, orders by `(published_at, id)` descending,
+keyset-paginated: the response carries a `next_cursor` (`"<published_at>|<id>"`)
+that the client passes back as `?cursor=`, becoming `WHERE (published_at, id)
+< (?, ?)`. Keyset rather than `OFFSET` because offset pagination degrades
+linearly and skips rows when new clips arrive mid-scroll. One extra row is
+fetched per page (`LIMIT n+1`) purely to know whether `next_cursor` should be
+set. A clip embeds its `author` (a `UserBrief`) so the feed needs no
+follow-up lookup per row. *(Team follows contribute clips here once 4c
+lands.)*
 
 Fan-out-on-*write* (precomputed per-user timelines) is the standard answer at
 large scale, but it costs a write per follower per post and needs backfill
@@ -439,7 +453,7 @@ policy keeping the last 5 images, and an AWS Budget alarm at $5.
 | 1 | Local dev foundation — Compose, Postgres, LocalStack, FastAPI, Alembic | **done** |
 | 2 | Auth (Cognito) + users + profiles | **done** |
 | 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | **done** |
-| 4 | Social app — feed, likes, comments, teams, discover | |
+| 4 | Social app — feed, likes, comments, teams, discover | **in progress** (4a: follows + feed done) |
 | 5 | Terraform + GitHub Actions → deploy to AWS | |
 | 6 | Replace the stub with the real steeze analyzer | |
 
