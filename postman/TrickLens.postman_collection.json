@@ -6,27 +6,102 @@
   },
   "auth": {
     "type": "bearer",
-    "bearer": [{ "key": "token", "value": "{{id_token}}", "type": "string" }]
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{id_token}}",
+        "type": "string"
+      }
+    ]
   },
   "variable": [
-    { "key": "base_url", "value": "http://localhost:8000" },
-    { "key": "aws_region", "value": "us-east-1" },
-    { "key": "cognito_client_id", "value": "", "description": "From .env — COGNITO_CLIENT_ID" },
-    { "key": "cognito_user_pool_id", "value": "", "description": "From .env — COGNITO_USER_POOL_ID (only the 'New User' confirm step needs it)" },
-    { "key": "aws_access_key_id", "value": "", "description": "Current Value only. Same key `aws configure` uses. Needed only for 'New User' -> Admin Confirm." },
-    { "key": "aws_secret_access_key", "value": "", "description": "Current Value only — never Initial Value, which syncs to Postman's cloud." },
-    { "key": "test_email", "value": "skater@example.com" },
-    { "key": "test_password", "value": "Sk8-or-die1" },
-    { "key": "username", "value": "nick", "description": "The app-side username to register" },
-    { "key": "new_user_email", "value": "skater2@example.com" },
-    { "key": "new_user_password", "value": "Sk8-or-die1" },
-    { "key": "new_username", "value": "nick2", "description": "App-side username for the second user" },
-    { "key": "follow_username", "value": "", "description": "Another registered username, for the follow requests (set to new_username's value)" },
-    { "key": "id_token", "value": "" },
-    { "key": "new_user_id_token", "value": "" },
-    { "key": "clip_id", "value": "" },
-    { "key": "upload_url", "value": "" },
-    { "key": "feed_cursor", "value": "" }
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "aws_region",
+      "value": "us-east-1"
+    },
+    {
+      "key": "cognito_client_id",
+      "value": "",
+      "description": "From .env — COGNITO_CLIENT_ID"
+    },
+    {
+      "key": "cognito_user_pool_id",
+      "value": "",
+      "description": "From .env — COGNITO_USER_POOL_ID (only the 'New User' confirm step needs it)"
+    },
+    {
+      "key": "aws_access_key_id",
+      "value": "",
+      "description": "Current Value only. Same key `aws configure` uses. Needed only for 'New User' -> Admin Confirm."
+    },
+    {
+      "key": "aws_secret_access_key",
+      "value": "",
+      "description": "Current Value only — never Initial Value, which syncs to Postman's cloud."
+    },
+    {
+      "key": "test_email",
+      "value": "skater@example.com"
+    },
+    {
+      "key": "test_password",
+      "value": "Sk8-or-die1"
+    },
+    {
+      "key": "username",
+      "value": "nick",
+      "description": "The app-side username to register"
+    },
+    {
+      "key": "new_user_email",
+      "value": "skater2@example.com"
+    },
+    {
+      "key": "new_user_password",
+      "value": "Sk8-or-die1"
+    },
+    {
+      "key": "new_username",
+      "value": "nick2",
+      "description": "App-side username for the second user"
+    },
+    {
+      "key": "follow_username",
+      "value": "",
+      "description": "Another registered username, for the follow requests (set to new_username's value)"
+    },
+    {
+      "key": "id_token",
+      "value": ""
+    },
+    {
+      "key": "new_user_id_token",
+      "value": ""
+    },
+    {
+      "key": "clip_id",
+      "value": ""
+    },
+    {
+      "key": "upload_url",
+      "value": ""
+    },
+    {
+      "key": "feed_cursor",
+      "value": ""
+    },
+    {
+      "key": "comment_id",
+      "value": ""
+    },
+    {
+      "key": "comment_cursor",
+      "value": ""
+    }
   ],
   "item": [
     {
@@ -35,16 +110,29 @@
         {
           "name": "Login (Cognito)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/x-amz-json-1.1" },
-              { "key": "X-Amz-Target", "value": "AWSCognitoIdentityProviderService.InitiateAuth" }
+              {
+                "key": "Content-Type",
+                "value": "application/x-amz-json-1.1"
+              },
+              {
+                "key": "X-Amz-Target",
+                "value": "AWSCognitoIdentityProviderService.InitiateAuth"
+              }
             ],
             "url": {
               "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
               "protocol": "https",
-              "host": ["cognito-idp", "{{aws_region}}", "amazonaws", "com"],
+              "host": [
+                "cognito-idp",
+                "{{aws_region}}",
+                "amazonaws",
+                "com"
+              ],
               "path": []
             },
             "body": {
@@ -80,16 +168,29 @@
         {
           "name": "1. Sign Up",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/x-amz-json-1.1" },
-              { "key": "X-Amz-Target", "value": "AWSCognitoIdentityProviderService.SignUp" }
+              {
+                "key": "Content-Type",
+                "value": "application/x-amz-json-1.1"
+              },
+              {
+                "key": "X-Amz-Target",
+                "value": "AWSCognitoIdentityProviderService.SignUp"
+              }
             ],
             "url": {
               "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
               "protocol": "https",
-              "host": ["cognito-idp", "{{aws_region}}", "amazonaws", "com"],
+              "host": [
+                "cognito-idp",
+                "{{aws_region}}",
+                "amazonaws",
+                "com"
+              ],
               "path": []
             },
             "body": {
@@ -105,21 +206,48 @@
             "auth": {
               "type": "awsv4",
               "awsv4": [
-                { "key": "accessKey", "value": "{{aws_access_key_id}}", "type": "string" },
-                { "key": "secretKey", "value": "{{aws_secret_access_key}}", "type": "string" },
-                { "key": "region", "value": "{{aws_region}}", "type": "string" },
-                { "key": "service", "value": "cognito-idp", "type": "string" }
+                {
+                  "key": "accessKey",
+                  "value": "{{aws_access_key_id}}",
+                  "type": "string"
+                },
+                {
+                  "key": "secretKey",
+                  "value": "{{aws_secret_access_key}}",
+                  "type": "string"
+                },
+                {
+                  "key": "region",
+                  "value": "{{aws_region}}",
+                  "type": "string"
+                },
+                {
+                  "key": "service",
+                  "value": "cognito-idp",
+                  "type": "string"
+                }
               ]
             },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/x-amz-json-1.1" },
-              { "key": "X-Amz-Target", "value": "AWSCognitoIdentityProviderService.AdminConfirmSignUp" }
+              {
+                "key": "Content-Type",
+                "value": "application/x-amz-json-1.1"
+              },
+              {
+                "key": "X-Amz-Target",
+                "value": "AWSCognitoIdentityProviderService.AdminConfirmSignUp"
+              }
             ],
             "url": {
               "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
               "protocol": "https",
-              "host": ["cognito-idp", "{{aws_region}}", "amazonaws", "com"],
+              "host": [
+                "cognito-idp",
+                "{{aws_region}}",
+                "amazonaws",
+                "com"
+              ],
               "path": []
             },
             "body": {
@@ -132,16 +260,29 @@
         {
           "name": "3. Log In As New User",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "POST",
             "header": [
-              { "key": "Content-Type", "value": "application/x-amz-json-1.1" },
-              { "key": "X-Amz-Target", "value": "AWSCognitoIdentityProviderService.InitiateAuth" }
+              {
+                "key": "Content-Type",
+                "value": "application/x-amz-json-1.1"
+              },
+              {
+                "key": "X-Amz-Target",
+                "value": "AWSCognitoIdentityProviderService.InitiateAuth"
+              }
             ],
             "url": {
               "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
               "protocol": "https",
-              "host": ["cognito-idp", "{{aws_region}}", "amazonaws", "com"],
+              "host": [
+                "cognito-idp",
+                "{{aws_region}}",
+                "amazonaws",
+                "com"
+              ],
               "path": []
             },
             "body": {
@@ -173,14 +314,29 @@
           "request": {
             "auth": {
               "type": "bearer",
-              "bearer": [{ "key": "token", "value": "{{new_user_id_token}}", "type": "string" }]
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{new_user_id_token}}",
+                  "type": "string"
+                }
+              ]
             },
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/users",
-              "host": ["{{base_url}}"],
-              "path": ["users"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -198,11 +354,20 @@
           "name": "Register (POST /users)",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/users",
-              "host": ["{{base_url}}"],
-              "path": ["users"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -217,8 +382,13 @@
             "method": "GET",
             "url": {
               "raw": "{{base_url}}/users/me",
-              "host": ["{{base_url}}"],
-              "path": ["users", "me"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users",
+                "me"
+              ]
             }
           }
         },
@@ -228,8 +398,13 @@
             "method": "GET",
             "url": {
               "raw": "{{base_url}}/users/{{follow_username}}",
-              "host": ["{{base_url}}"],
-              "path": ["users", "{{follow_username}}"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users",
+                "{{follow_username}}"
+              ]
             },
             "description": "Public. Shows follower_count / following_count, and followed_by_me when called with a token."
           }
@@ -245,8 +420,14 @@
             "method": "POST",
             "url": {
               "raw": "{{base_url}}/users/{{follow_username}}/follow",
-              "host": ["{{base_url}}"],
-              "path": ["users", "{{follow_username}}", "follow"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users",
+                "{{follow_username}}",
+                "follow"
+              ]
             },
             "description": "Set follow_username to another registered user first. 409 if already following, 422 if it's you."
           }
@@ -257,8 +438,14 @@
             "method": "DELETE",
             "url": {
               "raw": "{{base_url}}/users/{{follow_username}}/follow",
-              "host": ["{{base_url}}"],
-              "path": ["users", "{{follow_username}}", "follow"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "users",
+                "{{follow_username}}",
+                "follow"
+              ]
             },
             "description": "Idempotent — 200 even if you weren't following."
           }
@@ -269,11 +456,22 @@
             "method": "GET",
             "url": {
               "raw": "{{base_url}}/feed?limit=20",
-              "host": ["{{base_url}}"],
-              "path": ["feed"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "feed"
+              ],
               "query": [
-                { "key": "limit", "value": "20" },
-                { "key": "cursor", "value": "{{feed_cursor}}", "disabled": true }
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{feed_cursor}}",
+                  "disabled": true
+                }
               ]
             },
             "description": "Published clips from everyone you follow, newest first. Enable the cursor param (and it auto-fills from the last response) to page."
@@ -295,17 +493,197 @@
       ]
     },
     {
+      "name": "Engagement",
+      "item": [
+        {
+          "name": "Like Clip (POST /clips/:clip_id/like)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/like",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "like"
+              ]
+            },
+            "description": "Likes clip_id (set by the Clips folder). 201, or 409 if already liked / not published yet."
+          }
+        },
+        {
+          "name": "Unlike Clip (DELETE /clips/:clip_id/like)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/like",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "like"
+              ]
+            },
+            "description": "Idempotent — 200 even if you hadn't liked it."
+          }
+        },
+        {
+          "name": "Add Comment (POST /clips/:clip_id/comments)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/comments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "comments"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"clean landing!\"\n}"
+            },
+            "description": "Top-level comment on clip_id. 409 if the clip isn't published yet."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "pm.collectionVariables.set('comment_id', data.id);",
+                  "console.log('comment_id:', data.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Reply to Comment (POST /clips/:clip_id/comments)",
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/comments",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "comments"
+              ]
+            },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"for real\",\n  \"parent_id\": \"{{comment_id}}\"\n}"
+            },
+            "description": "Replies to comment_id (set by Add Comment). Threading is one level deep — 422 if comment_id is itself already a reply."
+          }
+        },
+        {
+          "name": "List Comments (GET /clips/:clip_id/comments)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/comments?limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "comments"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{comment_cursor}}",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Top-level comments newest-first, with replies nested inline. Enable the cursor param (auto-filled from the last response) to page."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "pm.collectionVariables.set('comment_cursor', data.next_cursor || '');",
+                  "console.log('items:', data.items.length, 'next_cursor:', data.next_cursor);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Delete Comment (DELETE /clips/:clip_id/comments/:comment_id)",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/comments/{{comment_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "comments",
+                "{{comment_id}}"
+              ]
+            },
+            "description": "Deletable by its author or the clip's owner. 204 on success, 404 if already gone, 403 if you're neither."
+          }
+        }
+      ]
+    },
+    {
       "name": "Clips",
       "item": [
         {
           "name": "1. Create Clip (POST /clips)",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/clips",
-              "host": ["{{base_url}}"],
-              "path": ["clips"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -330,9 +708,16 @@
         {
           "name": "2. Upload to S3 (PUT presigned URL)",
           "request": {
-            "auth": { "type": "noauth" },
+            "auth": {
+              "type": "noauth"
+            },
             "method": "PUT",
-            "header": [{ "key": "Content-Type", "value": "video/mp4" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "video/mp4"
+              }
+            ],
             "url": "{{upload_url}}",
             "body": {
               "mode": "raw",
@@ -347,8 +732,14 @@
             "method": "POST",
             "url": {
               "raw": "{{base_url}}/clips/{{clip_id}}/complete",
-              "host": ["{{base_url}}"],
-              "path": ["clips", "{{clip_id}}", "complete"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "complete"
+              ]
             }
           }
         },
@@ -358,8 +749,13 @@
             "method": "GET",
             "url": {
               "raw": "{{base_url}}/clips/{{clip_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["clips", "{{clip_id}}"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}"
+              ]
             },
             "description": "Re-send this one to poll. status goes queued -> analyzing -> analyzed (or unanalyzable) once the worker picks it up — watch `docker compose logs -f worker` alongside this."
           },
@@ -380,11 +776,22 @@
           "name": "5. Tag Tricks (POST /clips/:clip_id/tricks)",
           "request": {
             "method": "POST",
-            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/clips/{{clip_id}}/tricks",
-              "host": ["{{base_url}}"],
-              "path": ["clips", "{{clip_id}}", "tricks"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "tricks"
+              ]
             },
             "body": {
               "mode": "raw",
@@ -399,8 +806,14 @@
             "method": "POST",
             "url": {
               "raw": "{{base_url}}/clips/{{clip_id}}/publish",
-              "host": ["{{base_url}}"],
-              "path": ["clips", "{{clip_id}}", "publish"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "publish"
+              ]
             },
             "description": "422s if no trick has been tagged yet — try this before step 5 once, on a fresh clip, to see that guard fire."
           }

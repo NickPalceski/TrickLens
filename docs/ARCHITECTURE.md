@@ -4,8 +4,9 @@ Conceptual overview of the system: what each component is, what it does, and
 how it connects to the others. Kept current as the build progresses.
 
 **Current state: step 4 in progress — social app. 4a (follows + home feed)
-done and verified; likes/comments, teams, and Discover still to come.**
-Sections marked *(planned)* are designed but not yet built.
+done and verified; 4b (likes + comments) done and verified. Teams and
+Discover still to come.** Sections marked *(planned)* are designed but not
+yet built.
 
 ---
 
@@ -59,7 +60,7 @@ Sections marked *(planned)* are designed but not yet built.
 |---|---|---|
 | **Next.js** | UI | Deploys free on Vercel; shadcn/ui gives a good-looking baseline without deep frontend work |
 | **API Lambda** | HTTP, auth, CRUD, presigning | Scales to zero — no idle cost |
-| **Worker Lambda** | Video analysis | Separate image (~2GB vs ~200MB) and separate scaling from the API — *from step 6*; the step 3 stub shares the API's image (see §9) |
+| **Worker Lambda** | Video analysis | Separate image (~2GB vs ~200MB) and separate scaling from the API — *from step 6*; the step 3 stub shares the API's image (see §10) |
 | **Postgres** | All relational state | The domain is deeply relational: follows, teams, likes, comments |
 | **S3** | Video and image bytes | Never in the database — the DB stores keys only |
 | **CloudFront** | Media delivery | Speed, *and* the 1TB/mo always-free egress tier. Without it, bandwidth would be the largest bill |
@@ -217,7 +218,7 @@ id-token-for-client.
 
 ## 6. Data model
 
-**Built (steps 1–3):**
+**Built (steps 1–4b):**
 
 ```
 users     id, cognito_sub (not null, unique), username, display_name, bio,
@@ -233,6 +234,9 @@ clip_tricks  clip_id, trick_id, position   (pk: clip_id+position; source: user_t
 follows   id, follower_id → users,
           followee_user_id → users?, followee_team_id?,   (4a; team FK added in 4c)
           CHECK exactly one followee set
+likes     user_id → users, clip_id → clips   (pk: user_id+clip_id; 4b)
+comments  id, clip_id → clips, user_id → users, body,
+          parent_id → comments?, created_at   (4b; one level of replies — see below)
 ```
 
 **Planned:**
@@ -241,8 +245,6 @@ follows   id, follower_id → users,
 teams              id, name, slug, description, level, owner_id, join_policy
 team_members       team_id, user_id, role, joined_at
 team_join_requests team_id, user_id, status
-likes              user_id, clip_id
-comments           id, clip_id, user_id, body, parent_id?
 clip_views         clip_id, user_id?, viewed_at
 team_score_history team_id, score, captured_at
 ```
@@ -279,6 +281,19 @@ team_score_history team_id, score, captured_at
   sides, which a bare `followee_id` couldn't. `followee_team_id`'s FK to
   `teams` lands in 4c, when that table exists — the column and the check are
   in 4a's migration already.
+- **`likes` has no surrogate id** — `(user_id, clip_id)` is the primary key
+  directly, same reasoning as `clip_tricks`: a like has no identity beyond
+  "this user liked this clip", so a separate UUID plus a unique constraint
+  would just be a redundant second index.
+- **`comments.parent_id` threads exactly one level deep** — a reply's
+  `parent_id` must reference a top-level comment, never another reply. That
+  rule is a cross-row condition (the referenced row's own `parent_id` must
+  be null), which a plain `CHECK` constraint can't express without a
+  trigger; this codebase has no procedural DB logic anywhere else (the
+  closest precedent is `app/models/enums.py` pushing enum-value mapping into
+  Python rather than the database), so it's enforced in `routes/clips.py`
+  instead. `parent_id`'s `ondelete="CASCADE"` means deleting a top-level
+  comment deletes its replies too.
 - **`team_score_history` exists because Discover ranks teams by score
   *increase*.** A delta is uncomputable without history, and this is painful
   to retrofit.
@@ -311,7 +326,40 @@ every load.
 
 ---
 
-## 8. Environments
+## 8. Engagement counts
+
+Likes and comments (step 4b) add three fields to `ClipOut`: `like_count`,
+`comment_count`, `liked_by_me`. They're computed in `api/serializers.py`'s
+`clip_out()`, which now takes `db` and an optional `viewer`, plus three
+optional precomputed values.
+
+**Single-clip routes** (everything in `routes/clips.py`) let `clip_out`
+query directly — one `COUNT` for likes, one for comments, one lookup for
+`liked_by_me` — the same per-call cost `user_public()` already pays for
+`follower_count`/`following_count`/`followed_by_me`.
+
+**The feed is different**: it calls `clip_out` in a loop over up to 50 clips
+per page, so paying three queries per clip there would mean up to 150
+queries per feed load. `clip_engagement()` batches all three into one
+grouped query per metric for the whole page — `GROUP BY clip_id` for the two
+counts, one `IN (...)` lookup for the viewer's likes — and `feed.py` passes
+the results into `clip_out` as precomputed values, skipping its default
+per-clip queries entirely.
+
+Comment listing (`GET /clips/{id}/comments`) doesn't need the same
+treatment: it returns *comments*, not clips, and a comment's replies load via
+`.options(selectinload(Comment.replies))` on the query — SQLAlchemy's own
+batched-eager-load strategy, so a page of top-level comments plus every reply
+on it is two queries total, not N+1, with no hand-written batching needed.
+Note this has to be requested explicitly in the query, unlike
+`Clip.analyses`/`Clip.clip_tricks`: SQLAlchemy never auto-applies a
+relationship's default `lazy=` strategy when it's self-referential, the way
+`Comment.replies` is — see the gotcha in `CLAUDE.md` and the comment on
+`Comment.replies` in `app/models/social.py`.
+
+---
+
+## 9. Environments
 
 The seam between local and cloud is **`AWS_ENDPOINT_URL`** — for S3, SQS, and
 Postgres. Cognito is the one exception: it's always the real service, dev
@@ -347,7 +395,7 @@ differs.
 
 ---
 
-## 9. Decisions
+## 10. Decisions
 
 ### Neon instead of RDS
 
@@ -427,7 +475,7 @@ bugs.
 
 ---
 
-## 10. Cost
+## 11. Cost
 
 | Service | Free allowance | Expected |
 |---|---|---|
@@ -446,14 +494,14 @@ policy keeping the last 5 images, and an AWS Budget alarm at $5.
 
 ---
 
-## 11. Build order
+## 12. Build order
 
 | Step | Scope | Status |
 |---|---|---|
 | 1 | Local dev foundation — Compose, Postgres, LocalStack, FastAPI, Alembic | **done** |
 | 2 | Auth (Cognito) + users + profiles | **done** |
 | 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | **done** |
-| 4 | Social app — feed, likes, comments, teams, discover | **in progress** (4a: follows + feed done) |
+| 4 | Social app — feed, likes, comments, teams, discover | **in progress** (4a, 4b done) |
 | 5 | Terraform + GitHub Actions → deploy to AWS | |
 | 6 | Replace the stub with the real steeze analyzer | |
 

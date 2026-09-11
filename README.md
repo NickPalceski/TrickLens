@@ -10,8 +10,10 @@ Discover.
 > **Status: step 4 in progress — the social app.** Steps 1–3 are done and
 > verified (local dev foundation, Cognito auth/users/profiles, a clip's full
 > path from draft through a stubbed analysis to published). Step 4a
-> (following users + the home feed) is done and verified end-to-end. See
-> [Clips](#clips) and [Feed & follows](#feed--follows) to try it, and
+> (following users + the home feed) is done and verified end-to-end. Step 4b
+> (likes + comments) is done and verified end-to-end too. See
+> [Clips](#clips), [Feed & follows](#feed--follows), and
+> [Likes & comments](#likes--comments) to try it, and
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ## Stack
@@ -207,6 +209,40 @@ curl -X DELETE localhost:8000/users/otheruser/follow -H "Authorization: Bearer $
 `GET /users/{username}` now also reports `follower_count`, `following_count`,
 and (when called with a token) `followed_by_me`. Team follows and Discover
 come in the rest of step 4.
+
+## Likes & comments
+
+The Postman collection's **Engagement** folder covers this, reusing
+`clip_id` from the Clips folder. By curl, continuing from an `$ID_TOKEN`:
+
+```bash
+# like a published clip
+curl -X POST "localhost:8000/clips/$clip_id/like" -H "Authorization: Bearer $ID_TOKEN"
+
+curl -X DELETE "localhost:8000/clips/$clip_id/like" -H "Authorization: Bearer $ID_TOKEN"
+
+# top-level comment
+resp=$(curl -s -X POST "localhost:8000/clips/$clip_id/comments" \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
+  -d '{"body": "clean landing!"}')
+comment_id=$(echo "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin)["id"])')
+
+# reply — one level deep only; replying to a reply is a 422
+curl -X POST "localhost:8000/clips/$clip_id/comments" \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"body\": \"for real\", \"parent_id\": \"$comment_id\"}"
+
+# newest-first, top-level comments with replies nested inline, keyset-paginated
+curl "localhost:8000/clips/$clip_id/comments?limit=20" -H "Authorization: Bearer $ID_TOKEN"
+
+# the comment's author or the clip's owner can delete it
+curl -X DELETE "localhost:8000/clips/$clip_id/comments/$comment_id" -H "Authorization: Bearer $ID_TOKEN"
+```
+
+`GET /clips/{id}` (and every other clip payload) now also reports
+`like_count`, `comment_count`, and `liked_by_me`. Both like and comment
+routes require the clip to be `published` — a 404 if you can't see it at
+all (someone else's draft), a 409 if you can (your own draft).
 
 ## Commands
 

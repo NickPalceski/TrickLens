@@ -8,7 +8,7 @@ to it — which silently produces migrations that drop tables.
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKey
 from app.models.clip import Analysis, Clip, ClipTrick, Trick
 from app.models.enums import ClipStatus, SkateStyle, Stance
-from app.models.social import Follow
+from app.models.social import Comment, Follow, Like
 from app.models.user import Profile, User
 
 __all__ = [
@@ -17,7 +17,9 @@ __all__ = [
     "Clip",
     "ClipStatus",
     "ClipTrick",
+    "Comment",
     "Follow",
+    "Like",
     "Profile",
     "SkateStyle",
     "Stance",

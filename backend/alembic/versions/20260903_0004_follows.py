@@ -2,7 +2,7 @@
 
 Step 4a. Polymorphic follow target as two nullable FKs + a check constraint
 (see docs/ARCHITECTURE.md §6). followee_team_id's FK to `teams` is deferred
-to 0005 (4c) — that table doesn't exist yet.
+to 0006 (4c) — that table doesn't exist yet.
 
 Revision ID: 0004
 Revises: 0003
@@ -37,7 +37,7 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="CASCADE"),
             nullable=True,
         ),
-        # FK to teams.id added in 0005 — teams doesn't exist yet.
+        # FK to teams.id added in 0006 — teams doesn't exist yet.
         sa.Column("followee_team_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column(
             "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False

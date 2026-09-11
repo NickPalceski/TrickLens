@@ -54,6 +54,9 @@ class ClipOut(BaseModel):
     published_at: datetime | None = None
     tricks: list[TrickOut] = []
     analysis: AnalysisOut | None = None
+    like_count: int = 0
+    comment_count: int = 0
+    liked_by_me: bool = False  # always false for anon viewers, same as UserPublic.followed_by_me
     created_at: datetime
 
 

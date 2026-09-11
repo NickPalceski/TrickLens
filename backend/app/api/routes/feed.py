@@ -5,14 +5,12 @@ Fan-out-on-read (docs/ARCHITECTURE.md §7): a live join of `follows` against
 per-user timelines aren't worth their write amplification.
 """
 
-import uuid
-from datetime import datetime
-
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import and_, or_, select
 
 from app.api.deps import CurrentUser, DbSession
-from app.api.serializers import clip_out
+from app.api.pagination import decode_cursor, encode_cursor
+from app.api.serializers import clip_engagement, clip_out
 from app.models.clip import Clip
 from app.models.enums import ClipStatus
 from app.models.social import Follow
@@ -21,13 +19,6 @@ from app.schemas.clip import FeedPage
 router = APIRouter(prefix="/feed", tags=["feed"])
 
 _PAGE_MAX = 50
-
-
-def _decode_cursor(cursor: str | None) -> tuple[datetime, uuid.UUID] | None:
-    if not cursor:
-        return None
-    ts, _, clip_id = cursor.rpartition("|")
-    return datetime.fromisoformat(ts), uuid.UUID(clip_id)
 
 
 @router.get("")
@@ -47,7 +38,7 @@ async def home_feed(
     )
 
     try:
-        keyset = _decode_cursor(cursor)
+        keyset = decode_cursor(cursor)
     except ValueError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "malformed cursor") from exc
 
@@ -71,6 +62,10 @@ async def home_feed(
     next_cursor = None
     if has_more and clips:
         last = clips[-1]
-        next_cursor = f"{last.published_at.isoformat()}|{last.id}"
+        next_cursor = encode_cursor(last.published_at, last.id)
 
-    return FeedPage(items=[await clip_out(c) for c in clips], next_cursor=next_cursor)
+    # One batched query per engagement metric for the whole page, instead of
+    # clip_out's default per-clip queries — see clip_engagement's docstring.
+    engagement = await clip_engagement([c.id for c in clips], db, user)
+    items = [await clip_out(c, db, user, **engagement[c.id]) for c in clips]
+    return FeedPage(items=items, next_cursor=next_cursor)

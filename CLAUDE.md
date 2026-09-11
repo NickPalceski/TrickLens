@@ -28,7 +28,7 @@ alters behaviour but leaves the docs stale is incomplete.
   dev↔prod seam (LocalStack vs real AWS is an env var, nothing more);
   `auth.py` is the exception — Cognito is always the real service, dev
   included, because LocalStack only emulates it on a paid plan and even then
-  has known JWKS bugs. See ARCHITECTURE.md §9.
+  has known JWKS bugs. See ARCHITECTURE.md §10.
 - **Serialization**: never return ORM objects from a route. Always go
   through a Pydantic schema in `app/schemas/`.
 - **Media**: store S3 *keys* in the database, never full URLs. URLs are
@@ -39,16 +39,15 @@ alters behaviour but leaves the docs stale is incomplete.
 
 ## Environment
 
-Developed from two machines: a Windows/WSL2 box and a native-Linux (Omarchy)
-dual-boot. They're independent clones, not a synced setup — dual-booting
-means one physical machine can't see the other OS's filesystem, so each side
-needs its own `git clone` and its own `.env` (gitignored, regenerate with
-`make init`). The two things worth carrying over rather than redoing: the
-Cognito dev pool (copy `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` into the
+Developed from three machines: a Windows/WSL2 box, a native-Linux (Omarchy)
+dual-boot, and a MacBook. They're independent clones, not a synced setup —
+each needs its own `git clone` and its own `.env` (gitignored, regenerate
+with `make init`). The two things worth carrying over rather than redoing:
+the Cognito dev pool (copy `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` into the
 new `.env`, or re-run `cognito-bootstrap.sh` — it finds the existing pool by
 name instead of duplicating it) and, optionally, the same AWS CLI access
 key. Postgres/LocalStack state is throwaway container state either way;
-`make up` rebuilds it from nothing on both.
+`make up` rebuilds it from nothing on all three.
 
 ### Windows/WSL2
 
@@ -74,6 +73,20 @@ all behave normally wherever the repo is cloned.
 - The flaky-first-boot-DNS and `wsl.exe` shell-quoting gotchas below are
   specific to WSL2's virtualized networking and the `wsl.exe` bridge — they
   don't occur on bare metal.
+
+### macOS
+
+Also no Windows↔Linux filesystem boundary — same as native Linux, the repo
+can live anywhere.
+
+- `make` comes with the Xcode Command Line Tools (`xcode-select --install`),
+  not preinstalled otherwise.
+- Docker Desktop for Mac; no WSL-equivalent integration step.
+- `aws` CLI isn't preinstalled — `brew install awscli` before running
+  `scripts/cognito-bootstrap.sh` or `aws configure`.
+- Watch for **port 5432 already in use** if a native (non-Docker) Postgres —
+  notably the postgresql.org/EDB installer, which runs as an always-on
+  system service — is also on the machine. See the gotcha below.
 
 ### Gotchas already hit — do not rediscover these
 
@@ -104,11 +117,37 @@ all behave normally wherever the repo is cloned.
   `Storage._externalize()` swapping in `AWS_PUBLIC_ENDPOINT_URL`
   (`http://localhost:4566`) before the URL leaves the API. Any new code that
   hands a presigned URL to an external caller needs to go through it.
+- **SQLAlchemy never auto-applies a relationship's default `lazy=` strategy
+  when it's self-referential** — confirmed with a minimal repro outside this
+  codebase too, so it's a general SQLAlchemy behavior, not something specific
+  to this model. `Comment.replies` (`app/models/social.py`) pointed this at
+  `parent_id` on the same table; declaring it `lazy="selectin"` did nothing —
+  a plain `select(Comment)` left `replies` unloaded, and touching it crashed
+  async SQLAlchemy with an opaque `MissingGreenlet` instead of a real error.
+  Non-self-referential relationships on the very same model (`Comment.author`)
+  auto-load fine, so this only bites the self-referential case — presumably
+  SQLAlchemy's guard against unbounded recursive eager-loading on tree-shaped
+  data. Fixed by setting `lazy="raise_on_sql"` (fails loudly if a query
+  forgets it, rather than crashing obscurely) and adding an explicit
+  `.options(selectinload(Comment.replies))` at both call sites in
+  `routes/clips.py` that need it (`add_comment`, `list_comments`).
+- **Port 5432 collides with a native Postgres install, on macOS specifically.**
+  The postgresql.org/EDB macOS installer sets Postgres up as an always-on
+  system `launchd` daemon (`RunAtLoad: true`), unlike Homebrew's postgres
+  (opt-in via `brew services start`) or Postgres.app (only runs while the app
+  is open) — so `docker compose up`'s own Postgres fails to bind 5432 with
+  "address already in use" the moment that installer is present, without
+  ever touching Docker. Check `lsof -nP -iTCP:5432 -sTCP:LISTEN` /
+  `ps aux | grep postgres` for `/Library/PostgreSQL/*/bin/postgres` if `make
+  up` fails this way. `sudo launchctl disable system/postgresql-<version>`
+  disables it permanently (`sudo launchctl bootout system/postgresql-<version>`
+  stops it just for the current boot).
 
 ## Current state
 
 **Steps 1–3 complete and verified; step 4 in progress — 4a (follows + home
-feed) done and verified.** Running locally:
+feed) done and verified, 4b (likes + comments) done and verified.** Running
+locally:
 
 ```bash
 cd ~/git-repos/TrickLens
@@ -119,10 +158,11 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 - `postgres`, `localstack` (S3 + SQS), `api` (FastAPI on the Lambda base
   image), a `worker` (SQS poll loop, stubbed analyzer), and a one-shot
   `migrate` service, all under Compose.
-- Schema at revision `0004`: `users` + `profiles` (step 1–2); `clips`,
+- Schema at revision `0005`: `users` + `profiles` (step 1–2); `clips`,
   `analyses`, `tricks`, `clip_tricks` (step 3, no `team_id` yet); `follows`
   (step 4a — two nullable FKs + XOR check, `followee_team_id`'s FK deferred
-  to 4c). Enum types `stance`, `skate_style`, `clip_status`.
+  to 4c); `likes`, `comments` (step 4b — see below). Enum types `stance`,
+  `skate_style`, `clip_status`.
 - LocalStack self-provisions the `tricklens-media` bucket (CORS + 7-day
   `raw/` lifecycle rule) and the `tricklens-analysis` queue with a DLQ.
 - A real Cognito dev pool (`scripts/cognito-bootstrap.sh`) backs auth — see
@@ -144,10 +184,29 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   `followed_by_me`/`follower_count`/`following_count` on `UserPublic`.
   ORM→schema conversion moved into `app/api/serializers.py`. `get_optional_user`
   in deps.py is the viewer path for public routes.
-- Hot-reload verified at ~850ms. `ruff check` clean as of step 2; not
-  re-run over step 3 or 4a's files — run `make fmt`. Migration
-  upgrade/downgrade round trip verified through `0002`; `0003`/`0004`
-  applied and exercised, not round-tripped.
+- **Step 4b (likes + comments)** migration `0005` applied, the full test
+  suite (`tests/test_engagement.py` plus a re-run of every earlier test file)
+  passes against real Postgres/LocalStack — 30/30 — and verified end-to-end
+  by hand against real Cognito (curl, not yet Postman itself, but the same
+  requests the Engagement folder makes): a real published clip was liked
+  (`like_count`/`liked_by_me` correct, double-like 409s, unlike idempotent),
+  commented on with one level of nested replies (`comment_count` counts
+  replies too), and a comment was deleted by the clip's owner rather than
+  its author (moderation) with the reply cascading away and a re-delete
+  404ing. `POST/DELETE /clips/{id}/like` and `POST /clips/{id}/comments`,
+  `GET /clips/{id}/comments` (keyset-paginated, one level of reply nesting),
+  `DELETE /clips/{id}/comments/{comment_id}` (author or clip owner only);
+  `like_count`/`comment_count`/`liked_by_me` on `ClipOut`. `clip_out()` now
+  takes `db`/`viewer` and optional precomputed engagement values; feed.py
+  batches them per-page via `clip_engagement()` instead of paying per-clip
+  queries. Keyset cursor encode/decode factored out of feed.py into
+  `app/api/pagination.py`, shared with comment listing.
+- Hot-reload verified at ~850ms. `ruff check`/`ruff format` clean as of 4b's
+  files; step 2 is the last point the full suite was confirmed clean
+  end-to-end — steps 3/4a haven't been re-run. Migration upgrade/downgrade
+  round trip verified through `0002`; `0003`/`0004`/`0005` applied and
+  exercised (fresh `docker compose up` ran all five in order against real
+  Postgres), not round-tripped (`downgrade` untested).
 
 **Not done yet:** no frontend code (a visual prototype exists as a separate
 Artifact canvas, outside the repo), no Terraform.
@@ -159,8 +218,8 @@ Artifact canvas, outside the repo), no Terraform.
 3. ✅ Upload → S3 → SQS → worker (stubbed analyzer)
 4. 🔶 Social app  ← in progress, built in sub-phases:
    - 4a ✅ follows + home feed *(verified)*
-   - 4b ⬜ likes + comments
-   - 4c ⬜ teams (+ `clips.team_id`, `follows.followee_team_id` FK)
+   - 4b ✅ likes + comments *(verified)*
+   - 4c ⬜ teams (+ `clips.team_id`, `follows.followee_team_id` FK, migration `0006`)
    - 4d ⬜ Discover (precomputed rankings + team score history)
 5. ⬜ Terraform + GitHub Actions → deploy to AWS
 6. ⬜ Replace the stub with the real steeze analyzer
