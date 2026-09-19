@@ -14,13 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.clip import Clip
 from app.models.enums import JoinRequestKind
-from app.models.social import Comment, Follow, Like
+from app.models.social import ClipView, Comment, Follow, Like
 from app.models.team import Team, TeamJoinRequest, TeamMember
 from app.models.user import User
 from app.schemas.clip import AnalysisOut, ClipOut, TrickOut
 from app.schemas.social import CommentOut
 from app.schemas.team import TeamBrief, TeamMemberOut, TeamOut
 from app.schemas.user import ProfileOut, UserBrief, UserPublic
+from app.scoring import team_average_score, user_average_score
 from app.services.storage import get_storage
 
 
@@ -65,6 +66,7 @@ async def user_public(user: User, db: AsyncSession, viewer: User | None = None) 
         follower_count=follower_count or 0,
         following_count=following_count or 0,
         followed_by_me=followed_by_me,
+        average_score=await user_average_score(db, user.id),
         created_at=user.created_at,
     )
 
@@ -133,6 +135,7 @@ async def team_out(team: Team, db: AsyncSession, viewer: User | None = None) -> 
         member_count=member_count,
         follower_count=follower_count,
         followed_by_me=followed_by_me,
+        average_score=await team_average_score(db, team.id),
         my_role=my_role,
         founded=team.founded_at is not None,
         pending_founders=pending_founders,
@@ -147,17 +150,18 @@ async def clip_out(
     *,
     like_count: int | None = None,
     comment_count: int | None = None,
+    view_count: int | None = None,
     liked_by_me: bool | None = None,
 ) -> ClipOut:
     """Requires clip.user / clip.analyses / clip.clip_tricks to be loaded —
     they're all lazy="selectin" on the model, so any query that fetches the
     Clip populates them.
 
-    The three engagement values default to a per-clip query each (mirroring
+    The engagement values default to a per-clip query each (mirroring
     user_public's per-call count queries), but a caller looping over many
-    clips — feed.py, up to 50 per page — can precompute all three with one
-    batched clip_engagement() call below and pass them in here instead of
-    paying 2-3 queries per clip.
+    clips — feed.py, discover.py, up to 50 per page — can precompute all of
+    them with one batched clip_engagement() call below and pass them in here
+    instead of paying a query per clip per metric.
     """
     latest = clip.analyses[0] if clip.analyses else None
     if like_count is None:
@@ -169,6 +173,13 @@ async def clip_out(
         comment_count = (
             await db.scalar(
                 select(func.count()).select_from(Comment).where(Comment.clip_id == clip.id)
+            )
+            or 0
+        )
+    if view_count is None:
+        view_count = (
+            await db.scalar(
+                select(func.count()).select_from(ClipView).where(ClipView.clip_id == clip.id)
             )
             or 0
         )
@@ -195,6 +206,7 @@ async def clip_out(
         analysis=AnalysisOut.model_validate(latest) if latest else None,
         like_count=like_count,
         comment_count=comment_count,
+        view_count=view_count,
         liked_by_me=liked_by_me,
         team=team_brief(clip.team) if clip.team else None,
         score_included=clip.score_included,
@@ -205,11 +217,11 @@ async def clip_out(
 async def clip_engagement(
     clip_ids: Sequence[uuid.UUID], db: AsyncSession, viewer: User | None
 ) -> dict[uuid.UUID, dict[str, int | bool]]:
-    """Batches the like/comment counts and the viewer's like state for a
+    """Batches the like/comment/view counts and the viewer's like state for a
     whole page of clips — one grouped query per metric instead of clip_out's
-    default per-clip queries. Used by feed.py; single-clip routes in
-    routes/clips.py let clip_out query directly instead."""
-    if not clip_ids:  # empty feed page — skip three queries, and .in_(()) warns
+    default per-clip queries. Used by feed.py and discover.py; single-clip
+    routes in routes/clips.py let clip_out query directly instead."""
+    if not clip_ids:  # empty page — skip four queries, and .in_(()) warns
         return {}
     likes = dict(
         (
@@ -229,6 +241,15 @@ async def clip_engagement(
             )
         ).all()
     )
+    views = dict(
+        (
+            await db.execute(
+                select(ClipView.clip_id, func.count())
+                .where(ClipView.clip_id.in_(clip_ids))
+                .group_by(ClipView.clip_id)
+            )
+        ).all()
+    )
     liked_by_me: set[uuid.UUID] = set()
     if viewer is not None:
         liked_by_me = set(
@@ -240,6 +261,7 @@ async def clip_engagement(
         cid: {
             "like_count": likes.get(cid, 0),
             "comment_count": comments.get(cid, 0),
+            "view_count": views.get(cid, 0),
             "liked_by_me": cid in liked_by_me,
         }
         for cid in clip_ids

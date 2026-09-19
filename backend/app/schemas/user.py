@@ -70,6 +70,9 @@ class UserPublic(BaseModel):
     follower_count: int = 0
     following_count: int = 0
     followed_by_me: bool = False  # always false for your own profile / anon viewers
+    # Uncapped average steeze_score across every published, score-included
+    # clip (4d, app/scoring.py). Null, not 0, if there are none yet.
+    average_score: Decimal | None = None
     created_at: datetime
 
 

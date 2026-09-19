@@ -147,6 +147,25 @@ can live anywhere.
   afterward — `tests/test_teams.py`'s team-tag test now does both. Any
   relationship a route assigns to (not just reads) must not be
   `viewonly=True`.
+- **This dev database is shared, persistent state across every manual
+  verification session and every `pytest` run — a test for anything global
+  and unscoped must not assert an exact result list.** Discover (4d) ranks
+  across *all* published clips/teams, unlike the home feed (scoped to one
+  viewer's follows) or a single profile's `average_score` (scoped to one
+  user) — by the time `tests/test_discover.py` was written, 200+ real clips
+  and dozens of real teams already existed from every earlier step's manual
+  curl verification, and a plain `GET /discover/clips` with the default
+  `limit` doesn't guarantee a freshly-inserted test clip lands on page 1.
+  Worse, this compounds *between* automated and manual runs: hand-verifying
+  4d's `GET /discover/teams` by inserting a real, deliberately backdated
+  `team_score_history` row (there's no endpoint that fabricates 7-day-old
+  history, so a real row was the only way to exercise the delta ranking by
+  hand) left that team permanently eligible for the ranking afterward,
+  which broke `test_discover_teams_ranked_by_increase_new_team_excluded`'s
+  original exact-list assertion on the very next `pytest` run. Fixed by
+  walking every page and asserting presence/relative order among the
+  specific ids a test controls, never an exact full list — same fix already
+  applied to the clip-ranking tests for the same underlying reason.
 - **Port 5432 collides with a native Postgres install, on macOS specifically.**
   The postgresql.org/EDB macOS installer sets Postgres up as an always-on
   system `launchd` daemon (`RunAtLoad: true`), unlike Homebrew's postgres
@@ -161,9 +180,9 @@ can live anywhere.
 
 ## Current state
 
-**Steps 1–3 complete and verified; step 4 in progress — 4a (follows + home
-feed), 4b (likes + comments), and 4c (teams) all done and verified.** Running
-locally:
+**Steps 1–3 complete and verified; step 4 done — 4a (follows + home feed), 4b
+(likes + comments), 4c (teams), and 4d (Discover) all done and verified.**
+Running locally:
 
 ```bash
 cd ~/git-repos/TrickLens
@@ -174,12 +193,13 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 - `postgres`, `localstack` (S3 + SQS), `api` (FastAPI on the Lambda base
   image), a `worker` (SQS poll loop, stubbed analyzer), and a one-shot
   `migrate` service, all under Compose.
-- Schema at revision `0006`: `users` + `profiles` (step 1–2); `clips`,
+- Schema at revision `0007`: `users` + `profiles` (step 1–2); `clips`,
   `analyses`, `tricks`, `clip_tricks` (step 3, `team_id`/`score_included`
   added in 4c); `follows` (step 4a — two nullable FKs + XOR check,
   `followee_team_id`'s FK completed in 4c); `likes`, `comments` (step 4b);
-  `teams`, `team_members`, `team_join_requests` (step 4c — see below). Enum
-  types `stance`, `skate_style`, `clip_status`, `team_level`, `join_policy`,
+  `teams`, `team_members`, `team_join_requests` (step 4c); `clip_views`,
+  `clip_rankings`, `team_score_history` (step 4d — see below). Enum types
+  `stance`, `skate_style`, `clip_status`, `team_level`, `join_policy`,
   `team_role`, `join_request_kind`.
 - LocalStack self-provisions the `tricklens-media` bucket (CORS + 7-day
   `raw/` lifecycle rule) and the `tricklens-analysis` queue with a DLQ.
@@ -240,13 +260,45 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   `IN`-subqueries (`Clip.user_id`/`Clip.team_id`) to avoid double-counting a
   clip whose author *and* tagged team are both followed. The frontend design
   canvas (see below) was extended in the same session to cover these flows.
-- Hot-reload verified at ~850ms. `ruff check`/`ruff format` clean as of 4c's
+- **Step 4d (Discover)** migration `0007` applied; `tests/test_discover.py`
+  plus a re-run of every earlier test file passes against real
+  Postgres/LocalStack — 49/49 — and verified end-to-end by hand against real
+  Cognito (curl, not yet Postman itself, but the same requests the new
+  Discover folder makes): two real published clips (one high-score/no-
+  engagement, one low-score/liked-and-commented-and-viewed) proved
+  `sort=score` and `sort=engagement` rank oppositely as designed, that
+  `score_included=false` drops a clip from `sort=score` while leaving it on
+  `sort=engagement`, and that a real team's `GET /discover/teams` delta
+  matched its two `team_score_history` snapshots exactly (see the gotcha
+  above for what hand-verifying that ranking did to the shared dev DB, and
+  what it broke in the automated suite as a result — now fixed). Adds
+  `POST /clips/{id}/view` (append-only, not deduped — a rewatch counts
+  again; the clip owner's own views are silently dropped rather than
+  counted, since unlike a like a raw view has no natural per-user cap) and
+  `view_count` on `ClipOut`; `average_score` on `UserPublic` (uncapped) and
+  `TeamOut` (top-10-of-eligible-clips), both live-computed via the new
+  `app/scoring.py`, shared with the rankings job so the live number and the
+  historical snapshot can't drift apart. `app/rankings.py`'s `run()`
+  rebuilds `clip_rankings` (this week's published clips, snapshotting
+  steeze_score/score_included/like_count/comment_count/view_count/
+  engagement_score) and appends one `team_score_history` row per founded
+  team — `make rankings` runs it on demand locally; nothing schedules it
+  automatically until step 5's EventBridge rule exists.
+  `GET /discover/clips?sort=score|engagement` reads the snapshot
+  (offset-paginated, not keyset — see docs/ARCHITECTURE.md §7 for why that's
+  fine here); `sort=score` filters to `score_included`, `sort=engagement`
+  doesn't (`view_count*1 + like_count*5 + comment_count*10`, tunable
+  constants in `app/rankings.py`). `GET /discover/teams` stays a live query
+  over `team_score_history` instead (cheap — few teams), ranking by score
+  increase over ~7 days; a team with no snapshot that old is excluded
+  rather than credited a fake increase-from-zero.
+- Hot-reload verified at ~850ms. `ruff check`/`ruff format` clean as of 4d's
   files; step 2 is the last point the full suite was confirmed clean
-  end-to-end — steps 3/4a/4b haven't been re-run standalone (they do pass as
-  part of the full 42-test suite above). Migration upgrade/downgrade round
-  trip verified through `0002`; `0003`–`0006` applied and exercised (fresh
-  `docker compose up` ran all six in order against real Postgres), not
-  round-tripped (`downgrade` untested).
+  end-to-end — steps 3/4a/4b/4c haven't been re-run standalone (they do pass
+  as part of the full 49-test suite above). Migration upgrade/downgrade
+  round trip verified through `0002`; `0003`–`0007` applied and exercised
+  (fresh `docker compose up` ran all seven in order against real Postgres),
+  not round-tripped (`downgrade` untested).
 
 **Not done yet:** no frontend code in this repo (a visual prototype exists as
 a separate Artifact canvas, outside the repo — now covers auth/profile/
@@ -258,12 +310,12 @@ no Terraform.
 1. ✅ Local dev foundation — compose, Postgres, LocalStack, FastAPI, Alembic
 2. ✅ Auth (Cognito) + users + profiles
 3. ✅ Upload → S3 → SQS → worker (stubbed analyzer)
-4. 🔶 Social app  ← in progress, built in sub-phases:
+4. ✅ Social app — built in sub-phases:
    - 4a ✅ follows + home feed *(verified)*
    - 4b ✅ likes + comments *(verified)*
    - 4c ✅ teams (+ `clips.team_id`/`score_included`, `follows.followee_team_id`
      FK, migration `0006`) *(verified)*
-   - 4d ⬜ Discover (precomputed rankings + team score history)
+   - 4d ✅ Discover (precomputed rankings + team score history) *(verified)*
 5. ⬜ Terraform + GitHub Actions → deploy to AWS
 6. ⬜ Replace the stub with the real steeze analyzer
 

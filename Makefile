@@ -1,5 +1,5 @@
 .DEFAULT_GOAL := help
-.PHONY: help init up down clean logs ps health migrate revision shell psql fmt test
+.PHONY: help init up down clean logs ps health migrate revision shell psql fmt test rankings
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -50,3 +50,6 @@ fmt: ## Format and lint
 
 test: ## Run the test suite
 	docker compose run --rm api python -m pytest
+
+rankings: ## Rebuild Discover rankings + team score snapshots (on demand; scheduled automatically in prod, step 5)
+	docker compose run --rm api python -m app.rankings

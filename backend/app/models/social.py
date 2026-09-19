@@ -1,4 +1,4 @@
-"""Social graph: follows, likes, comments. Teams arrive in 4c."""
+"""Social graph: follows, likes, comments, views. Teams arrive in 4c."""
 
 import uuid
 from datetime import datetime
@@ -126,4 +126,35 @@ class Comment(Base, UUIDPrimaryKey):
         cascade="all, delete-orphan",
         order_by="Comment.created_at.asc()",
         lazy="raise_on_sql",
+    )
+
+
+class ClipView(Base, UUIDPrimaryKey):
+    """One playback of a published clip (4d) — an append-only event log, not
+    deduped like `Like`, so a rewatch counts again. `view_count` is
+    therefore a raw play-count, same idiom as most platforms, not a unique-
+    viewer count.
+
+    `user_id` is nullable — not because anything today records an
+    anonymous view (every route that would still requires auth), but so a
+    future public-facing Discover doesn't need a schema change to start
+    counting them. `ON DELETE SET NULL` rather than `CASCADE`: a deleted
+    user's past views should still count toward a clip's total.
+
+    The clip owner's own views are never inserted at all (routes/clips.py) —
+    unlike a like, which naturally caps at +1 per user, a raw view endpoint
+    has no such limit, so self-view spam would otherwise be a trivial way to
+    game the engagement ranking (4d).
+    """
+
+    __tablename__ = "clip_views"
+
+    clip_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("clips.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    viewed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

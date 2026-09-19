@@ -57,6 +57,7 @@ class ClipOut(BaseModel):
     analysis: AnalysisOut | None = None
     like_count: int = 0
     comment_count: int = 0
+    view_count: int = 0  # a raw play-count, not deduped to unique viewers (4d)
     liked_by_me: bool = False  # always false for anon viewers, same as UserPublic.followed_by_me
     # Set via PATCH /clips/{id}/team, only while status == ANALYZED — a
     # one-time, pre-publish decision (4c). Null if untagged.

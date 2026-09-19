@@ -1385,6 +1385,157 @@
           ]
         }
       ]
+    },
+    {
+      "name": "Discover",
+      "description": "Step 4d. Run Clips 1-6 first (a published clip_id) \u2014 Engagement's Like/Comment requests and Teams' 7-9 (team-tag + score-inclusion) add extra signal but are optional. Discover reads a precomputed snapshot, not a live query, so after the view requests below, rebuild it from the repo root before hitting the three GET requests: `make rankings` (or `docker compose run --rm api python -m app.rankings` without make). Top Teams will come back empty in a fresh manual run \u2014 a team only enters that ranking once it has two rankings.py snapshots at least 7 days apart, which only happens over real time; tests/test_discover.py exercises that delta directly with backdated fixtures since Postman can't fabricate history.",
+      "item": [
+        {
+          "name": "1. View Clip \u2014 Second User (POST /clips/:clip_id/view)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{new_user_id_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/view",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "view"
+              ]
+            },
+            "description": "Requires clip_id to already be published (Clips folder, step 6). view_count in the response should be 1 the first time."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "console.log('view_count:', data.view_count);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. View Clip Again \u2014 Third User (POST /clips/:clip_id/view)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{third_user_id_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/view",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "view"
+              ]
+            },
+            "description": "A second, distinct viewer \u2014 view_count should now be 2. Re-sending this same request again (same user, a rewatch) would make it 3: views aren't deduped like a like."
+          }
+        },
+        {
+          "name": "3. Top Clips by Score (GET /discover/clips)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/discover/clips?sort=score&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "discover",
+                "clips"
+              ],
+              "query": [
+                {
+                  "key": "sort",
+                  "value": "score"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Run `make rankings` first \u2014 see this folder's description. Clips published in the last 7 days with score_included=true, ranked by steeze_score. Offset-paginated (next_offset, not next_cursor) \u2014 this reads a snapshot frozen between rebuilds, unlike the home feed."
+          }
+        },
+        {
+          "name": "4. Top Clips by Engagement (GET /discover/clips)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/discover/clips?sort=engagement&limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "discover",
+                "clips"
+              ],
+              "query": [
+                {
+                  "key": "sort",
+                  "value": "engagement"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Same 7-day window, ranked instead by view_count*1 + like_count*5 + comment_count*10 (app/rankings.py's ENGAGEMENT_WEIGHTS) \u2014 a separate signal from the steeze score; score_included has no effect on this sort."
+          }
+        },
+        {
+          "name": "5. Top Teams by Score Increase (GET /discover/teams)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/discover/teams?limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "discover",
+                "teams"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Ranked by score increase over ~7 days. Empty on a fresh manual run \u2014 see this folder's description."
+          }
+        }
+      ]
     }
   ]
 }

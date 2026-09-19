@@ -19,7 +19,7 @@ from app.api.pagination import decode_cursor, encode_cursor
 from app.api.serializers import clip_out, comment_out
 from app.models.clip import Clip, ClipTrick, Trick
 from app.models.enums import ClipStatus
-from app.models.social import Comment, Like
+from app.models.social import ClipView, Comment, Like
 from app.models.team import Team, TeamMember
 from app.models.user import User
 from app.schemas.clip import (
@@ -251,6 +251,22 @@ async def unlike_clip(clip_id: uuid.UUID, user: CurrentUser, db: DbSession) -> C
     # Idempotent: unliking a clip you haven't liked is a no-op 200.
     await db.execute(delete(Like).where(Like.user_id == user.id, Like.clip_id == clip.id))
     await db.flush()
+    return await clip_out(clip, db, user)
+
+
+@router.post("/{clip_id}/view", status_code=status.HTTP_201_CREATED)
+async def view_clip(clip_id: uuid.UUID, user: CurrentUser, db: DbSession) -> ClipOut:
+    """Records one playback (4d) — an append-only event, not deduped like a
+    like, so a rewatch counts again. The clip's own owner viewing it is a
+    no-op: unlike a like, which naturally caps at +1/user, a raw view has no
+    such limit, so counting self-views would make self-view-spam a trivial
+    way to game the Discover engagement ranking."""
+    clip = await _get_visible(clip_id, user, db)
+    if clip.status != ClipStatus.PUBLISHED:
+        raise HTTPException(status.HTTP_409_CONFLICT, "clip must be published to record a view")
+    if clip.user_id != user.id:
+        db.add(ClipView(clip_id=clip.id, user_id=user.id))
+        await db.flush()
     return await clip_out(clip, db, user)
 
 

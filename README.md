@@ -7,13 +7,13 @@ cleanly it was landed (pop, landing stability, roll-away, stomp, body
 compactness, catch). Follow skaters and teams, and see the week's best on
 Discover.
 
-> **Status: step 4 in progress — the social app.** Steps 1–3 are done and
-> verified (local dev foundation, Cognito auth/users/profiles, a clip's full
-> path from draft through a stubbed analysis to published). Steps 4a
-> (following users + the home feed), 4b (likes + comments), and 4c (teams)
-> are all done and verified end-to-end. See [Clips](#clips),
-> [Feed & follows](#feed--follows), [Likes & comments](#likes--comments), and
-> [Teams](#teams) to try it, and
+> **Status: step 4 done — the social app.** Steps 1–3 are done and verified
+> (local dev foundation, Cognito auth/users/profiles, a clip's full path from
+> draft through a stubbed analysis to published). Steps 4a (following users +
+> the home feed), 4b (likes + comments), 4c (teams), and 4d (Discover) are
+> all done and verified end-to-end. See [Clips](#clips),
+> [Feed & follows](#feed--follows), [Likes & comments](#likes--comments),
+> [Teams](#teams), and [Discover](#discover) to try it, and
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ## Stack
@@ -221,10 +221,11 @@ curl -X DELETE localhost:8000/users/otheruser/follow -H "Authorization: Bearer $
 ```
 
 `GET /users/{username}` now also reports `follower_count`, `following_count`,
-and (when called with a token) `followed_by_me`. Following a team (see
-[Teams](#teams)) surfaces its members' clips in your home feed the same way —
+`followed_by_me` (when called with a token), and `average_score` (4d — see
+[Discover](#discover)). Following a team (see [Teams](#teams)) surfaces its
+members' clips in your home feed the same way —
 `POST/DELETE /teams/{slug}/follow`. If you follow both a clip's author and the
-team it's tagged to, it still only shows up once. Discover comes in 4d.
+team it's tagged to, it still only shows up once.
 
 ## Likes & comments
 
@@ -253,12 +254,17 @@ curl "localhost:8000/clips/$clip_id/comments?limit=20" -H "Authorization: Bearer
 
 # the comment's author or the clip's owner can delete it
 curl -X DELETE "localhost:8000/clips/$clip_id/comments/$comment_id" -H "Authorization: Bearer $ID_TOKEN"
+
+# a view (4d) — the clip's own owner viewing it doesn't count, everyone
+# else's does, and a rewatch counts again (it's not deduped like a like)
+curl -X POST "localhost:8000/clips/$clip_id/view" -H "Authorization: Bearer $ID_TOKEN"
 ```
 
 `GET /clips/{id}` (and every other clip payload) now also reports
-`like_count`, `comment_count`, and `liked_by_me`. Both like and comment
-routes require the clip to be `published` — a 404 if you can't see it at
-all (someone else's draft), a 409 if you can (your own draft).
+`like_count`, `comment_count`, `view_count`, and `liked_by_me`. Like,
+comment, and view all require the clip to be `published` — a 404 if you
+can't see it at all (someone else's draft), a 409 if you can (your own
+draft).
 
 ## Teams
 
@@ -320,7 +326,43 @@ curl -X POST "localhost:8000/teams/$slug/follow" -H "Authorization: Bearer $ID_T
 
 Tagging a clip to a team (`PATCH /clips/{id}/team`) and deciding whether its
 score counts toward an average (`PATCH /clips/{id}/score-inclusion`) are
-covered in [Clips](#clips) — the averaging itself is 4d, not built yet.
+covered in [Clips](#clips) — see [Discover](#discover) for where that
+average actually shows up.
+
+## Discover
+
+The Postman collection's **Discover** folder covers this, reusing `clip_id`
+from the Clips folder. Rankings aren't computed live; rebuild them between
+the folder's view requests and its three GET requests (see
+[Commands](#commands)):
+
+```bash
+make rankings
+```
+
+```bash
+# this week's top clips by steeze_score (score_included=false clips are
+# left out — if you told the app a score wasn't fair, it doesn't get to
+# rank on it either) — plain offset pagination, not keyset
+curl "localhost:8000/discover/clips?sort=score&limit=20" -H "Authorization: Bearer $ID_TOKEN"
+
+# same clips, ranked instead by a blended engagement score
+# (view_count*1 + like_count*5 + comment_count*10) — a completely separate
+# signal from the steeze score, for skaters who'd rather browse what looks
+# good than what scored well; score_included has no effect here
+curl "localhost:8000/discover/clips?sort=engagement&limit=20" -H "Authorization: Bearer $ID_TOKEN"
+
+# teams ranked by score increase over the last ~7 days — a team needs at
+# least a week of history to show up here at all
+curl "localhost:8000/discover/teams?limit=20" -H "Authorization: Bearer $ID_TOKEN"
+```
+
+`GET /users/{username}` and `GET /teams/{slug}` both gained `average_score`
+(null if there's nothing eligible yet) — a user's is an uncapped average
+across every published, score-included clip; a team's is the average of its
+top 10 (see `docs/ARCHITECTURE.md` §6 for why top 10, not all of them).
+These are computed live, same cost class as `follower_count`; only the two
+`/discover/*` rankings above depend on `make rankings` having been run.
 
 ## Commands
 
@@ -337,6 +379,7 @@ covered in [Clips](#clips) — the averaging itself is 4d, not built yet.
 | `make shell` | Bash into the API container | `docker compose exec api /bin/bash` |
 | `make fmt` | Format and lint | `docker compose run --rm api python -m ruff format app` |
 | `make test` | Run the test suite | `docker compose run --rm api python -m pytest` |
+| `make rankings` | Rebuild Discover rankings + team score snapshots | `docker compose run --rm api python -m app.rankings` |
 
 ## Services
 
@@ -366,6 +409,11 @@ backend/
     lambda_handler.py  Production entrypoint (Mangum)
     worker.py          SQS consumer + stubbed analyzer (dev: poll loop,
                        prod: app.worker.lambda_handler per message)
+    rankings.py        Discover rebuild — clip_rankings + team_score_history
+                       (dev: `make rankings` on demand, prod: EventBridge ->
+                       app.rankings.lambda_handler on a schedule)
+    scoring.py         Shared average-score math — one definition used by
+                       both live API responses and the rankings rebuild
     models/            SQLAlchemy models
     schemas/           Pydantic request/response models
     api/routes/        Endpoints

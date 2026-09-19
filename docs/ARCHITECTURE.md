@@ -3,9 +3,9 @@
 Conceptual overview of the system: what each component is, what it does, and
 how it connects to the others. Kept current as the build progresses.
 
-**Current state: step 4 in progress — social app. 4a (follows + home feed),
-4b (likes + comments), and 4c (teams) all done and verified. Discover (4d)
-still to come.** Sections marked *(planned)* are designed but not yet built.
+**Current state: step 4 done — social app. 4a (follows + home feed), 4b
+(likes + comments), 4c (teams), and 4d (Discover) all built and verified.**
+Sections marked *(planned)* are designed but not yet built.
 
 ---
 
@@ -217,7 +217,7 @@ id-token-for-client.
 
 ## 6. Data model
 
-**Built (steps 1–4c):**
+**Built (steps 1–4d):**
 
 ```
 users     id, cognito_sub (not null, unique), username, display_name, bio,
@@ -241,13 +241,11 @@ teams              id, name, slug (unique), description, level, join_policy,
                    owner_id → users, founded_at?, timestamps   (4c — see below)
 team_members       team_id, user_id, role, joined_at   (pk: team_id+user_id; 4c)
 team_join_requests team_id, user_id, kind, created_at  (pk: team_id+user_id; 4c)
-```
-
-**Planned:**
-
-```
-clip_views         clip_id, user_id?, viewed_at
-team_score_history team_id, score, captured_at
+clip_views         id, clip_id, user_id?, viewed_at   (4d — see below)
+clip_rankings      clip_id, steeze_score?, score_included, like_count,
+                   comment_count, view_count, engagement_score, captured_at
+                   (pk: clip_id; 4d — materialized, rebuilt by app/rankings.py)
+team_score_history id, team_id, score?, captured_at   (4d — append-only)
 ```
 
 ### Design notes
@@ -337,13 +335,44 @@ team_score_history team_id, score, captured_at
   skate clips are often shot from angles the analyzer scores unreliably, and
   the app doesn't want users choosing between a visually great clip and
   their average — a clip can publish and be watched regardless of this
-  flag, it just won't count toward a personal or team average once Discover
-  (4d) computes one.
+  flag, it just won't count toward a personal or team average.
 - **`team_score_history` exists because Discover ranks teams by score
   *increase*.** A delta is uncomputable without history, and this is painful
   to retrofit.
 - **Team score = average of the team's top 10 clips.** Summing everything
-  would mean the largest team always wins and scores could never fall.
+  would mean the largest team always wins and scores could never fall. A
+  user's own `average_score` (4d) has no analogous fairness problem, so it's
+  an uncapped average across every published, score-included clip. Both live
+  in `app/scoring.py`, shared by `api/serializers.py` (live display on
+  `UserPublic`/`TeamOut`) and `app/rankings.py` (the `team_score_history`
+  snapshot) — one definition, so the two can't quietly drift apart.
+- **`clip_views` (4d) is a plain append-only event log, not deduped like
+  `Like`.** A rewatch counts again — `view_count` is a raw play-count, same
+  as most platforms show, not a unique-viewer count. The clip owner's own
+  views are never inserted at all: unlike a like, capped at +1/user by
+  construction, a raw view endpoint has no such limit, so self-view spam
+  would otherwise be a trivial way to inflate the Discover engagement
+  ranking below.
+- **`clip_rankings` (4d) is fully truncated and reinserted on every
+  `app/rankings.py` run**, one row per clip published in the last 7 days —
+  the same "no surrogate id" reasoning as `likes`, since the table's only
+  meaning is "this week's snapshot." It carries its own copies of
+  `steeze_score`/`score_included` and the three engagement counts rather
+  than joining back to `clips`, so a rebuild is one clean pass with nothing
+  to reconcile. Reading it back (`routes/discover.py`) re-fetches the live
+  `Clip` rows it names, in the order it says — display data is always
+  current even though the *ordering* is only as fresh as the last rebuild.
+- **Discover's engagement ranking blends three signals with different
+  weights** — `view_count×1 + like_count×5 + comment_count×10`
+  (`app/rankings.py`'s `ENGAGEMENT_WEIGHTS`) — rather than exposing three
+  separate sort orders. Comments weighted highest and views lowest: a view
+  costs a viewer nothing, a like takes one tap, a comment takes real effort.
+  The numbers are a starting heuristic, not derived from data; they're
+  centralized as named constants specifically so they're a one-line change,
+  not a redesign, once real usage suggests better ones. This ranking has no
+  relation to the `score` ranking's `score_included` filter — engagement is
+  a deliberately separate signal from the steeze score, for skaters who'd
+  rather browse what looks good than what scored well.
 
 ---
 
@@ -370,32 +399,54 @@ Fan-out-on-*write* (precomputed per-user timelines) is the standard answer at
 large scale, but it costs a write per follower per post and needs backfill
 logic. At this scale it is unjustified complexity.
 
-**Discover — precomputed.** EventBridge triggers a Lambda every 15 minutes to
-rebuild weekly clip rankings and write team score snapshots into materialized
-tables. Discover is a hot page and ranking live would be an expensive query on
-every load.
+**Discover — precomputed (4d).** `app/rankings.py`'s `run()` rebuilds
+`clip_rankings` (this week's clips, ranked) and appends one `team_score_history`
+row per founded team, in a single pass. Discover is a hot page and ranking
+live — sorting the whole `clips` table on every load — would be an expensive
+query; reading a small pre-sorted snapshot instead is cheap regardless of how
+many clips exist.
+
+`GET /discover/clips?sort=score|engagement` reads `clip_rankings` directly,
+plain offset-paginated rather than keyset: unlike the home feed, this reads a
+snapshot that's frozen between rebuilds, so keyset's usual justification
+(rows shifting under a paginating client) doesn't apply, and jumping to an
+arbitrary page of a ranked list is a reasonable thing to want.
+`GET /discover/teams` is the one live-computed exception — ranked by score
+*increase* (latest `team_score_history` snapshot minus the one closest to 7
+days earlier, per team), computed at request time because the number of
+teams is small enough that this is cheap, unlike sorting every clip. A team
+with no snapshot from that far back (brand new) is excluded rather than
+credited a fake increase-from-zero, which would otherwise let any
+freshly-founded team trivially top the list.
+
+**Same dev/prod trigger split as `app/worker.py`**: locally, `make rankings`
+runs the rebuild on demand (`app/rankings.py`'s `lambda_handler` entrypoint
+is unused until then); in production (step 5) an EventBridge rule invokes it
+on a schedule instead. Nothing runs this automatically in dev — there's no
+scheduler in docker-compose to do it.
 
 ---
 
 ## 8. Engagement counts
 
 Likes and comments (step 4b) add three fields to `ClipOut`: `like_count`,
-`comment_count`, `liked_by_me`. They're computed in `api/serializers.py`'s
-`clip_out()`, which now takes `db` and an optional `viewer`, plus three
-optional precomputed values.
+`comment_count`, `liked_by_me`. `view_count` (4d, backed by `clip_views` and
+`POST /clips/{id}/view`) joined them as a fourth. All four are computed in
+`api/serializers.py`'s `clip_out()`, which takes `db` and an optional
+`viewer`, plus optional precomputed values for each.
 
 **Single-clip routes** (everything in `routes/clips.py`) let `clip_out`
-query directly — one `COUNT` for likes, one for comments, one lookup for
-`liked_by_me` — the same per-call cost `user_public()` already pays for
+query directly — one `COUNT` per metric, one lookup for `liked_by_me` — the
+same per-call cost `user_public()` already pays for
 `follower_count`/`following_count`/`followed_by_me`.
 
-**The feed is different**: it calls `clip_out` in a loop over up to 50 clips
-per page, so paying three queries per clip there would mean up to 150
-queries per feed load. `clip_engagement()` batches all three into one
-grouped query per metric for the whole page — `GROUP BY clip_id` for the two
-counts, one `IN (...)` lookup for the viewer's likes — and `feed.py` passes
-the results into `clip_out` as precomputed values, skipping its default
-per-clip queries entirely.
+**The feed and Discover are different**: both call `clip_out` in a loop over
+up to 50 clips per page, so paying a query per clip per metric there would
+mean hundreds of queries per page load. `clip_engagement()` batches all four
+into one grouped query per metric for the whole page — `GROUP BY clip_id`
+for the three counts, one `IN (...)` lookup for the viewer's likes — and
+`feed.py`/`routes/discover.py` pass the results into `clip_out` as
+precomputed values, skipping its default per-clip queries entirely.
 
 Comment listing (`GET /clips/{id}/comments`) doesn't need the same
 treatment: it returns *comments*, not clips, and a comment's replies load via
@@ -552,7 +603,7 @@ policy keeping the last 5 images, and an AWS Budget alarm at $5.
 | 1 | Local dev foundation — Compose, Postgres, LocalStack, FastAPI, Alembic | **done** |
 | 2 | Auth (Cognito) + users + profiles | **done** |
 | 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | **done** |
-| 4 | Social app — feed, likes, comments, teams, discover | **in progress** (4a, 4b, 4c done) |
+| 4 | Social app — feed, likes, comments, teams, discover | **done** |
 | 5 | Terraform + GitHub Actions → deploy to AWS | |
 | 6 | Replace the stub with the real steeze analyzer | |
 

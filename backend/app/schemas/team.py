@@ -6,6 +6,7 @@ Split by direction on purpose, same as schemas/user.py and schemas/clip.py.
 import re
 import uuid
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -107,6 +108,10 @@ class TeamOut(BaseModel):
     member_count: int = 0
     follower_count: int = 0
     followed_by_me: bool = False
+    # Average of the team's top 10 published, score-included clips (4d,
+    # app/scoring.py) — the same definition app/rankings.py snapshots into
+    # team_score_history, so the two never drift apart. Null if it has none.
+    average_score: Decimal | None = None
     my_role: TeamRole | None = None  # null for non-members and anon viewers
     founded: bool = True
     # Only non-empty while founded=False — the outstanding founding

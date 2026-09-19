@@ -7,7 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api.routes import clips, feed, health, teams, users
+from app.api.routes import clips, discover, feed, health, teams, users
 from app.config import get_settings
 from app.db import engine
 
@@ -66,3 +66,4 @@ app.include_router(users.router)
 app.include_router(clips.router)
 app.include_router(feed.router)
 app.include_router(teams.router)
+app.include_router(discover.router)
