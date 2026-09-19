@@ -131,6 +131,22 @@ can live anywhere.
   forgets it, rather than crashing obscurely) and adding an explicit
   `.options(selectinload(Comment.replies))` at both call sites in
   `routes/clips.py` that need it (`add_comment`, `list_comments`).
+- **A `viewonly=True` relationship silently drops writes instead of erroring.**
+  `Clip.team` (`app/models/clip.py`) was copy-pasted from `Clip.user` — a
+  genuinely read-only, never-reassigned relationship — with `viewonly=True`
+  carried over even though `routes/clips.py`'s `set_clip_team` assigns
+  through it (`clip.team = team`) specifically so `clip_out()` doesn't need
+  a re-fetch. With `viewonly=True`, that assignment updates the in-memory
+  object (so the very next line's `clip_out()` call, and the PATCH
+  response, looked completely correct) but SQLAlchemy never emits the
+  `UPDATE` — the write vanishes the moment the session closes. Caught by
+  the manual Postman/curl walkthrough (`GET /feed` came back empty after a
+  publish that should have shown up via a team follow), not by the
+  automated test, because the original assertion only checked the PATCH
+  response's JSON rather than re-fetching in a new request/session
+  afterward — `tests/test_teams.py`'s team-tag test now does both. Any
+  relationship a route assigns to (not just reads) must not be
+  `viewonly=True`.
 - **Port 5432 collides with a native Postgres install, on macOS specifically.**
   The postgresql.org/EDB macOS installer sets Postgres up as an always-on
   system `launchd` daemon (`RunAtLoad: true`), unlike Homebrew's postgres
@@ -146,7 +162,7 @@ can live anywhere.
 ## Current state
 
 **Steps 1–3 complete and verified; step 4 in progress — 4a (follows + home
-feed) done and verified, 4b (likes + comments) done and verified.** Running
+feed), 4b (likes + comments), and 4c (teams) all done and verified.** Running
 locally:
 
 ```bash
@@ -158,11 +174,13 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 - `postgres`, `localstack` (S3 + SQS), `api` (FastAPI on the Lambda base
   image), a `worker` (SQS poll loop, stubbed analyzer), and a one-shot
   `migrate` service, all under Compose.
-- Schema at revision `0005`: `users` + `profiles` (step 1–2); `clips`,
-  `analyses`, `tricks`, `clip_tricks` (step 3, no `team_id` yet); `follows`
-  (step 4a — two nullable FKs + XOR check, `followee_team_id`'s FK deferred
-  to 4c); `likes`, `comments` (step 4b — see below). Enum types `stance`,
-  `skate_style`, `clip_status`.
+- Schema at revision `0006`: `users` + `profiles` (step 1–2); `clips`,
+  `analyses`, `tricks`, `clip_tricks` (step 3, `team_id`/`score_included`
+  added in 4c); `follows` (step 4a — two nullable FKs + XOR check,
+  `followee_team_id`'s FK completed in 4c); `likes`, `comments` (step 4b);
+  `teams`, `team_members`, `team_join_requests` (step 4c — see below). Enum
+  types `stance`, `skate_style`, `clip_status`, `team_level`, `join_policy`,
+  `team_role`, `join_request_kind`.
 - LocalStack self-provisions the `tricklens-media` bucket (CORS + 7-day
   `raw/` lifecycle rule) and the `tricklens-analysis` queue with a DLQ.
 - A real Cognito dev pool (`scripts/cognito-bootstrap.sh`) backs auth — see
@@ -201,15 +219,39 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   batches them per-page via `clip_engagement()` instead of paying per-clip
   queries. Keyset cursor encode/decode factored out of feed.py into
   `app/api/pagination.py`, shared with comment listing.
-- Hot-reload verified at ~850ms. `ruff check`/`ruff format` clean as of 4b's
+- **Step 4c (teams)** migration `0006` applied; `tests/test_teams.py` plus a
+  re-run of every earlier test file passes against real Postgres/LocalStack
+  — 42/42 — and verified end-to-end by hand against real Cognito (curl, not
+  yet Postman itself, but the same requests the new Teams folder makes; see
+  the gotcha above for a real bug this pass caught and fixed). Covers:
+  founding (`POST /teams` requires ≥2 invitees beyond the owner; the team is
+  invisible/unjoinable until every founding invite is accepted via
+  `POST /teams/{slug}/invites/mine/accept`; rejecting one, or the owner
+  cancelling via `DELETE /teams/{slug}` while pending, deletes the whole
+  attempt); roles (`owner`/`admin`/`member` via
+  `PATCH /teams/{slug}/members/{username}`); all three `join_policy` values
+  (`open`/`request`/`invite_only`) with their own join/invite/accept/reject
+  routes; a hard 20-member cap; team follows
+  (`POST/DELETE /teams/{slug}/follow`); `PATCH /clips/{id}/team` (member-only,
+  `status == ANALYZED` only, locked after publish) and
+  `PATCH /clips/{id}/score-inclusion` (toggle whether `steeze_score` counts
+  toward a future average — editable anytime, including after publishing,
+  never touches `Analysis`). The home feed's `follows` join became two
+  `IN`-subqueries (`Clip.user_id`/`Clip.team_id`) to avoid double-counting a
+  clip whose author *and* tagged team are both followed. The frontend design
+  canvas (see below) was extended in the same session to cover these flows.
+- Hot-reload verified at ~850ms. `ruff check`/`ruff format` clean as of 4c's
   files; step 2 is the last point the full suite was confirmed clean
-  end-to-end — steps 3/4a haven't been re-run. Migration upgrade/downgrade
-  round trip verified through `0002`; `0003`/`0004`/`0005` applied and
-  exercised (fresh `docker compose up` ran all five in order against real
-  Postgres), not round-tripped (`downgrade` untested).
+  end-to-end — steps 3/4a/4b haven't been re-run standalone (they do pass as
+  part of the full 42-test suite above). Migration upgrade/downgrade round
+  trip verified through `0002`; `0003`–`0006` applied and exercised (fresh
+  `docker compose up` ran all six in order against real Postgres), not
+  round-tripped (`downgrade` untested).
 
-**Not done yet:** no frontend code (a visual prototype exists as a separate
-Artifact canvas, outside the repo), no Terraform.
+**Not done yet:** no frontend code in this repo (a visual prototype exists as
+a separate Artifact canvas, outside the repo — now covers auth/profile/
+upload/clip-status *and* the 4c team flows above, added in the same session),
+no Terraform.
 
 ## Build order
 
@@ -219,7 +261,8 @@ Artifact canvas, outside the repo), no Terraform.
 4. 🔶 Social app  ← in progress, built in sub-phases:
    - 4a ✅ follows + home feed *(verified)*
    - 4b ✅ likes + comments *(verified)*
-   - 4c ⬜ teams (+ `clips.team_id`, `follows.followee_team_id` FK, migration `0006`)
+   - 4c ✅ teams (+ `clips.team_id`/`score_included`, `follows.followee_team_id`
+     FK, migration `0006`) *(verified)*
    - 4d ⬜ Discover (precomputed rankings + team score history)
 5. ⬜ Terraform + GitHub Actions → deploy to AWS
 6. ⬜ Replace the stub with the real steeze analyzer

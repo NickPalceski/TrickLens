@@ -3,10 +3,9 @@
 Conceptual overview of the system: what each component is, what it does, and
 how it connects to the others. Kept current as the build progresses.
 
-**Current state: step 4 in progress — social app. 4a (follows + home feed)
-done and verified; 4b (likes + comments) done and verified. Teams and
-Discover still to come.** Sections marked *(planned)* are designed but not
-yet built.
+**Current state: step 4 in progress — social app. 4a (follows + home feed),
+4b (likes + comments), and 4c (teams) all done and verified. Discover (4d)
+still to come.** Sections marked *(planned)* are designed but not yet built.
 
 ---
 
@@ -218,7 +217,7 @@ id-token-for-client.
 
 ## 6. Data model
 
-**Built (steps 1–4b):**
+**Built (steps 1–4c):**
 
 ```
 users     id, cognito_sub (not null, unique), username, display_name, bio,
@@ -226,25 +225,27 @@ users     id, cognito_sub (not null, unique), username, display_name, bio,
 profiles  user_id → users, stance, style, board, board_size, wheels,
           wheel_size, trucks, bearings
 clips     id, user_id, status, s3_key, thumb_key?, duration_ms?, source_fps?,
-          steeze_score?, published_at?, timestamps   (no team_id yet — see below)
+          steeze_score?, published_at?, team_id?, score_included, timestamps
+          (team_id, score_included: 4c — see below)
 analyses  id, clip_id, model_version, confidence,
           steeze_breakdown jsonb?, failure_reason?, created_at
 tricks    id, canonical_name (unique), aliases[]
 clip_tricks  clip_id, trick_id, position   (pk: clip_id+position; source: user_tagged)
 follows   id, follower_id → users,
-          followee_user_id → users?, followee_team_id?,   (4a; team FK added in 4c)
+          followee_user_id → users?, followee_team_id → teams?,   (4a; FK completed in 4c)
           CHECK exactly one followee set
 likes     user_id → users, clip_id → clips   (pk: user_id+clip_id; 4b)
 comments  id, clip_id → clips, user_id → users, body,
           parent_id → comments?, created_at   (4b; one level of replies — see below)
+teams              id, name, slug (unique), description, level, join_policy,
+                   owner_id → users, founded_at?, timestamps   (4c — see below)
+team_members       team_id, user_id, role, joined_at   (pk: team_id+user_id; 4c)
+team_join_requests team_id, user_id, kind, created_at  (pk: team_id+user_id; 4c)
 ```
 
 **Planned:**
 
 ```
-teams              id, name, slug, description, level, owner_id, join_policy
-team_members       team_id, user_id, role, joined_at
-team_join_requests team_id, user_id, status
 clip_views         clip_id, user_id?, viewed_at
 team_score_history team_id, score, captured_at
 ```
@@ -263,9 +264,13 @@ team_score_history team_id, score, captured_at
 - **`cognito_sub` is non-nullable as of step 2.** Step 1 left it nullable on
   purpose, before auth existed to populate it; every row now comes through
   JIT registration with a sub already in hand.
-- **`clips` has no `team_id` yet**, unlike earlier drafts of this schema —
-  `teams` doesn't exist until step 4, and a FK can't point at a table that
-  isn't there. Step 4 adds the column once it can.
+- **`clips.team_id` (4c)** is nullable and `ON DELETE SET NULL`, unlike
+  `user_id`'s `CASCADE` — a team disbanding should detach the credit from a
+  clip, not delete the clip. It's set via `PATCH /clips/{id}/team`, which
+  only accepts a team the caller is currently a member of, and only while
+  `status == ANALYZED` — a one-time, pre-publish decision, locked after
+  that (a team tag is credit for a specific roster at a point in time, not
+  something that makes sense to reassign later).
 - **`tricks.canonical_name` is a plain unique column, not a functional
   `lower()` index like `users.username`.** The API pre-normalizes it before
   insert, and — unlike a username — there's no display casing worth
@@ -278,9 +283,9 @@ team_score_history team_id, score, captured_at
   drafts of this doc sketched. The home feed pulls clips from followed users
   *and* teams, so the target genuinely is polymorphic; two real FK columns
   keep Postgres enforcing referential integrity and cascade-deletes on both
-  sides, which a bare `followee_id` couldn't. `followee_team_id`'s FK to
-  `teams` lands in 4c, when that table exists — the column and the check are
-  in 4a's migration already.
+  sides, which a bare `followee_id` couldn't. The column and check landed in
+  4a's migration before `teams` existed; 4c's migration adds the deferred FK
+  constraint now that it does.
 - **`likes` has no surrogate id** — `(user_id, clip_id)` is the primary key
   directly, same reasoning as `clip_tricks`: a like has no identity beyond
   "this user liked this clip", so a separate UUID plus a unique constraint
@@ -294,6 +299,46 @@ team_score_history team_id, score, captured_at
   Python rather than the database), so it's enforced in `routes/clips.py`
   instead. `parent_id`'s `ondelete="CASCADE"` means deleting a top-level
   comment deletes its replies too.
+- **A team isn't "real" until `founded_at` is set** — null from creation
+  until every founding invite is accepted, same idiom as `Clip.published_at`
+  marking a not-yet-live row rather than a separate status enum. `POST
+  /teams` requires at least 2 founding invitees (a floor, not a cap) in
+  addition to the owner; while `founded_at IS NULL` the team is invisible to
+  everyone but the owner and those invitees (same 404-not-403 rule as clip
+  drafts), and can't be joined, followed, or tagged onto a clip. Accepting
+  the last outstanding founding invite stamps `founded_at`; rejecting *any*
+  founding invite — or the owner cancelling, which is the same
+  `DELETE /teams/{slug}` call whether the team is pending or live — deletes
+  the whole `Team` row via `ON DELETE CASCADE`, undoing the attempt entirely
+  rather than leaving a partially-formed team behind. The name/slug are free
+  again immediately, so it can be redone from scratch.
+- **`team_join_requests` serves two directions through one table**, not two
+  near-identical ones: `kind = request` is a user asking to join (an
+  owner/admin resolves it), `kind = invite` is an owner/admin asking a user
+  to join — including the founding invites above — which only that user can
+  accept or reject. There's no `status` column: a row's existence means
+  pending, and resolution either deletes it (reject) or deletes it while
+  inserting a `team_members` row (accept) — the same hard-delete idiom
+  `follows`/`likes` already use, no history kept.
+- **`team_members.role` is `owner`/`admin`/`member`.** Exactly one row per
+  team holds `owner`, mirroring `teams.owner_id`. An admin can approve/reject
+  join requests and remove a plain member, but not another admin or the
+  owner; only the owner changes roles, sends founding-adjacent settings
+  changes, or deletes the team. There's no ownership-transfer flow yet — an
+  owner can't leave, only delete the team outright.
+- **A hard cap of 20 `team_members` rows per team**, enforced in the route
+  layer at every membership-creating call (open join, invite-accept,
+  request-accept) — not expressible as a `CHECK` constraint, since it's a
+  count over a related table, not a property of one row.
+- **`clips.score_included` (4c)**, unlike `team_id`, stays editable forever
+  — including indefinitely after publishing, as an edit to the post, via
+  `PATCH /clips/{id}/score-inclusion`. It never touches `analyses`; the
+  existing scoring pass is reused as-is either way. This exists because
+  skate clips are often shot from angles the analyzer scores unreliably, and
+  the app doesn't want users choosing between a visually great clip and
+  their average — a clip can publish and be watched regardless of this
+  flag, it just won't count toward a personal or team average once Discover
+  (4d) computes one.
 - **`team_score_history` exists because Discover ranks teams by score
   *increase*.** A delta is uncomputable without history, and this is painful
   to retrofit.
@@ -304,16 +349,22 @@ team_score_history team_id, score, captured_at
 
 ## 7. Feed and ranking strategy
 
-**Home feed — fan-out-on-read.** `GET /feed` joins `follows` against
-`clips`, filters to `published`, orders by `(published_at, id)` descending,
+**Home feed — fan-out-on-read.** `GET /feed` queries `clips` directly,
+filters to `published`, orders by `(published_at, id)` descending,
 keyset-paginated: the response carries a `next_cursor` (`"<published_at>|<id>"`)
 that the client passes back as `?cursor=`, becoming `WHERE (published_at, id)
 < (?, ?)`. Keyset rather than `OFFSET` because offset pagination degrades
 linearly and skips rows when new clips arrive mid-scroll. One extra row is
 fetched per page (`LIMIT n+1`) purely to know whether `next_cursor` should be
 set. A clip embeds its `author` (a `UserBrief`) so the feed needs no
-follow-up lookup per row. *(Team follows contribute clips here once 4c
-lands.)*
+follow-up lookup per row.
+
+**Team follows (4c)** are folded in as `Clip.user_id.in_(followed users)
+OR Clip.team_id.in_(followed teams)` — two `IN` subqueries against `follows`,
+not a `JOIN` on that OR condition. A join would emit a clip twice when both
+its author *and* its tagged team are followed; de-duping a joined result
+afterward is more awkward than just not producing the duplicate in the first
+place.
 
 Fan-out-on-*write* (precomputed per-user timelines) is the standard answer at
 large scale, but it costs a write per follower per post and needs backfill
@@ -501,7 +552,7 @@ policy keeping the last 5 images, and an AWS Budget alarm at $5.
 | 1 | Local dev foundation — Compose, Postgres, LocalStack, FastAPI, Alembic | **done** |
 | 2 | Auth (Cognito) + users + profiles | **done** |
 | 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | **done** |
-| 4 | Social app — feed, likes, comments, teams, discover | **in progress** (4a, 4b done) |
+| 4 | Social app — feed, likes, comments, teams, discover | **in progress** (4a, 4b, 4c done) |
 | 5 | Terraform + GitHub Actions → deploy to AWS | |
 | 6 | Replace the stub with the real steeze analyzer | |
 

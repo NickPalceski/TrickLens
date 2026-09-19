@@ -9,12 +9,13 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, SmallInteger, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, func
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKey
 from app.models.enums import ClipStatus, sa_enum
+from app.models.team import Team
 from app.models.user import User
 
 
@@ -33,6 +34,21 @@ class Clip(Base, UUIDPrimaryKey, TimestampMixin):
     status: Mapped[ClipStatus] = mapped_column(
         sa_enum(ClipStatus, "clip_status"), nullable=False, default=ClipStatus.DRAFT
     )
+    # Set only via PATCH /clips/{id}/team, only while status == ANALYZED —
+    # a one-time, pre-publish decision (4c). ON DELETE SET NULL, unlike
+    # user_id's CASCADE: a team disbanding shouldn't take anyone's clips
+    # with it, just detach the credit.
+    team_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="SET NULL"), index=True
+    )
+    # Whether this clip's steeze_score counts toward its owner's (or tagged
+    # team's) average once Discover (4d) computes one. True by default;
+    # unlike team_id this stays editable forever via
+    # PATCH /clips/{id}/score-inclusion, even after publishing — skate clips
+    # are often shot from angles the analyzer scores unreliably, and users
+    # shouldn't have to choose between a visually great clip and their
+    # average.
+    score_included: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     # S3 key, never a URL — see CLAUDE.md conventions. Assigned at creation,
     # before the browser has uploaded anything, so it can be presigned.
@@ -52,6 +68,15 @@ class Clip(Base, UUIDPrimaryKey, TimestampMixin):
     # Read-only, eager: the feed and every clip response embed the author.
     # The cascade on delete is handled by user_id's FK, not here.
     user: Mapped[User] = relationship(lazy="selectin", viewonly=True)
+    # Eager, same reasoning as `user` — ClipOut embeds a TeamBrief whenever a
+    # clip is tagged, None when team_id is null. NOT viewonly, unlike
+    # `user`: routes/clips.py's set_clip_team writes through this
+    # relationship (`clip.team = team`) rather than setting team_id
+    # directly, specifically so the in-memory attribute stays in sync with
+    # no extra re-fetch (see that route's comment) — a viewonly relationship
+    # would silently drop that write instead of persisting it, which is
+    # exactly the bug this comment is here to prevent reintroducing.
+    team: Mapped[Team | None] = relationship(lazy="selectin")
 
     # Newest first, so `clip.analyses[0]` is always the latest pass — a clip
     # could in principle be re-analyzed later (a model upgrade), so this

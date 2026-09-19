@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "TrickLens",
-    "description": "Local dev collection for the TrickLens API. The 'New User' folder creates a confirmed Cognito user and registers them (sign-up is credential-free; the confirm step uses Postman's AWS Signature auth — fill aws_access_key_id / aws_secret_access_key, the same keys `aws configure` uses, in the VARIABLES tab's Current Value column only so they don't sync). Everything else — logging in, the clip pipeline, follows, the feed — is one click per step, with each response's IDs auto-saved into the next request's variables.",
+    "description": "Local dev collection for the TrickLens API. The 'New User' folder creates a confirmed Cognito user and registers them (sign-up is credential-free; the confirm step uses Postman's AWS Signature auth \u2014 fill aws_access_key_id / aws_secret_access_key, the same keys `aws configure` uses, in the VARIABLES tab's Current Value column only so they don't sync). Everything else \u2014 logging in, the clip pipeline, follows, the feed \u2014 is one click per step, with each response's IDs auto-saved into the next request's variables.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -26,12 +26,12 @@
     {
       "key": "cognito_client_id",
       "value": "",
-      "description": "From .env — COGNITO_CLIENT_ID"
+      "description": "From .env \u2014 COGNITO_CLIENT_ID"
     },
     {
       "key": "cognito_user_pool_id",
       "value": "",
-      "description": "From .env — COGNITO_USER_POOL_ID (only the 'New User' confirm step needs it)"
+      "description": "From .env \u2014 COGNITO_USER_POOL_ID (only the 'New User' confirm step needs it)"
     },
     {
       "key": "aws_access_key_id",
@@ -41,7 +41,7 @@
     {
       "key": "aws_secret_access_key",
       "value": "",
-      "description": "Current Value only — never Initial Value, which syncs to Postman's cloud."
+      "description": "Current Value only \u2014 never Initial Value, which syncs to Postman's cloud."
     },
     {
       "key": "test_email",
@@ -101,6 +101,30 @@
     {
       "key": "comment_cursor",
       "value": ""
+    },
+    {
+      "key": "third_user_email",
+      "value": "skater3@example.com"
+    },
+    {
+      "key": "third_user_password",
+      "value": "Sk8-or-die1"
+    },
+    {
+      "key": "third_username",
+      "value": "nick3"
+    },
+    {
+      "key": "third_user_id_token",
+      "value": ""
+    },
+    {
+      "key": "team_slug",
+      "value": ""
+    },
+    {
+      "key": "team_id",
+      "value": ""
     }
   ],
   "item": [
@@ -139,7 +163,7 @@
               "mode": "raw",
               "raw": "{\n  \"AuthFlow\": \"USER_PASSWORD_AUTH\",\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"AuthParameters\": {\n    \"USERNAME\": \"{{test_email}}\",\n    \"PASSWORD\": \"{{test_password}}\"\n  }\n}"
             },
-            "description": "Unauthenticated Cognito action — no AWS credentials needed, just the (public) app client id. The user must already exist and be confirmed; this collection doesn't sign up or confirm users (those need either email verification or admin-confirm-sign-up, which requires real AWS credentials — see README)."
+            "description": "Unauthenticated Cognito action \u2014 no AWS credentials needed, just the (public) app client id. The user must already exist and be confirmed; this collection doesn't sign up or confirm users (those need either email verification or admin-confirm-sign-up, which requires real AWS credentials \u2014 see README)."
           },
           "event": [
             {
@@ -152,7 +176,7 @@
                   "    pm.collectionVariables.set('id_token', data.AuthenticationResult.IdToken);",
                   "    console.log('id_token saved to collection variables');",
                   "} else {",
-                  "    console.warn('No IdToken in response — is the user signed up AND confirmed? See README Auth setup.', data);",
+                  "    console.warn('No IdToken in response \u2014 is the user signed up AND confirmed? See README Auth setup.', data);",
                   "}"
                 ]
               }
@@ -197,7 +221,7 @@
               "mode": "raw",
               "raw": "{\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"Username\": \"{{new_user_email}}\",\n  \"Password\": \"{{new_user_password}}\",\n  \"UserAttributes\": [\n    { \"Name\": \"email\", \"Value\": \"{{new_user_email}}\" }\n  ]\n}"
             },
-            "description": "Unauthenticated. Creates the Cognito user in UNCONFIRMED state. A UsernameExistsException here just means you already made this one — move on."
+            "description": "Unauthenticated. Creates the Cognito user in UNCONFIRMED state. A UsernameExistsException here just means you already made this one \u2014 move on."
           }
         },
         {
@@ -254,7 +278,7 @@
               "mode": "raw",
               "raw": "{\n  \"UserPoolId\": \"{{cognito_user_pool_id}}\",\n  \"Username\": \"{{new_user_email}}\"\n}"
             },
-            "description": "Confirms the user without the emailed code — the dev-pool bypass. Needs an IAM key with cognito-idp permissions (AmazonCognitoPowerUser). Returns an empty 200 on success."
+            "description": "Confirms the user without the emailed code \u2014 the dev-pool bypass. Needs an IAM key with cognito-idp permissions (AmazonCognitoPowerUser). Returns an empty 200 on success."
           }
         },
         {
@@ -289,7 +313,7 @@
               "mode": "raw",
               "raw": "{\n  \"AuthFlow\": \"USER_PASSWORD_AUTH\",\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"AuthParameters\": {\n    \"USERNAME\": \"{{new_user_email}}\",\n    \"PASSWORD\": \"{{new_user_password}}\"\n  }\n}"
             },
-            "description": "Saves the token to new_user_id_token — a separate variable, so your main id_token (from Auth -> Login) is untouched."
+            "description": "Saves the token to new_user_id_token \u2014 a separate variable, so your main id_token (from Auth -> Login) is untouched."
           },
           "event": [
             {
@@ -302,7 +326,7 @@
                   "    pm.collectionVariables.set('new_user_id_token', data.AuthenticationResult.IdToken);",
                   "    console.log('new_user_id_token saved');",
                   "} else {",
-                  "    console.warn('No IdToken — did step 2 (confirm) succeed?', data);",
+                  "    console.warn('No IdToken \u2014 did step 2 (confirm) succeed?', data);",
                   "}"
                 ]
               }
@@ -373,7 +397,7 @@
               "mode": "raw",
               "raw": "{\n  \"username\": \"{{username}}\"\n}"
             },
-            "description": "Only needed once per Cognito user — 409s if this login is already registered, which is fine to ignore."
+            "description": "Only needed once per Cognito user \u2014 409s if this login is already registered, which is fine to ignore."
           }
         },
         {
@@ -447,7 +471,7 @@
                 "follow"
               ]
             },
-            "description": "Idempotent — 200 even if you weren't following."
+            "description": "Idempotent \u2014 200 even if you weren't following."
           }
         },
         {
@@ -528,7 +552,7 @@
                 "like"
               ]
             },
-            "description": "Idempotent — 200 even if you hadn't liked it."
+            "description": "Idempotent \u2014 200 even if you hadn't liked it."
           }
         },
         {
@@ -597,7 +621,7 @@
               "mode": "raw",
               "raw": "{\n  \"body\": \"for real\",\n  \"parent_id\": \"{{comment_id}}\"\n}"
             },
-            "description": "Replies to comment_id (set by Add Comment). Threading is one level deep — 422 if comment_id is itself already a reply."
+            "description": "Replies to comment_id (set by Add Comment). Threading is one level deep \u2014 422 if comment_id is itself already a reply."
           }
         },
         {
@@ -721,9 +745,9 @@
             "url": "{{upload_url}}",
             "body": {
               "mode": "raw",
-              "raw": "fake video bytes for testing — the stub analyzer never decodes this"
+              "raw": "fake video bytes for testing \u2014 the stub analyzer never decodes this"
             },
-            "description": "Uses upload_url saved by step 1 — run that request first. Not authenticated with the bearer token; presigned URLs carry their own auth in the query string."
+            "description": "Uses upload_url saved by step 1 \u2014 run that request first. Not authenticated with the bearer token; presigned URLs carry their own auth in the query string."
           }
         },
         {
@@ -757,7 +781,7 @@
                 "{{clip_id}}"
               ]
             },
-            "description": "Re-send this one to poll. status goes queued -> analyzing -> analyzed (or unanalyzable) once the worker picks it up — watch `docker compose logs -f worker` alongside this."
+            "description": "Re-send this one to poll. status goes queued -> analyzing -> analyzed (or unanalyzable) once the worker picks it up \u2014 watch `docker compose logs -f worker` alongside this."
           },
           "event": [
             {
@@ -815,8 +839,550 @@
                 "publish"
               ]
             },
-            "description": "422s if no trick has been tagged yet — try this before step 5 once, on a fresh clip, to see that guard fire."
+            "description": "422s if no trick has been tagged yet \u2014 try this before step 5 once, on a fresh clip, to see that guard fire."
           }
+        }
+      ]
+    },
+    {
+      "name": "Teams",
+      "description": "Step 4c. Run New User (once) and 0. Third Member Setup (once) first \u2014 founding a team needs 2 invitees beyond the owner (nick), and this uses nick2 + nick3 for those. The clip steps here reuse clip_id from the Clips folder \u2014 run Clips 1-4 until status is 'analyzed' before Tag Clip to Team, then come back to Clips 6 to publish.",
+      "item": [
+        {
+          "name": "0. Third Member Setup",
+          "description": "A team needs the owner plus at least 2 founding invitees \u2014 nick (default id_token) and nick2 (new_user_id_token, from the New User folder) cover two of the three; this makes the third. Same 4-step dance as New User, with third_user_* variables so it doesn't collide with either.",
+          "item": [
+            {
+              "name": "0a. Sign Up (Third User)",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/x-amz-json-1.1"
+                  },
+                  {
+                    "key": "X-Amz-Target",
+                    "value": "AWSCognitoIdentityProviderService.SignUp"
+                  }
+                ],
+                "url": {
+                  "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+                  "protocol": "https",
+                  "host": [
+                    "cognito-idp",
+                    "{{aws_region}}",
+                    "amazonaws",
+                    "com"
+                  ],
+                  "path": []
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"Username\": \"{{third_user_email}}\",\n  \"Password\": \"{{third_user_password}}\",\n  \"UserAttributes\": [\n    { \"Name\": \"email\", \"Value\": \"{{third_user_email}}\" }\n  ]\n}"
+                },
+                "description": "UsernameExistsException just means you already made this one \u2014 move on."
+              }
+            },
+            {
+              "name": "0b. Admin Confirm (Third User)",
+              "request": {
+                "auth": {
+                  "type": "awsv4",
+                  "awsv4": [
+                    {
+                      "key": "accessKey",
+                      "value": "{{aws_access_key_id}}",
+                      "type": "string"
+                    },
+                    {
+                      "key": "secretKey",
+                      "value": "{{aws_secret_access_key}}",
+                      "type": "string"
+                    },
+                    {
+                      "key": "region",
+                      "value": "{{aws_region}}",
+                      "type": "string"
+                    },
+                    {
+                      "key": "service",
+                      "value": "cognito-idp",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/x-amz-json-1.1"
+                  },
+                  {
+                    "key": "X-Amz-Target",
+                    "value": "AWSCognitoIdentityProviderService.AdminConfirmSignUp"
+                  }
+                ],
+                "url": {
+                  "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+                  "protocol": "https",
+                  "host": [
+                    "cognito-idp",
+                    "{{aws_region}}",
+                    "amazonaws",
+                    "com"
+                  ],
+                  "path": []
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"UserPoolId\": \"{{cognito_user_pool_id}}\",\n  \"Username\": \"{{third_user_email}}\"\n}"
+                },
+                "description": "Needs aws_access_key_id/aws_secret_access_key filled in (see New User folder). Returns an empty 200 on success."
+              }
+            },
+            {
+              "name": "0c. Log In As Third User",
+              "request": {
+                "auth": {
+                  "type": "noauth"
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/x-amz-json-1.1"
+                  },
+                  {
+                    "key": "X-Amz-Target",
+                    "value": "AWSCognitoIdentityProviderService.InitiateAuth"
+                  }
+                ],
+                "url": {
+                  "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+                  "protocol": "https",
+                  "host": [
+                    "cognito-idp",
+                    "{{aws_region}}",
+                    "amazonaws",
+                    "com"
+                  ],
+                  "path": []
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"AuthFlow\": \"USER_PASSWORD_AUTH\",\n  \"ClientId\": \"{{cognito_client_id}}\",\n  \"AuthParameters\": {\n    \"USERNAME\": \"{{third_user_email}}\",\n    \"PASSWORD\": \"{{third_user_password}}\"\n  }\n}"
+                }
+              },
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "const data = pm.response.json();",
+                      "if (data.AuthenticationResult && data.AuthenticationResult.IdToken) {",
+                      "    pm.collectionVariables.set('third_user_id_token', data.AuthenticationResult.IdToken);",
+                      "    console.log('third_user_id_token saved');",
+                      "} else {",
+                      "    console.warn('No IdToken \u2014 did step 0b (confirm) succeed?', data);",
+                      "}"
+                    ]
+                  }
+                }
+              ]
+            },
+            {
+              "name": "0d. Register Third User (POST /users)",
+              "request": {
+                "auth": {
+                  "type": "bearer",
+                  "bearer": [
+                    {
+                      "key": "token",
+                      "value": "{{third_user_id_token}}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/users",
+                  "host": [
+                    "{{base_url}}"
+                  ],
+                  "path": [
+                    "users"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"username\": \"{{third_username}}\"\n}"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "name": "1. Create Team (POST /teams)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/teams",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "teams"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Midnight Skaters\",\n  \"slug\": \"{{team_slug}}\",\n  \"description\": \"Late-night street sessions.\",\n  \"level\": \"intermediate\",\n  \"join_policy\": \"open\",\n  \"invitee_usernames\": [\"{{new_username}}\", \"{{third_username}}\"]\n}"
+            },
+            "description": "Doesn't make the team live yet \u2014 founded is false until both nick2 and nick3 accept below. 409 if team_slug is already taken (the pre-request script makes a fresh one each run)."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('team_slug', 'midnight_skaters_' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "pm.collectionVariables.set('team_id', data.id);",
+                  "console.log('team_id:', data.id, 'founded:', data.founded);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "2. Accept Invite \u2014 Second User (nick2)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{new_user_id_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/teams/{{team_slug}}/invites/mine/accept",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "teams",
+                "{{team_slug}}",
+                "invites",
+                "mine",
+                "accept"
+              ]
+            },
+            "description": "founded stays false until nick3 accepts too (next request)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "console.log('founded:', data.founded);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "3. Accept Invite \u2014 Third User (nick3)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{third_user_id_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/teams/{{team_slug}}/invites/mine/accept",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "teams",
+                "{{team_slug}}",
+                "invites",
+                "mine",
+                "accept"
+              ]
+            },
+            "description": "The last founding invite \u2014 founded flips to true here. Rejecting this instead (POST .../invites/mine/reject) would delete the whole team, not just this invite."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "console.log('founded:', data.founded, 'member_count:', data.member_count);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "4. Get Team (GET /teams/:slug)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/teams/{{team_slug}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "teams",
+                "{{team_slug}}"
+              ]
+            },
+            "description": "Now visible to anyone, not just the owner/invitees \u2014 try this without a token, or as a different user, before step 3 to see the 404."
+          }
+        },
+        {
+          "name": "5. List Members (GET /teams/:slug/members)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/teams/{{team_slug}}/members",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "teams",
+                "{{team_slug}}",
+                "members"
+              ]
+            }
+          }
+        },
+        {
+          "name": "6. Promote Second User to Admin (PATCH /teams/:slug/members/:username)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/teams/{{team_slug}}/members/{{new_username}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "teams",
+                "{{team_slug}}",
+                "members",
+                "{{new_username}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"admin\"\n}"
+            },
+            "description": "Owner-only (nick, the default id_token). An admin can accept/reject join requests and kick a plain member, but not another admin or the owner \u2014 try this same request as nick2 or nick3 to see the 403."
+          }
+        },
+        {
+          "name": "7. Tag Clip to Team (PATCH /clips/:clip_id/team)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/team",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "team"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"team_id\": \"{{team_id}}\"\n}"
+            },
+            "description": "clip_id must already be 'analyzed' (Clips folder, steps 1-4) and owned by whoever you're authenticated as (nick) \u2014 409 otherwise. Also 403 if that user isn't a member of team_id. Locks once the clip is published; team_id: null clears it. Run Clips \u2192 \"6. Publish\" after this, then come back."
+          }
+        },
+        {
+          "name": "8. Toggle Score Inclusion Off (PATCH /clips/:clip_id/score-inclusion)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/score-inclusion",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "score-inclusion"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"included\": false\n}"
+            },
+            "description": "Unlike team tagging, this stays editable forever \u2014 before or after publishing. The clip still publishes and plays either way; this only affects whether its score would count toward an average once Discover (4d) computes one."
+          }
+        },
+        {
+          "name": "9. Toggle Score Inclusion Back On",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/clips/{{clip_id}}/score-inclusion",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "clips",
+                "{{clip_id}}",
+                "score-inclusion"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"included\": true\n}"
+            },
+            "description": "Try this again after step 11's Publish, too \u2014 it still works post-publish."
+          }
+        },
+        {
+          "name": "10. Follow Team \u2014 Second User (POST /teams/:slug/follow)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{new_user_id_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "url": {
+              "raw": "{{base_url}}/teams/{{team_slug}}/follow",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "teams",
+                "{{team_slug}}",
+                "follow"
+              ]
+            },
+            "description": "nick2 follows the team (independent of also being a member, and without following nick directly) so the next request's feed hit is credited to the team-follow path, not a user-follow."
+          }
+        },
+        {
+          "name": "11. Home Feed \u2014 Second User, After Publishing (GET /feed)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{new_user_id_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/feed?limit=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "feed"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Run Clips \u2192 \"6. Publish\" (as nick) before this. nick2 doesn't follow nick directly, so the team-tagged clip showing up here is entirely due to step 10's team follow \u2014 see docs/ARCHITECTURE.md \u00a77 for the dedup logic if it's also followed both ways."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "console.log('items:', data.items.length);",
+                  "if (data.items.length) { console.log('first item team:', JSON.stringify(data.items[0].team)); }"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

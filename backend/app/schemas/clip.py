@@ -11,6 +11,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.enums import ClipStatus
+from app.schemas.team import TeamBrief
 from app.schemas.user import UserBrief
 
 
@@ -57,6 +58,13 @@ class ClipOut(BaseModel):
     like_count: int = 0
     comment_count: int = 0
     liked_by_me: bool = False  # always false for anon viewers, same as UserPublic.followed_by_me
+    # Set via PATCH /clips/{id}/team, only while status == ANALYZED — a
+    # one-time, pre-publish decision (4c). Null if untagged.
+    team: TeamBrief | None = None
+    # Whether steeze_score counts toward an average (4d). True by default;
+    # unlike `team`, this stays editable via PATCH /clips/{id}/score-inclusion
+    # even after publishing (see app/models/clip.py).
+    score_included: bool = True
     created_at: datetime
 
 
@@ -74,6 +82,18 @@ class FeedPage(BaseModel):
 
     items: list[ClipOut]
     next_cursor: str | None = None
+
+
+class ClipTeamUpdate(BaseModel):
+    """Body for PATCH /clips/{id}/team. `team_id: null` clears it."""
+
+    team_id: uuid.UUID | None = None
+
+
+class ClipScoreInclusionUpdate(BaseModel):
+    """Body for PATCH /clips/{id}/score-inclusion."""
+
+    included: bool
 
 
 class TagTricksRequest(BaseModel):

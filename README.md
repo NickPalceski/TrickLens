@@ -9,11 +9,11 @@ Discover.
 
 > **Status: step 4 in progress — the social app.** Steps 1–3 are done and
 > verified (local dev foundation, Cognito auth/users/profiles, a clip's full
-> path from draft through a stubbed analysis to published). Step 4a
-> (following users + the home feed) is done and verified end-to-end. Step 4b
-> (likes + comments) is done and verified end-to-end too. See
-> [Clips](#clips), [Feed & follows](#feed--follows), and
-> [Likes & comments](#likes--comments) to try it, and
+> path from draft through a stubbed analysis to published). Steps 4a
+> (following users + the home feed), 4b (likes + comments), and 4c (teams)
+> are all done and verified end-to-end. See [Clips](#clips),
+> [Feed & follows](#feed--follows), [Likes & comments](#likes--comments), and
+> [Teams](#teams) to try it, and
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
 
 ## Stack
@@ -176,11 +176,25 @@ curl -X POST "localhost:8000/clips/$clip_id/complete" -H "Authorization: Bearer 
 # 4. Poll until the worker (docker compose logs -f worker) has picked it up
 curl "localhost:8000/clips/$clip_id" -H "Authorization: Bearer $ID_TOKEN"
 
-# 5. Once status is "analyzed", tag it and publish
+# 5. Once status is "analyzed", tag it, optionally tag a team, and publish
 curl -X POST "localhost:8000/clips/$clip_id/tricks" \
   -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
   -d '{"tricks": ["kickflip"]}'
+
+# optional — only works while status is "analyzed", and only if you're a
+# member of the team; team_id: null clears it
+curl -X PATCH "localhost:8000/clips/$clip_id/team" \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
+  -d "{\"team_id\": \"$team_id\"}"
+
 curl -X POST "localhost:8000/clips/$clip_id/publish" -H "Authorization: Bearer $ID_TOKEN"
+
+# score_included defaults to true; flip it any time, even after publishing,
+# if the analysis doesn't feel like a fair read of the clip — it still
+# publishes and plays either way, it just won't count toward an average (4d)
+curl -X PATCH "localhost:8000/clips/$clip_id/score-inclusion" \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
+  -d '{"included": false}'
 ```
 
 The scorer is a stub (see docs/ARCHITECTURE.md §4/§5) — it fabricates a
@@ -207,8 +221,10 @@ curl -X DELETE localhost:8000/users/otheruser/follow -H "Authorization: Bearer $
 ```
 
 `GET /users/{username}` now also reports `follower_count`, `following_count`,
-and (when called with a token) `followed_by_me`. Team follows and Discover
-come in the rest of step 4.
+and (when called with a token) `followed_by_me`. Following a team (see
+[Teams](#teams)) surfaces its members' clips in your home feed the same way —
+`POST/DELETE /teams/{slug}/follow`. If you follow both a clip's author and the
+team it's tagged to, it still only shows up once. Discover comes in 4d.
 
 ## Likes & comments
 
@@ -243,6 +259,68 @@ curl -X DELETE "localhost:8000/clips/$clip_id/comments/$comment_id" -H "Authoriz
 `like_count`, `comment_count`, and `liked_by_me`. Both like and comment
 routes require the clip to be `published` — a 404 if you can't see it at
 all (someone else's draft), a 409 if you can (your own draft).
+
+## Teams
+
+The Postman collection's **Teams** folder covers this end-to-end — run
+*New User* once, then *Teams → 0. Third Member Setup* once (founding needs
+2 invitees beyond the owner, and the collection only has one spare user
+otherwise), then *Teams* 1 through 11 in order, interleaving *Clips* 1–4 and
+6 where its steps say to. By curl, continuing from an `$ID_TOKEN` and two
+more registered usernames to found a team with:
+
+```bash
+# Founding a team isn't instant: it stays invisible to everyone but the
+# owner and the two invitees below until BOTH accept (a minimum of 2
+# founding invitees is required — this is the floor, not a cap).
+resp=$(curl -s -X POST localhost:8000/teams \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
+  -d '{
+    "name": "Midnight Skaters", "slug": "midnight_skaters",
+    "level": "intermediate", "join_policy": "open",
+    "invitee_usernames": ["otheruser", "thirduser"]
+  }')
+slug=$(echo "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin)["slug"])')
+
+# as otheruser / thirduser — the team goes live once both have accepted;
+# rejecting instead cancels the whole attempt (the owner can redo it with
+# the same name/slug)
+curl -X POST "localhost:8000/teams/$slug/invites/mine/accept" -H "Authorization: Bearer $OTHER_TOKEN"
+curl -X POST "localhost:8000/teams/$slug/invites/mine/accept" -H "Authorization: Bearer $THIRD_TOKEN"
+
+curl "localhost:8000/teams/$slug" -H "Authorization: Bearer $ID_TOKEN"
+```
+
+Once founded (capped at 20 members, `level`/`join_policy`/description
+editable later via `PATCH /teams/{slug}`, owner-only):
+
+```bash
+# how someone else ends up on the roster depends on join_policy:
+#   open        -> POST /teams/{slug}/join makes them a member immediately
+#   request     -> POST /teams/{slug}/join creates a pending request; an
+#                  owner/admin resolves it via
+#                  POST /teams/{slug}/join-requests/{username}/accept|reject
+#   invite_only -> only an owner/admin can add someone, via
+#                  POST /teams/{slug}/invites {"username": "..."} — the
+#                  invited user then accepts/rejects it themselves, same as
+#                  a founding invite (GET /teams/invites/mine lists all of
+#                  a user's pending invites, founding or not)
+curl -X POST "localhost:8000/teams/$slug/join" -H "Authorization: Bearer $ID_TOKEN"
+
+# owner-only: promote/demote (admins can accept join requests and kick a
+# plain member, but not another admin or the owner), or remove someone
+# (a member can also remove themselves this way, to leave)
+curl -X PATCH "localhost:8000/teams/$slug/members/otheruser" \
+  -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" -d '{"role": "admin"}'
+curl -X DELETE "localhost:8000/teams/$slug/members/otheruser" -H "Authorization: Bearer $ID_TOKEN"
+
+# following a team works exactly like following a user (see Feed & follows)
+curl -X POST "localhost:8000/teams/$slug/follow" -H "Authorization: Bearer $ID_TOKEN"
+```
+
+Tagging a clip to a team (`PATCH /clips/{id}/team`) and deciding whether its
+score counts toward an average (`PATCH /clips/{id}/score-inclusion`) are
+covered in [Clips](#clips) — the averaging itself is 4d, not built yet.
 
 ## Commands
 

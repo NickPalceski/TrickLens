@@ -13,10 +13,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.clip import Clip
+from app.models.enums import JoinRequestKind
 from app.models.social import Comment, Follow, Like
+from app.models.team import Team, TeamJoinRequest, TeamMember
 from app.models.user import User
 from app.schemas.clip import AnalysisOut, ClipOut, TrickOut
 from app.schemas.social import CommentOut
+from app.schemas.team import TeamBrief, TeamMemberOut, TeamOut
 from app.schemas.user import ProfileOut, UserBrief, UserPublic
 from app.services.storage import get_storage
 
@@ -63,6 +66,77 @@ async def user_public(user: User, db: AsyncSession, viewer: User | None = None) 
         following_count=following_count or 0,
         followed_by_me=followed_by_me,
         created_at=user.created_at,
+    )
+
+
+def team_brief(team: Team) -> TeamBrief:
+    return TeamBrief(id=team.id, name=team.name, slug=team.slug)
+
+
+def team_member_out(member: TeamMember) -> TeamMemberOut:
+    return TeamMemberOut(user=user_brief(member.user), role=member.role, joined_at=member.joined_at)
+
+
+async def team_out(team: Team, db: AsyncSession, viewer: User | None = None) -> TeamOut:
+    """Requires team.owner to be loaded (lazy="selectin", automatic).
+    `my_role`/`pending_founders` are the only viewer-dependent /
+    founding-state fields — everything else is a per-call count query, same
+    cost user_public() already pays."""
+    member_count = (
+        await db.scalar(
+            select(func.count()).select_from(TeamMember).where(TeamMember.team_id == team.id)
+        )
+        or 0
+    )
+    follower_count = (
+        await db.scalar(
+            select(func.count()).select_from(Follow).where(Follow.followee_team_id == team.id)
+        )
+        or 0
+    )
+
+    followed_by_me = False
+    my_role = None
+    if viewer is not None:
+        followed_by_me = (
+            await db.scalar(
+                select(Follow.id).where(
+                    Follow.follower_id == viewer.id, Follow.followee_team_id == team.id
+                )
+            )
+        ) is not None
+        my_role = await db.scalar(
+            select(TeamMember.role).where(
+                TeamMember.team_id == team.id, TeamMember.user_id == viewer.id
+            )
+        )
+
+    pending_founders: list[UserBrief] = []
+    if team.founded_at is None:
+        # TeamJoinRequest.user is lazy="selectin" and not self-referential,
+        # so it auto-loads here with no explicit option needed.
+        invites = await db.scalars(
+            select(TeamJoinRequest).where(
+                TeamJoinRequest.team_id == team.id, TeamJoinRequest.kind == JoinRequestKind.INVITE
+            )
+        )
+        pending_founders = [user_brief(r.user) for r in invites]
+
+    return TeamOut(
+        id=team.id,
+        name=team.name,
+        slug=team.slug,
+        description=team.description,
+        level=team.level,
+        join_policy=team.join_policy,
+        owner=user_brief(team.owner),
+        member_count=member_count,
+        follower_count=follower_count,
+        followed_by_me=followed_by_me,
+        my_role=my_role,
+        founded=team.founded_at is not None,
+        pending_founders=pending_founders,
+        created_at=team.created_at,
     )
 
 
@@ -122,6 +196,8 @@ async def clip_out(
         like_count=like_count,
         comment_count=comment_count,
         liked_by_me=liked_by_me,
+        team=team_brief(clip.team) if clip.team else None,
+        score_included=clip.score_included,
         created_at=clip.created_at,
     )
 

@@ -17,10 +17,6 @@ class Follow(Base, UUIDPrimaryKey):
     (type, id) pair (see docs/ARCHITECTURE.md §6). Postgres then enforces
     referential integrity and cascade-deletes on both, which a bare
     `followee_id` never could.
-
-    `followee_team_id`'s FK to `teams` is added in migration 0006 (4c) —
-    that table doesn't exist yet. The column and the XOR check are here now
-    so 0004 doesn't need revisiting.
     """
 
     __tablename__ = "follows"
@@ -46,7 +42,9 @@ class Follow(Base, UUIDPrimaryKey):
     followee_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    followee_team_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), index=True)
+    followee_team_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("teams.id", ondelete="CASCADE"), index=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

@@ -20,6 +20,63 @@ class SkateStyle(StrEnum):
     MIX = "mix"
 
 
+class TeamLevel(StrEnum):
+    """A team's self-declared skateboarding level, set by its owner at
+    creation and editable afterward in team settings (docs/ARCHITECTURE.md
+    §6). Purely descriptive — nothing enforces a member's own skill matches
+    it."""
+
+    BEGINNER = "beginner"
+    INTERMEDIATE = "intermediate"
+    ADVANCED = "advanced"
+
+
+class JoinPolicy(StrEnum):
+    """How a user other than an invitee ends up on a team's roster.
+
+    OPEN: POST /teams/{slug}/join makes them a member immediately.
+    REQUEST: that same call creates a pending `TeamJoinRequest` instead,
+    which an owner/admin must accept.
+    INVITE_ONLY: there is no self-serve join at all — only an owner/admin
+    sending an invite (also a `TeamJoinRequest`, the other `kind`) can add
+    someone.
+    """
+
+    OPEN = "open"
+    REQUEST = "request"
+    INVITE_ONLY = "invite_only"
+
+
+class TeamRole(StrEnum):
+    """A team member's permission level. Exactly one member per team holds
+    OWNER (mirrors `Team.owner_id`); ADMIN can approve/reject join requests
+    and kick a MEMBER, but not another ADMIN or the OWNER — only the owner
+    changes roles or deletes the team. No ownership-transfer flow exists
+    yet."""
+
+    OWNER = "owner"
+    ADMIN = "admin"
+    MEMBER = "member"
+
+
+class JoinRequestKind(StrEnum):
+    """Which direction a pending `TeamJoinRequest` row runs, since one table
+    serves both (docs/ARCHITECTURE.md §6):
+
+    REQUEST: the user asked to join; an owner/admin must accept it.
+    INVITE: an owner/admin (or, during team founding, the creator) asked the
+    user to join; only that user can accept or reject it.
+
+    There is no `status` column — a row's existence means "pending"; accept
+    replaces it with a `TeamMember` row, reject just deletes it (except
+    rejecting a *founding* invite, which deletes the whole still-unfounded
+    `Team` instead — see routes/teams.py).
+    """
+
+    REQUEST = "request"
+    INVITE = "invite"
+
+
 class ClipStatus(StrEnum):
     """Lifecycle of a clip.
 

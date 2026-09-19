@@ -20,8 +20,16 @@ from app.api.serializers import clip_out, comment_out
 from app.models.clip import Clip, ClipTrick, Trick
 from app.models.enums import ClipStatus
 from app.models.social import Comment, Like
+from app.models.team import Team, TeamMember
 from app.models.user import User
-from app.schemas.clip import ClipCreate, ClipCreateOut, ClipOut, TagTricksRequest
+from app.schemas.clip import (
+    ClipCreate,
+    ClipCreateOut,
+    ClipOut,
+    ClipScoreInclusionUpdate,
+    ClipTeamUpdate,
+    TagTricksRequest,
+)
 from app.schemas.social import CommentCreate, CommentOut, CommentPage
 from app.services.queue import get_queue
 from app.services.storage import PREFIX_RAW, get_storage
@@ -133,6 +141,60 @@ async def tag_tricks(
     # explicit refresh rather than a re-SELECT (which would just return the
     # same identity-mapped, still-stale object).
     await db.refresh(clip, attribute_names=["clip_tricks"])
+    return await clip_out(clip, db, user)
+
+
+@router.patch("/{clip_id}/team")
+async def set_clip_team(
+    clip_id: uuid.UUID, body: ClipTeamUpdate, user: CurrentUser, db: DbSession
+) -> ClipOut:
+    """One-time, pre-publish decision (4c) — `team_id: null` clears it.
+    Locked once published, unlike score-inclusion below: a team tag is
+    credit for a specific team roster at a point in time, not something that
+    makes sense to reassign after the fact."""
+    clip = await _get_owned(clip_id, user, db)
+    if clip.status != ClipStatus.ANALYZED:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "clip must be analyzed, and not yet published, to tag a team"
+        )
+
+    team = None
+    if body.team_id is not None:
+        membership = await db.scalar(
+            select(TeamMember).where(
+                TeamMember.team_id == body.team_id, TeamMember.user_id == user.id
+            )
+        )
+        if membership is None:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "you must be a member of the team to tag a clip to it"
+            )
+        team = await db.scalar(select(Team).where(Team.id == body.team_id))
+
+    # Assigning through the relationship (not clip.team_id directly) keeps
+    # the in-memory clip.team attribute in sync — clip_out reads it right
+    # below with no re-fetch, unlike tag_tricks' clip_tricks collection,
+    # which needs an explicit refresh after a bulk delete+insert.
+    clip.team = team
+    await db.flush()
+    return await clip_out(clip, db, user)
+
+
+@router.patch("/{clip_id}/score-inclusion")
+async def set_score_inclusion(
+    clip_id: uuid.UUID, body: ClipScoreInclusionUpdate, user: CurrentUser, db: DbSession
+) -> ClipOut:
+    """Unlike team tagging, this stays editable forever, even after
+    publishing — an edit to the post, not a one-time pre-publish call. Never
+    touches Analysis; the existing scoring pass is reused as-is either way,
+    see app/models/clip.py."""
+    clip = await _get_owned(clip_id, user, db)
+    if clip.status not in (ClipStatus.ANALYZED, ClipStatus.PUBLISHED):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, "clip must be analyzed before its score can be toggled"
+        )
+    clip.score_included = body.included
+    await db.flush()
     return await clip_out(clip, db, user)
 
 

@@ -1,8 +1,9 @@
-"""Home feed — published clips from everyone you follow, newest first.
+"""Home feed — published clips from everyone (and every team) you follow,
+newest first.
 
-Fan-out-on-read (docs/ARCHITECTURE.md §7): a live join of `follows` against
-`clips`, keyset-paginated. Cheap enough at this scale that precomputed
-per-user timelines aren't worth their write amplification.
+Fan-out-on-read (docs/ARCHITECTURE.md §7): a live query against `clips`,
+keyset-paginated. Cheap enough at this scale that precomputed per-user
+timelines aren't worth their write amplification.
 """
 
 from fastapi import APIRouter, HTTPException, Query, status
@@ -28,10 +29,19 @@ async def home_feed(
     limit: int = Query(20, ge=1, le=_PAGE_MAX),
     cursor: str | None = None,
 ) -> FeedPage:
+    # Two IN-subqueries rather than a join on an OR condition: a join would
+    # emit a clip twice when both its author *and* its tagged team are
+    # followed, and de-duping a joined result is more awkward than just
+    # avoiding the duplication in the first place.
+    followed_users = select(Follow.followee_user_id).where(
+        Follow.follower_id == user.id, Follow.followee_user_id.is_not(None)
+    )
+    followed_teams = select(Follow.followee_team_id).where(
+        Follow.follower_id == user.id, Follow.followee_team_id.is_not(None)
+    )
     stmt = (
         select(Clip)
-        .join(Follow, Follow.followee_user_id == Clip.user_id)
-        .where(Follow.follower_id == user.id)
+        .where(or_(Clip.user_id.in_(followed_users), Clip.team_id.in_(followed_teams)))
         .where(Clip.status == ClipStatus.PUBLISHED)
         .order_by(Clip.published_at.desc(), Clip.id.desc())
         .limit(limit + 1)  # one extra row tells us whether there's a next page
