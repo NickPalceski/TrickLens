@@ -3,11 +3,10 @@
 Conceptual overview of the system: what each component is, what it does, and
 how it connects to the others. Kept current as the build progresses.
 
-**Current state: step 4 done — social app. 4a (follows + home feed), 4b
+**Current state: step 5 done — the social app is live in AWS. 4a (follows + home feed), 4b
 (likes + comments), 4c (teams), and 4d (Discover) all built and verified.
-Step 5 (Terraform + GitHub Actions) is written and `terraform plan`-validated
-against the real AWS account, not yet applied — see CLAUDE.md's Current
-state for exactly what that means.** Sections marked *(planned)* are
+Step 5 (Terraform + GitHub Actions) is live in AWS, deployed by the
+`deploy.yml` pipeline on push to `main`.** Sections marked *(planned)* are
 designed but not yet built.
 
 ---
@@ -776,7 +775,7 @@ per Lambda function, and an AWS Budget alarm at $5 (step 5, `infra/budget.tf`).
 | 2 | Auth (Cognito) + users + profiles | **done** |
 | 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | **done** |
 | 4 | Social app — feed, likes, comments, teams, discover | **done** |
-| 5 | Terraform + GitHub Actions → deploy to AWS | **written, `terraform plan`-validated, not yet applied** |
+| 5 | Terraform + GitHub Actions → deploy to AWS | **done, live** |
 | 6 | Replace the stub with the real steeze analyzer | |
 
 Step 3 deliberately stubs the analyzer so that a complete, deployed, working

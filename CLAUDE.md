@@ -231,8 +231,9 @@ can live anywhere.
 
 ## Current state
 
-**Steps 1–3 complete and verified; step 4 done — 4a (follows + home feed), 4b
-(likes + comments), 4c (teams), and 4d (Discover) all done and verified.**
+**Steps 1–5 complete and verified: step 4's 4a (follows + home feed), 4b
+(likes + comments), 4c (teams) and 4d (Discover) are all done, and step 5
+(Terraform + GitHub Actions) is live in AWS.**
 Running locally:
 
 ```bash
@@ -351,21 +352,19 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   round trip verified through `0002`; `0003`–`0007` applied and exercised
   (fresh `docker compose up` ran all seven in order against real Postgres),
   not round-tripped (`downgrade` untested).
-- **Step 5 (Terraform + GitHub Actions) infra code written and validated,
-  not yet applied.** `infra/*.tf` passed `terraform validate` and a live
-  `terraform plan` against the real AWS account behind the Cognito dev pool
-  (43 resources to add, 0 errors — see `docs/ARCHITECTURE.md` §9/§12 for
-  what that covers), and `docker compose run --rm api python -m pytest` —
-  49/49 — still passes locally after the one code change this step made
-  (`app/services/secrets.py` + `app/config.py`, see below). What's genuinely
-  **not yet done**, because it needs the user's real AWS/Neon credentials
-  and is explicitly a hand-run bootstrap (see README's Deployment section
-  and `docs/ARCHITECTURE.md` §12 for the full sequence): creating the prod
-  Neon DB, running `scripts/terraform-bootstrap.sh`, creating the GitHub
-  OIDC provider/roles, the two-phase first `terraform apply` (ECR repo, then
-  a real image, then everything else), and the first live
-  `GET /health/deep` against a real API Gateway URL. Until that first apply
-  runs, there is no live TrickLens deployment in AWS.
+- **Step 5 (Terraform + GitHub Actions) is live in AWS and verified.** The
+  one-time bootstrap is done: prod Neon DB, Terraform state bucket/lock
+  table, GitHub OIDC provider and roles, and the two-phase first apply (see
+  README's Deployment section). A push to `main` then ran the full
+  `deploy.yml` pipeline green end to end: test, build/push image, migrate,
+  `terraform apply`, and the `/health/deep` smoke test against the real API
+  Gateway URL, with all checks green and the postgres check reporting
+  `revision: 0007` from prod Neon. The SSM `DATABASE_URL` (Lambdas) and the
+  `ALEMBIC_DATABASE_URL` GitHub secret (migrate job) both point at the same
+  Neon database. Getting there took three fixes, all recorded in the
+  gotchas above: the OIDC `sub` claim format, the CI roles' missing
+  lock-table and provider-read permissions, and the migrate job's silent
+  failure. Test suite: 51/51.
   - **What step 5 added, concretely:** `infra/` (Terraform: ECR, 3 Lambda
     functions sharing one image via `image_config.command` overrides,
     IAM roles, API Gateway HTTP API, SQS+DLQ, S3+CloudFront+OAC, a prod
@@ -383,9 +382,7 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 
 **Not done yet:** no frontend code in this repo (a visual prototype exists as
 a separate Artifact canvas, outside the repo — now covers auth/profile/
-upload/clip-status *and* the 4c team flows above, added in the same session);
-step 5's Terraform is written but not yet applied to a live AWS account (see
-above).
+upload/clip-status *and* the 4c team flows above, added in the same session).
 
 ## Build order
 
@@ -398,8 +395,7 @@ above).
    - 4c ✅ teams (+ `clips.team_id`/`score_included`, `follows.followee_team_id`
      FK, migration `0006`) *(verified)*
    - 4d ✅ Discover (precomputed rankings + team score history) *(verified)*
-5. 🟡 Terraform + GitHub Actions → deploy to AWS — infra code written and
-   `terraform plan`-validated, not yet applied (see Current state above)
+5. ✅ Terraform + GitHub Actions → deploy to AWS *(live, verified)*
 6. ⬜ Replace the stub with the real steeze analyzer
 
 Steps are sequential. Do not start a step before the previous one's

@@ -7,8 +7,8 @@ cleanly it was landed (pop, landing stability, roll-away, stomp, body
 compactness, catch). Follow skaters and teams, and see the week's best on
 Discover.
 
-> **Status: step 4 done — the social app; step 5 (Terraform + GitHub Actions)
-> written, not yet applied.** Steps 1–3 are done and verified (local dev
+> **Status: steps 1–5 done — the social app is live in AWS, deployed by
+> GitHub Actions on every push to `main`.** Steps 1–3 are done and verified (local dev
 > foundation, Cognito auth/users/profiles, a clip's full path from draft
 > through a stubbed analysis to published). Steps 4a (following users + the
 > home feed), 4b (likes + comments), 4c (teams), and 4d (Discover) are all
@@ -32,7 +32,7 @@ Discover.
 | Queue | SQS |
 | Compute | Lambda (container images) |
 | Auth | AWS Cognito *(step 2)* |
-| Infra | Terraform, GitHub Actions, ECR *(step 5 — written, not yet applied)* |
+| Infra | Terraform, GitHub Actions, ECR *(step 5 — live)* |
 | Local dev | Docker Compose + LocalStack |
 
 ## Prerequisites
@@ -376,8 +376,8 @@ Step 5's infra code (`infra/*.tf`, `.github/workflows/`) is written and
 (the 3-Lambdas-from-1-image structure, why the CI deploy role is broad by
 design, why `DATABASE_URL` lives in SSM instead of a plain Lambda env var,
 the no-canary rollback approach, and the migrate-before-deploy ordering
-rule). **Nothing has been applied yet** — there is no live TrickLens
-deployment in AWS until the one-time bootstrap below is run by hand.
+rule). The one-time bootstrap below has been run, and TrickLens is live in
+AWS. It's kept here for rebuilding from scratch in a new account.
 
 ### `infra/` layout
 
