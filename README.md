@@ -7,14 +7,18 @@ cleanly it was landed (pop, landing stability, roll-away, stomp, body
 compactness, catch). Follow skaters and teams, and see the week's best on
 Discover.
 
-> **Status: step 4 done — the social app.** Steps 1–3 are done and verified
-> (local dev foundation, Cognito auth/users/profiles, a clip's full path from
-> draft through a stubbed analysis to published). Steps 4a (following users +
-> the home feed), 4b (likes + comments), 4c (teams), and 4d (Discover) are
-> all done and verified end-to-end. See [Clips](#clips),
+> **Status: step 4 done — the social app; step 5 (Terraform + GitHub Actions)
+> written, not yet applied.** Steps 1–3 are done and verified (local dev
+> foundation, Cognito auth/users/profiles, a clip's full path from draft
+> through a stubbed analysis to published). Steps 4a (following users + the
+> home feed), 4b (likes + comments), 4c (teams), and 4d (Discover) are all
+> done and verified end-to-end. See [Clips](#clips),
 > [Feed & follows](#feed--follows), [Likes & comments](#likes--comments),
-> [Teams](#teams), and [Discover](#discover) to try it, and
-> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full design.
+> [Teams](#teams), and [Discover](#discover) to try it locally, and
+> [Deployment](#deployment) for what running this in real AWS looks like
+> (infra code is done; the first live apply is a manual bootstrap step,
+> not yet run). [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full
+> design.
 
 ## Stack
 
@@ -28,7 +32,7 @@ Discover.
 | Queue | SQS |
 | Compute | Lambda (container images) |
 | Auth | AWS Cognito *(step 2)* |
-| Infra | Terraform, GitHub Actions, ECR *(step 5)* |
+| Infra | Terraform, GitHub Actions, ECR *(step 5 — written, not yet applied)* |
 | Local dev | Docker Compose + LocalStack |
 
 ## Prerequisites
@@ -364,6 +368,93 @@ top 10 (see `docs/ARCHITECTURE.md` §6 for why top 10, not all of them).
 These are computed live, same cost class as `follower_count`; only the two
 `/discover/*` rankings above depend on `make rankings` having been run.
 
+## Deployment
+
+Step 5's infra code (`infra/*.tf`, `.github/workflows/`) is written and
+`terraform plan`-validated against a real AWS account — see
+[docs/ARCHITECTURE.md §10](docs/ARCHITECTURE.md) for the design decisions
+(the 3-Lambdas-from-1-image structure, why the CI deploy role is broad by
+design, why `DATABASE_URL` lives in SSM instead of a plain Lambda env var,
+the no-canary rollback approach, and the migrate-before-deploy ordering
+rule). **Nothing has been applied yet** — there is no live TrickLens
+deployment in AWS until the one-time bootstrap below is run by hand.
+
+### `infra/` layout
+
+One Terraform root module (no `modules/` split — see ARCHITECTURE.md's
+Decisions for why): `versions.tf`/`providers.tf`/`backend.tf` (plumbing),
+`variables.tf`/`outputs.tf`, then one file per AWS service —
+`ecr.tf`, `iam.tf`, `lambda.tf`, `api_gateway.tf`, `sqs.tf`, `s3.tf`,
+`cloudfront.tf`, `cognito.tf`, `eventbridge.tf`, `secrets.tf`, `budget.tf`,
+`cloudwatch.tf`. `make tf-init` / `tf-plan` / `tf-apply` wrap the equivalent
+`terraform -chdir=infra ...` commands (see the Commands table below).
+
+### First-ever deploy — one-time, by hand
+
+Every step below runs once, ever, on whichever machine does the first
+deploy. After that, every push to `main` handles itself via
+`.github/workflows/deploy.yml`.
+
+1. **Create the prod Neon database** (same idiom as the Cognito dev pool —
+   a real external account, not something Terraform manages). Save both
+   connection strings — the asyncpg-flavored one and the psycopg-flavored
+   one — as GitHub repo secrets `DATABASE_URL` and `ALEMBIC_DATABASE_URL`.
+2. **Bootstrap the Terraform state backend:**
+   ```bash
+   ./scripts/terraform-bootstrap.sh
+   ```
+   Creates the S3 state bucket + DynamoDB lock table once (idempotent, same
+   `aws configure` credentials Cognito's bootstrap script already needs).
+3. **Create the GitHub OIDC provider + the two deploy roles** (`tricklens-gha-deploy`,
+   `tricklens-gha-plan`) by hand, using your own `aws configure` credentials
+   — this is the one place Terraform can't bootstrap itself, since the very
+   first `terraform apply` needs to run *as* a role that doesn't exist yet.
+   `infra/iam.tf` defines these resources; create them once via the AWS
+   CLI/console matching that file, then `terraform import` them into state
+   so future policy changes go through Terraform like everything else. Save
+   both role ARNs as GitHub secrets `AWS_DEPLOY_ROLE_ARN` /
+   `AWS_PLAN_ROLE_ARN`, and set `BUDGET_EMAIL` (the AWS Budget alarm's
+   recipient) too.
+4. **Bootstrap the ECR repo, then a first image** (a genuine
+   Terraform chicken-and-egg: a Lambda container function needs its image to
+   already exist in ECR, and Terraform can't build/push one itself):
+   ```bash
+   make tf-init
+   terraform -chdir=infra apply -target=aws_ecr_repository.main
+   docker build backend/ -t <ecr_repo_url>:bootstrap
+   docker push <ecr_repo_url>:bootstrap
+   ```
+5. **First full apply:**
+   ```bash
+   TF_VAR_database_url="$DATABASE_URL" TF_VAR_budget_email="you@example.com" \
+     terraform -chdir=infra apply -var="image_tag=bootstrap"
+   ```
+   Creates everything else — Cognito prod pool, S3+CloudFront, SQS+DLQ, API
+   Gateway, all 3 Lambda functions, EventBridge schedule, SSM parameter,
+   budget alarm.
+6. **Run the first migration by hand:**
+   ```bash
+   cd backend && ALEMBIC_DATABASE_URL="$ALEMBIC_DATABASE_URL" python -m alembic upgrade head
+   ```
+7. **Verify:** `curl $(terraform -chdir=infra output -raw api_invoke_url)/health/deep`
+   — all four checks green, against real Neon/S3/SQS/Cognito this time, not
+   LocalStack.
+8. From here on, every push to `main` runs the automated pipeline — test →
+   build/push a real image → migrate → `terraform apply` → smoke test. None
+   of the above repeats.
+
+### Ongoing deploys
+
+Nothing to do — push to `main`. `.github/workflows/deploy.yml` builds and
+pushes a new image tagged with the commit SHA, runs `alembic upgrade head`
+against Neon *before* the new image goes live (see the migration-ordering
+rule in ARCHITECTURE.md — this is a hard requirement for any migration
+shipped this way, not just a detail), then `terraform apply`s the new
+`image_tag` to all 3 Lambda functions in one pass, then smoke-tests
+`/health/deep`. Rollback is `terraform apply -var image_tag=<previous_sha>`
+— no aliases/canary machinery, see ARCHITECTURE.md for why that's the right
+call at this scale.
+
 ## Commands
 
 | Command | Does | Without `make` |
@@ -380,6 +471,9 @@ These are computed live, same cost class as `follower_count`; only the two
 | `make fmt` | Format and lint | `docker compose run --rm api python -m ruff format app` |
 | `make test` | Run the test suite | `docker compose run --rm api python -m pytest` |
 | `make rankings` | Rebuild Discover rankings + team score snapshots | `docker compose run --rm api python -m app.rankings` |
+| `make tf-init` | Init Terraform against the account-specific state backend | see the flags in `scripts/terraform-bootstrap.sh`'s header |
+| `make tf-plan` | `terraform plan` against prod | `terraform -chdir=infra plan` |
+| `make tf-apply` | `terraform apply` against prod — real AWS resources, real cost | `terraform -chdir=infra apply` |
 
 ## Services
 
@@ -403,7 +497,8 @@ so unlike LocalStack it's a one-time step you run by hand. See
 ```
 backend/
   app/
-    config.py          Settings — the only place env vars are read
+    config.py          Settings — the only place env vars are read (one
+                       narrow exception in prod, see services/secrets.py)
     db.py              Async engine + session dependency
     main.py            FastAPI assembly
     lambda_handler.py  Production entrypoint (Mangum)
@@ -418,20 +513,29 @@ backend/
     schemas/           Pydantic request/response models
     api/routes/        Endpoints
     api/serializers.py ORM model -> response schema conversion, defined once
-    services/          storage.py (S3), queue.py (SQS), auth.py (Cognito) —
-                       the only AWS-aware code
+    services/          storage.py (S3), queue.py (SQS), auth.py (Cognito),
+                       secrets.py (SSM, step 5) — the only AWS-aware code
   alembic/             Migrations
+infra/                 Terraform (step 5) — one resource file per AWS
+                       service; see Deployment above
+.github/workflows/     _test.yml (reusable), ci.yml (PR checks), deploy.yml
+                       (push-to-main pipeline) — step 5
 docs/ARCHITECTURE.md   System design and decisions
-scripts/               LocalStack + Cognito bootstrap
+scripts/               LocalStack + Cognito + Terraform-state bootstrap
 postman/               Postman collection for manual API testing
 ```
 
 ## Notes
 
-- **One image, two entrypoints.** `backend/Dockerfile` builds on the AWS
-  Lambda base image. Locally, Compose overrides the entrypoint to run uvicorn
-  with hot-reload; in production the Lambda runtime invokes
-  `app.lambda_handler.handler`. Same image, same digest, both places.
+- **One image, three prod entrypoints.** `backend/Dockerfile` builds on the
+  AWS Lambda base image. Locally, Compose overrides the entrypoint to run
+  uvicorn with hot-reload; in production (step 5) the same image backs 3
+  separate Lambda functions — API, worker, rankings — distinguished only by
+  an `image_config.command` override in Terraform, never a rebuild. Same
+  image, same digest, everywhere.
+- **`DATABASE_URL` is SSM in prod, everything else is a plain Lambda env
+  var.** The one secret worth the extra ceremony — see
+  `app/services/secrets.py` and [Deployment](#deployment).
 - **Two database URLs.** The app uses `asyncpg`, Alembic uses `psycopg`. Same
   database, two drivers. Expected, not a bug.
 - **`AWS_ENDPOINT_URL` is the whole local↔cloud seam — except Cognito.** Set,
@@ -449,6 +553,10 @@ postman/               Postman collection for manual API testing
 |---|---|
 | `localstack` never becomes healthy | `scripts/localstack-init.sh` is not executable. `make up` chmods it; if the repo is on `/mnt/c` this cannot work — move it into WSL. |
 | `api` exits immediately | `migrate` failed. Check `docker compose logs migrate`. |
+| Terraform reports `AWS_REGION` as a reserved Lambda environment variable | Lambda injects `AWS_REGION` automatically; do not add it to the Terraform-managed Lambda environment. |
+| Lambda rejects the ECR image manifest | Build with `docker buildx build --platform linux/amd64 --provenance=false`; Lambda does not accept the OCI image index Docker may push by default. |
+| Lambda rejects reserved concurrency below the account minimum | The default Lambda quota is often 10 and AWS requires 10 unreserved executions; remove the worker reservation or request a higher account concurrency quota. |
+| The API URL returns `Internal Server Error` while direct Lambda invocation works | Recreate `aws_lambda_permission.api_gateway`; replacing a Lambda removes its invoke policy, and Terraform must recreate that permission with it. |
 | Edits do not hot-reload | Repo is on the Windows filesystem. Move it into WSL. |
 | `/health/deep` returns 503 | Read the failing check's `error` field — it names the specific dependency. |
 | `cognito` check fails in `/health/deep`, or every request 401s | `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` are empty or wrong. Run `./scripts/cognito-bootstrap.sh` (see [Auth setup](#auth-setup)) and restart. |

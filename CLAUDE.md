@@ -24,11 +24,22 @@ alters behaviour but leaves the docs stale is incomplete.
 - **Config**: everything comes from `app.config.get_settings()`. Never read
   `os.environ` directly outside that module.
 - **AWS access**: only through `app/services/storage.py`,
-  `app/services/queue.py`, and `app/services/auth.py`. The first two are the
-  dev↔prod seam (LocalStack vs real AWS is an env var, nothing more);
-  `auth.py` is the exception — Cognito is always the real service, dev
-  included, because LocalStack only emulates it on a paid plan and even then
-  has known JWKS bugs. See ARCHITECTURE.md §10.
+  `app/services/queue.py`, `app/services/auth.py`, and (step 5)
+  `app/services/secrets.py`. The first two are the dev↔prod seam (LocalStack
+  vs real AWS is an env var, nothing more); `auth.py` is the exception —
+  Cognito is always the real service, dev included, because LocalStack only
+  emulates it on a paid plan and even then has known JWKS bugs.
+  `secrets.py` is a narrower exception: it resolves `DATABASE_URL` out of
+  SSM Parameter Store in production, and has to read `os.environ` directly
+  (not via `get_settings()`) because it runs *before* `Settings()` can be
+  constructed — see its docstring and `app/config.py`'s. See
+  ARCHITECTURE.md §10.
+- **Prod migrations must be backward-compatible within a single deploy**
+  (step 5, `.github/workflows/deploy.yml`): `alembic upgrade head` runs
+  before the new Lambda image goes live, so the still-live *old* code briefly
+  runs against the *new* schema — never the other way around. New columns
+  must be nullable-first (or have a server default); never drop or rename a
+  column the still-deploying old code reads. See ARCHITECTURE.md §12.
 - **Serialization**: never return ORM objects from a route. Always go
   through a Pydantic schema in `app/schemas/`.
 - **Media**: store S3 *keys* in the database, never full URLs. URLs are
@@ -299,11 +310,41 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   round trip verified through `0002`; `0003`–`0007` applied and exercised
   (fresh `docker compose up` ran all seven in order against real Postgres),
   not round-tripped (`downgrade` untested).
+- **Step 5 (Terraform + GitHub Actions) infra code written and validated,
+  not yet applied.** `infra/*.tf` passed `terraform validate` and a live
+  `terraform plan` against the real AWS account behind the Cognito dev pool
+  (43 resources to add, 0 errors — see `docs/ARCHITECTURE.md` §9/§12 for
+  what that covers), and `docker compose run --rm api python -m pytest` —
+  49/49 — still passes locally after the one code change this step made
+  (`app/services/secrets.py` + `app/config.py`, see below). What's genuinely
+  **not yet done**, because it needs the user's real AWS/Neon credentials
+  and is explicitly a hand-run bootstrap (see README's Deployment section
+  and `docs/ARCHITECTURE.md` §12 for the full sequence): creating the prod
+  Neon DB, running `scripts/terraform-bootstrap.sh`, creating the GitHub
+  OIDC provider/roles, the two-phase first `terraform apply` (ECR repo, then
+  a real image, then everything else), and the first live
+  `GET /health/deep` against a real API Gateway URL. Until that first apply
+  runs, there is no live TrickLens deployment in AWS.
+  - **What step 5 added, concretely:** `infra/` (Terraform: ECR, 3 Lambda
+    functions sharing one image via `image_config.command` overrides,
+    IAM roles, API Gateway HTTP API, SQS+DLQ, S3+CloudFront+OAC, a prod
+    Cognito pool, EventBridge schedule for rankings, an SSM SecureString
+    for `DATABASE_URL`, a $5 AWS Budget alarm, GitHub OIDC + two IAM roles
+    for CI); `.github/workflows/{_test,ci,deploy}.yml` (test on every
+    push/PR, `terraform plan` commented on PRs, and on push to `main`:
+    test → build/push image → `alembic upgrade head` against Neon directly
+    from the runner → `terraform apply` → `/health/deep` smoke test, in
+    that strict order — see the migration ordering rule above);
+    `scripts/terraform-bootstrap.sh` (one-time state bucket/lock table,
+    same idiom as `cognito-bootstrap.sh`); `app/services/secrets.py` (new —
+    resolves `DATABASE_URL` from SSM before `Settings()` is built, a no-op
+    locally); `make tf-init`/`tf-plan`/`tf-apply` targets.
 
 **Not done yet:** no frontend code in this repo (a visual prototype exists as
 a separate Artifact canvas, outside the repo — now covers auth/profile/
-upload/clip-status *and* the 4c team flows above, added in the same session),
-no Terraform.
+upload/clip-status *and* the 4c team flows above, added in the same session);
+step 5's Terraform is written but not yet applied to a live AWS account (see
+above).
 
 ## Build order
 
@@ -316,7 +357,8 @@ no Terraform.
    - 4c ✅ teams (+ `clips.team_id`/`score_included`, `follows.followee_team_id`
      FK, migration `0006`) *(verified)*
    - 4d ✅ Discover (precomputed rankings + team score history) *(verified)*
-5. ⬜ Terraform + GitHub Actions → deploy to AWS
+5. 🟡 Terraform + GitHub Actions → deploy to AWS — infra code written and
+   `terraform plan`-validated, not yet applied (see Current state above)
 6. ⬜ Replace the stub with the real steeze analyzer
 
 Steps are sequential. Do not start a step before the previous one's

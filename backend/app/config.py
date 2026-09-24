@@ -1,13 +1,20 @@
 """Single source of truth for configuration.
 
-Nothing outside this module reads os.environ. That rule is what lets the same
-image run locally against LocalStack and in Lambda against real AWS with no
-code change — only environment differs.
+Nothing outside this module reads os.environ, with one narrow exception:
+app.services.secrets.resolve_database_url() (step 5) reads
+DATABASE_URL_SSM_PARAM and writes DATABASE_URL into os.environ, because in
+production DATABASE_URL lives in SSM Parameter Store as a SecureString, not
+a plain Lambda env var (see docs/ARCHITECTURE.md's Decisions) — it has to
+run *before* Settings() below can be constructed at all, so it can't go
+through Settings the normal way. Everywhere else, this module is still the
+only thing that reads an env var.
 """
 
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.services.secrets import resolve_database_url
 
 
 class Settings(BaseSettings):
@@ -68,5 +75,11 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Cached so Lambda parses the environment once per container, not per request."""
+    """Cached so Lambda parses the environment once per container, not per request.
+
+    resolve_database_url() runs first so DATABASE_URL is in os.environ before
+    Settings() reads it — see its docstring for why this is the one thing
+    that reaches AWS before Settings exists to read AWS_ENDPOINT_URL etc.
+    """
+    resolve_database_url()
     return Settings()

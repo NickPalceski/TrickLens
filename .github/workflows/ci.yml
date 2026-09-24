@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    uses: ./.github/workflows/_test.yml
+
+  terraform-plan:
+    # Only on PRs, and only from branches of this repo (not forks) — a
+    # fork's pull_request run gets no repo secrets by default, which is the
+    # correct behavior here: no plan role ARN, no DATABASE_URL, so there's
+    # nothing this job could safely do anyway. See infra/iam.tf's
+    # tricklens-gha-plan role and docs/ARCHITECTURE.md's Decisions.
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.9"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: terraform fmt -check
+        run: terraform -chdir=infra fmt -check -recursive
+
+      - name: terraform init
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          terraform -chdir=infra init \
+            -backend-config="bucket=tricklens-terraform-state-${ACCOUNT_ID}" \
+            -backend-config="dynamodb_table=tricklens-terraform-locks" \
+            -backend-config="region=us-east-1" \
+            -backend-config="key=prod/terraform.tfstate"
+
+      - name: terraform plan
+        id: plan
+        env:
+          TF_VAR_database_url: ${{ secrets.DATABASE_URL }}
+          TF_VAR_budget_email: ${{ secrets.BUDGET_EMAIL }}
+        run: terraform -chdir=infra plan -no-color | tee /tmp/plan.txt
+
+      - name: comment plan on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('/tmp/plan.txt', 'utf8').slice(-60000);
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `#### Terraform Plan\n\`\`\`\n${plan}\n\`\`\``,
+            });

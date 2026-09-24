@@ -4,8 +4,11 @@ Conceptual overview of the system: what each component is, what it does, and
 how it connects to the others. Kept current as the build progresses.
 
 **Current state: step 4 done — social app. 4a (follows + home feed), 4b
-(likes + comments), 4c (teams), and 4d (Discover) all built and verified.**
-Sections marked *(planned)* are designed but not yet built.
+(likes + comments), 4c (teams), and 4d (Discover) all built and verified.
+Step 5 (Terraform + GitHub Actions) is written and `terraform plan`-validated
+against the real AWS account, not yet applied — see CLAUDE.md's Current
+state for exactly what that means.** Sections marked *(planned)* are
+designed but not yet built.
 
 ---
 
@@ -470,16 +473,24 @@ included (see §5 and the decision below), so dev and prod differ only in
 
 | | Local | Production |
 |---|---|---|
-| Database | Postgres container | Neon |
-| S3 / SQS | LocalStack | Real AWS |
-| Cognito | Real AWS, `tricklens-dev` pool | Real AWS, prod pool (Terraform, step 5) |
+| Database | Postgres container | Neon (`DATABASE_URL` in SSM, not a plain Lambda env var — see below) |
+| S3 / SQS | LocalStack | Real AWS (`tricklens-media-<account_id>` bucket behind CloudFront+OAC; `tricklens-analysis` queue + DLQ) |
+| Cognito | Real AWS, `tricklens-dev` pool | Real AWS, `tricklens-prod` pool (`infra/cognito.tf`, step 5) |
 | `AWS_ENDPOINT_URL` | `http://localstack:4566` | *(empty)* |
-| API process | uvicorn `--reload` | Lambda runtime |
-| Image | `backend/Dockerfile` | **the same image** |
+| API process | uvicorn `--reload` | Lambda (`app.lambda_handler.handler`) behind an API Gateway HTTP API |
+| Worker process | SQS poll loop | Lambda (`app.worker.lambda_handler`), one SQS event-source-mapping, `batch_size=1` |
+| Rankings | `make rankings` on demand | Lambda (`app.rankings.lambda_handler`) on an EventBridge schedule (`rate(30 minutes)` default) |
+| Image | `backend/Dockerfile` | **the same image**, one ECR repo, 3 Lambda functions via `image_config.command` overrides — see the Decisions below |
 
 No application code branches on environment. `app/services/storage.py`,
-`app/services/queue.py`, and `app/services/auth.py` are the only modules
-aware AWS exists; everything else goes through them.
+`app/services/queue.py`, `app/services/auth.py`, and (step 5)
+`app/services/secrets.py` are the only modules aware AWS exists; everything
+else goes through them.
+
+AWS Lambda injects reserved runtime variables such as `AWS_REGION` itself.
+The Terraform Lambda environment therefore supplies only application
+configuration and excludes those reserved names; the application still reads
+the injected region through its normal settings path.
 
 One wrinkle in `storage.py`: presigned URLs are *signed* against
 `AWS_ENDPOINT_URL` (LocalStack's Docker-network hostname, needed for the
@@ -493,7 +504,25 @@ The worker (`app/worker.py`) has its own small seam, orthogonal to the
 above: locally it long-polls SQS in a loop; in production (from step 5) an
 SQS event-source-mapping invokes `app.worker.lambda_handler` once per
 message instead. Same processing function either way — only the trigger
-differs.
+differs. `app/rankings.py` has the identical shape: `make rankings` on
+demand locally, an EventBridge schedule invoking `lambda_handler` in prod.
+
+**`DATABASE_URL` in production is an SSM SecureString, not a plain Lambda
+env var.** Every other prod env var (`S3_BUCKET`, `COGNITO_USER_POOL_ID`,
+etc.) is set directly on the Lambda functions — none of those are secrets.
+A full Postgres connection string is different: a plain Lambda env var is
+visible in plaintext to anyone with read-only IAM access to the account
+(the Lambda console, or `lambda:GetFunctionConfiguration`), which is a real
+exposure surface even in a single-account hobby project. SSM Parameter
+Store's `SecureString` type is free at this volume and IAM-gated
+separately. The one code-side cost: `app/services/secrets.py`'s
+`resolve_database_url()` has to read `os.environ` directly and run
+*before* `app.config.Settings()` can be constructed, since it exists to
+produce the value `Settings()` needs — see that module's docstring for why
+this is a deliberate, narrow exception to "only `app.config` reads env
+vars," not a rule violation. Locally, `DATABASE_URL_SSM_PARAM` is never
+set, so this is a no-op and `.env`'s `DATABASE_URL` is used exactly as
+before.
 
 ---
 
@@ -561,6 +590,26 @@ entrypoint alongside the API's two (uvicorn locally, `app.lambda_handler`
 in Lambda) — see the Environments section above. The image only needs to
 actually split when step 6 adds the dependencies that make it necessary.
 
+In production (step 5) this becomes concrete: one ECR repository holds the
+image, and `infra/lambda.tf` defines **three** `aws_lambda_function`
+resources — API, worker, rankings — all pointing at the same
+`image_uri`, distinguished only by an `image_config.command` override
+(`app.lambda_handler.handler` / `app.worker.lambda_handler` /
+`app.rankings.lambda_handler`). Lambda supports overriding a container
+image's `CMD` per function without rebuilding, so this is one Terraform
+resource attribute, not three images. A deploy is a single `terraform
+apply` that bumps `image_uri`'s tag on all three at once — see the Rollout
+decision below. CI disables BuildKit provenance and targets `linux/amd64` so
+ECR receives a single image manifest that Lambda accepts, rather than an OCI
+image index. The worker does not reserve concurrency at the initial account
+quota because AWS requires at least 10 executions to remain unreserved; a
+reservation can be added after requesting a higher account concurrency quota.
+Each function has its own least-privilege IAM execution
+role (`infra/iam.tf`): the worker's role deliberately has no S3
+permissions yet, since the stub never touches S3 — step 6 must add them
+when the real analyzer starts reading `raw/` and writing
+`processed/`/`thumbs/`.
+
 ### Trick classification deferred
 
 Covered in §4. Users tag their own tricks; the analyzer scores execution
@@ -574,6 +623,85 @@ Compose overrides the entrypoint to run uvicorn with hot-reload; in
 production the Lambda runtime invokes `app.lambda_handler.handler`. Identical
 layers and digest in both places, so environment drift cannot be a source of
 bugs.
+
+### GitHub Actions' deploy role is broad by design, not by oversight
+
+`infra/iam.tf` defines two IAM roles GitHub Actions assumes via OIDC (no
+static AWS keys stored in GitHub, ever): `tricklens-gha-plan` (PR-triggered
+`terraform plan` only, read-only, no `iam:PassRole`) and
+`tricklens-gha-deploy` (push-to-`main` only, close to `PowerUserAccess`
+scoped by resource name/ARN prefix wherever the AWS API supports it). The
+deploy role's breadth is a deliberate trade-off, not an oversight: `terraform
+apply` is the thing creating/mutating every resource in `infra/`, so a role
+narrow enough to avoid "broad" would also be too narrow to actually deploy.
+The alternative — a human runs `terraform apply` locally instead of CI —
+reintroduces exactly the problem this project already structures itself
+around avoiding (three independent machine clones per CLAUDE.md's
+Environment section, easy to let drift), and breaks "auto-deploy on push to
+`main`, no manual approval gate," chosen deliberately for a solo-dev hobby
+project. The actual safety net here is the $5 AWS Budget alarm
+(`infra/budget.tf`), not IAM scoping — plus an explicit `Deny` on the
+handful of actions (`iam:CreateUser`, `iam:CreateAccessKey`, …) that would
+let the role mint a persistent credential if it were ever misused.
+
+### No Lambda aliases / canary rollout — `terraform apply` is the rollback path
+
+Lambda supports versioned aliases and weighted traffic-shifting for gradual
+rollout with automated alarm-triggered rollback (often paired with
+CodeDeploy). Skipped here: that machinery earns its cost protecting against
+concurrent-old-and-new-code-serving-real-traffic during a rollout, which
+doesn't really exist yet at "$0.60/mo, solo user, infrequent deploys" scale.
+Instead: the ECR lifecycle policy keeps the last 5 image tags
+(`infra/ecr.tf`), and Terraform state records exactly which `image_tag` (the
+deploying git SHA) was live at every apply, so a manual rollback is
+`terraform apply -var image_tag=<previous_sha>` — one command, not a
+runbook. Revisit if deploy frequency or real traffic grows enough that a
+bad deploy's blast radius during rollout starts to matter — same "not yet
+justified" treatment already given to the Fargate migration path above.
+
+### Migrations run before the new image goes live, never after
+
+`.github/workflows/deploy.yml` runs `alembic upgrade head` against Neon
+directly from the GitHub Actions runner (no Lambda/ECS detour needed — this
+is exactly why Neon's public TLS reachability mattered when it was chosen
+over RDS, see above) as a job that must complete before `terraform apply`
+updates the three Lambdas' `image_tag`. This ordering is deliberate: between
+those two jobs, the *old*, still-live code runs briefly against the *new*
+schema — the safe direction, since old code encountering a column it
+doesn't know about is a no-op, while new code encountering a column that
+doesn't exist yet is a hard crash. The cost of this ordering is a standing
+rule (also in CLAUDE.md's Conventions): every migration that ships in the
+same deploy as code that depends on it must be additive/backward-compatible
+on its own — new columns nullable-first or defaulted, no dropping/renaming
+a column the still-deploying old code reads. A genuinely breaking schema
+change needs two separate deploys (add the new shape, migrate code to use
+it, then drop the old shape in a later deploy), not one.
+
+### Terraform state: S3 + DynamoDB, bootstrapped by hand once, never self-managed
+
+Same idiom this repo already uses for the Cognito dev pool
+(`scripts/cognito-bootstrap.sh`): a small, idempotent, hand-run script
+(`scripts/terraform-bootstrap.sh`) creates the state bucket and DynamoDB
+lock table once, checking for existing resources first. Deliberately kept
+outside Terraform's own management forever — a backend can't safely manage
+the store it's sitting in, so bringing it under `infra/*.tf` would mean a
+`terraform destroy` could delete the very state that operation depends on.
+The bucket name includes the AWS account id (S3 bucket names are globally
+unique, unlike the dev LocalStack bucket which only has to be unique inside
+one Docker network); since all three of this project's machines share one
+AWS account, every machine's bootstrap run computes the identical name
+independently — nothing needs to be shared between them by hand.
+
+The very first deploy has one genuine Terraform chicken-and-egg: an
+`aws_lambda_function` with `package_type = "Image"` requires the referenced
+image to already exist in ECR, but Terraform can't build/push a Docker
+image itself, only reference one. Broken with a one-time two-phase apply —
+`terraform apply -target=aws_ecr_repository.main` to create just the repo,
+then a hand-run `docker build && docker push` of a real first image, then a
+normal untargeted apply now that an image exists to point at. `-target` is
+normally an anti-pattern for routine use; this is the one legitimate,
+one-time exception. See README's Deployment section for the full first-ever
+sequence.
 
 ---
 
@@ -589,10 +717,14 @@ bugs.
 | S3 | 5GB free 12mo, then ~$0.023/GB | ~$0.20 |
 | ECR | 500MB free 12mo | ~$0.40 |
 | Neon | Free tier | $0 |
+| SSM Parameter Store | SecureString parameters + API calls at this volume, always free | $0 |
+| DynamoDB (Terraform locks) | On-demand billing, negligible request volume | $0 |
+| S3 (Terraform state) | A few KB, well under the free tier | $0 |
 | **Total** | | **~$0.60/mo** |
 
 Controls: S3 lifecycle rule expiring `raw/` drafts after 7 days, ECR lifecycle
-policy keeping the last 5 images, and an AWS Budget alarm at $5.
+policy keeping the last 5 images, CloudWatch Logs retention capped at 14 days
+per Lambda function, and an AWS Budget alarm at $5 (step 5, `infra/budget.tf`).
 
 ---
 
@@ -604,7 +736,7 @@ policy keeping the last 5 images, and an AWS Budget alarm at $5.
 | 2 | Auth (Cognito) + users + profiles | **done** |
 | 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | **done** |
 | 4 | Social app — feed, likes, comments, teams, discover | **done** |
-| 5 | Terraform + GitHub Actions → deploy to AWS | |
+| 5 | Terraform + GitHub Actions → deploy to AWS | **written, `terraform plan`-validated, not yet applied** |
 | 6 | Replace the stub with the real steeze analyzer | |
 
 Step 3 deliberately stubs the analyzer so that a complete, deployed, working

@@ -1,0 +1,135 @@
+name: Deploy
+
+# Auto-deploy on push to main, no manual approval gate — see
+# docs/ARCHITECTURE.md's Decisions for why the tricklens-gha-deploy role's
+# breadth is accepted as the trade-off for this. Jobs run strictly
+# sequentially (needs:), never in parallel — the ordering itself is a
+# safety property (migrate before the new image goes live), not just a
+# convenience. See infra/README or docs/ARCHITECTURE.md §... for the
+# migrate-before-apply rationale.
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPO_NAME: tricklens
+
+jobs:
+  test:
+    uses: ./.github/workflows/_test.yml
+
+  build-and-push-image:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_tag: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: build and push
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --provenance=false \
+            -t "$ECR_REGISTRY/$ECR_REPO_NAME:${{ github.sha }}" \
+            -t "$ECR_REGISTRY/$ECR_REPO_NAME:latest" \
+            --push backend/
+
+  migrate:
+    needs: build-and-push-image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r backend/requirements.txt
+
+      - name: alembic upgrade head
+        working-directory: backend
+        env:
+          ALEMBIC_DATABASE_URL: ${{ secrets.ALEMBIC_DATABASE_URL }}
+        run: |
+          # Neon free-tier databases can be "scaled to zero" and take a
+          # moment to wake on the first connection — retry rather than
+          # failing the whole deploy on a cold start.
+          for attempt in 1 2 3 4 5; do
+            python -m alembic upgrade head && break
+            echo "attempt $attempt failed, retrying in 5s..."
+            sleep 5
+          done
+
+  terraform-apply:
+    needs: migrate
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      api_invoke_url: ${{ steps.outputs.outputs.api_invoke_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.9"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: terraform init
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          terraform -chdir=infra init \
+            -backend-config="bucket=tricklens-terraform-state-${ACCOUNT_ID}" \
+            -backend-config="dynamodb_table=tricklens-terraform-locks" \
+            -backend-config="region=us-east-1" \
+            -backend-config="key=prod/terraform.tfstate"
+
+      - name: terraform apply
+        env:
+          TF_VAR_database_url: ${{ secrets.DATABASE_URL }}
+          TF_VAR_budget_email: ${{ secrets.BUDGET_EMAIL }}
+          TF_VAR_image_tag: ${{ github.sha }}
+        run: terraform -chdir=infra apply -auto-approve
+
+      - id: outputs
+        run: echo "api_invoke_url=$(terraform -chdir=infra output -raw api_invoke_url)" >> "$GITHUB_OUTPUT"
+
+  smoke-test:
+    needs: terraform-apply
+    runs-on: ubuntu-latest
+    steps:
+      - name: GET /health/deep
+        env:
+          API_URL: ${{ needs.terraform-apply.outputs.api_invoke_url }}
+        run: |
+          for attempt in 1 2 3 4 5; do
+            if curl -sf "$API_URL/health/deep" | tee /tmp/health.json; then
+              echo "healthy"
+              exit 0
+            fi
+            echo "attempt $attempt not healthy yet, retrying in 5s..."
+            sleep 5
+          done
+          echo "::error::/health/deep never returned 200 — deploy is up but unhealthy, see logs above."
+          exit 1

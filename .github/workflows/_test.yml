@@ -1,0 +1,34 @@
+name: _test
+
+# Reusable job, called by both ci.yml and deploy.yml so it's defined once.
+# Deliberately reuses the exact same tooling a developer runs locally
+# (make init / make test / ruff) rather than reimplementing the dependency
+# stack as GitHub Actions `services:` containers — see docs/ARCHITECTURE.md's
+# Decisions. tests/test_clips.py runs against real Postgres AND real
+# LocalStack S3 (not mocks), so both have to come up, exactly as `make up`
+# does locally.
+
+on:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: make init (creates .env, chmods localstack-init.sh)
+        run: make init
+
+      - name: ruff format --check
+        run: docker compose run --rm api python -m ruff format --check app
+
+      - name: ruff check
+        run: docker compose run --rm api python -m ruff check app
+
+      - name: pytest
+        run: docker compose run --rm api python -m pytest
+
+      - name: docker compose logs (on failure)
+        if: failure()
+        run: docker compose logs

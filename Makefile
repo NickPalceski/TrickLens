@@ -1,5 +1,6 @@
 .DEFAULT_GOAL := help
-.PHONY: help init up down clean logs ps health migrate revision shell psql fmt test rankings
+.PHONY: help init up down clean logs ps health migrate revision shell psql fmt test rankings \
+	tf-init tf-plan tf-apply
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -53,3 +54,17 @@ test: ## Run the test suite
 
 rankings: ## Rebuild Discover rankings + team score snapshots (on demand; scheduled automatically in prod, step 5)
 	docker compose run --rm api python -m app.rankings
+
+tf-init: ## Init Terraform against the account-specific state backend (run scripts/terraform-bootstrap.sh first)
+	@ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text); \
+	terraform -chdir=infra init \
+	  -backend-config="bucket=tricklens-terraform-state-$$ACCOUNT_ID" \
+	  -backend-config="dynamodb_table=tricklens-terraform-locks" \
+	  -backend-config="region=us-east-1" \
+	  -backend-config="key=prod/terraform.tfstate"
+
+tf-plan: ## terraform plan against prod (needs TF_VAR_database_url and TF_VAR_budget_email set)
+	terraform -chdir=infra plan
+
+tf-apply: ## terraform apply against prod — real AWS resources, real cost
+	terraform -chdir=infra apply
