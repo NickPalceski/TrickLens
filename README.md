@@ -414,7 +414,14 @@ deploy. After that, every push to `main` handles itself via
    so future policy changes go through Terraform like everything else. Save
    both role ARNs as GitHub secrets `AWS_DEPLOY_ROLE_ARN` /
    `AWS_PLAN_ROLE_ARN`, and set `BUDGET_EMAIL` (the AWS Budget alarm's
-   recipient) too.
+   recipient) too. The trust policies match GitHub's OIDC `sub` claim
+   against `var.github_oidc_sub_prefix` (`infra/variables.tf`). This repo
+   uses GitHub's *immutable* subject format
+   (`repo:NickPalceski@128099643/TrickLens@1306046704:...`), not the plain
+   `repo:owner/repo:...` most guides show. If the role can't be assumed
+   ("Not authorized to perform sts:AssumeRoleWithWebIdentity"), compare the
+   variable with `sub_claim_prefix` from
+   `curl -s https://api.github.com/repos/NickPalceski/TrickLens/actions/oidc/customization/sub`.
 4. **Bootstrap the ECR repo, then a first image** (a genuine
    Terraform chicken-and-egg: a Lambda container function needs its image to
    already exist in ECR, and Terraform can't build/push one itself):

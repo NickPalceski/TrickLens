@@ -644,6 +644,17 @@ project. The actual safety net here is the $5 AWS Budget alarm
 handful of actions (`iam:CreateUser`, `iam:CreateAccessKey`, …) that would
 let the role mint a persistent credential if it were ever misused.
 
+Both trust policies pin the OIDC `sub` claim to GitHub's **immutable subject**
+format, `repo:<owner>@<owner_id>/<repo>@<repo_id>:...`
+(`var.github_oidc_sub_prefix`), not the name-only `repo:<owner>/<repo>:...`.
+This repo has immutable subjects enabled, so GitHub never sends the
+name-only form. The first live deploy failed on exactly this mismatch, and
+AWS reported it only as a bare `Not authorized to perform
+sts:AssumeRoleWithWebIdentity`. The numeric IDs are also the safer form:
+if the repo is renamed or deleted and its name re-registered by someone
+else, that repo's tokens carry different IDs and can't satisfy the trust
+policy.
+
 ### No Lambda aliases / canary rollout — `terraform apply` is the rollback path
 
 Lambda supports versioned aliases and weighted traffic-shifting for gradual

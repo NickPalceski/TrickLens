@@ -189,6 +189,19 @@ can live anywhere.
   disables it permanently (`sudo launchctl bootout system/postgresql-<version>`
   stops it just for the current boot).
 
+- **GitHub OIDC `sub` claim uses the immutable format on this repo.** The repo
+  has GitHub's immutable subject enabled, so Actions tokens carry
+  `sub = repo:NickPalceski@128099643/TrickLens@1306046704:ref:refs/heads/main`,
+  not `repo:NickPalceski/TrickLens:...`. The first deploy's
+  `configure-aws-credentials` step failed with a bare "Not authorized to
+  perform sts:AssumeRoleWithWebIdentity" even though the role ARN secret was
+  correct. The trust policies now use `var.github_oidc_sub_prefix`
+  (`infra/variables.tf`). Check the real prefix with
+  `curl -s https://api.github.com/repos/NickPalceski/TrickLens/actions/oidc/customization/sub`.
+  A fix to these roles can't go through CI, because CI can't assume the
+  broken role: apply it locally with
+  `-target=aws_iam_role.gha_deploy -target=aws_iam_role.gha_plan`.
+
 ## Current state
 
 **Steps 1–3 complete and verified; step 4 done — 4a (follows + home feed), 4b

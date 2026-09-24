@@ -150,7 +150,7 @@ data "aws_iam_policy_document" "gha_deploy_assume" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repo}:ref:refs/heads/main"]
+      values   = ["${var.github_oidc_sub_prefix}:ref:refs/heads/main"]
     }
   }
 }
@@ -174,7 +174,7 @@ data "aws_iam_policy_document" "gha_plan_assume" {
       # per-PR-number — every PR from this repo (forks included, since a
       # fork's pull_request workflow run still carries THIS repo's sub) gets
       # this same claim.
-      values = ["repo:${var.github_repo}:pull_request"]
+      values = ["${var.github_oidc_sub_prefix}:pull_request"]
     }
   }
 }

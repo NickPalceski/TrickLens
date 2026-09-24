@@ -3,10 +3,18 @@ variable "aws_region" {
   default = "us-east-1"
 }
 
-variable "github_repo" {
-  description = "owner/repo, used to scope the GitHub OIDC trust policies."
+variable "github_oidc_sub_prefix" {
+  description = <<-EOT
+    Prefix of the `sub` claim GitHub puts in this repo's Actions OIDC
+    tokens, used to scope the OIDC trust policies. This repo has GitHub's
+    immutable subject format enabled, so it is `repo:<owner>@<owner_id>/<repo>@<repo_id>`,
+    NOT the plain `repo:<owner>/<repo>` most docs show — a mismatch here fails
+    as a bare "Not authorized to perform sts:AssumeRoleWithWebIdentity".
+    Source of truth: `curl -s https://api.github.com/repos/NickPalceski/TrickLens/actions/oidc/customization/sub`
+    (the `sub_claim_prefix` field).
+  EOT
   type        = string
-  default     = "NickPalceski/TrickLens"
+  default     = "repo:NickPalceski@128099643/TrickLens@1306046704"
 }
 
 # --- Image ------------------------------------------------------------------
