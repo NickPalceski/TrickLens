@@ -10,7 +10,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.config import get_settings
+from app.config import get_migration_settings
 
 # Importing the package registers every model on Base.metadata. Without this,
 # autogenerate sees an empty schema and cheerfully writes a migration that
@@ -22,11 +22,9 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-settings = get_settings()
-config.set_main_option(
-    "sqlalchemy.url",
-    settings.alembic_database_url or settings.database_url.replace("+asyncpg", "+psycopg"),
-)
+# Not get_settings(): that requires S3/SQS/CDN config a migration has no use
+# for, and CI's migrate job only provides ALEMBIC_DATABASE_URL.
+config.set_main_option("sqlalchemy.url", get_migration_settings().sync_url)
 
 target_metadata = Base.metadata
 

@@ -655,6 +655,13 @@ if the repo is renamed or deleted and its name re-registered by someone
 else, that repo's tokens carry different IDs and can't satisfy the trust
 policy.
 
+Both roles also get `dynamodb:GetItem`/`PutItem`/`DeleteItem` on the state
+lock table, scoped to that one table's ARN. The table lives outside this
+config (see `infra/backend.tf`), so nothing in `infra/` referenced it, and
+the first CI apply failed on "Error acquiring the state lock" before it
+read any state. Any role that runs `terraform plan`/`apply` against this
+backend needs those three actions.
+
 ### No Lambda aliases / canary rollout — `terraform apply` is the rollback path
 
 Lambda supports versioned aliases and weighted traffic-shifting for gradual
@@ -687,6 +694,28 @@ on its own — new columns nullable-first or defaulted, no dropping/renaming
 a column the still-deploying old code reads. A genuinely breaking schema
 change needs two separate deploys (add the new shape, migrate code to use
 it, then drop the old shape in a later deploy), not one.
+
+Two properties keep that ordering real rather than nominal:
+
+- **Alembic needs only the database URL.** `alembic/env.py` reads
+  `app.config.get_migration_settings()`, a DB-only subset of `Settings`, not
+  `get_settings()`. The runner has only `ALEMBIC_DATABASE_URL`. The full
+  `Settings` also requires `S3_BUCKET`/`SQS_ANALYSIS_QUEUE_URL`/`CDN_BASE_URL`,
+  so on the first live deploy every migration attempt failed with a
+  validation error.
+- **A failed migration fails the job.** The Neon cold-start retry loop runs
+  its last attempt outside the loop, so that attempt's exit code becomes the
+  step's. The first version ended the loop on `sleep 5`, which exited 0. On
+  the first deploy, all five attempts failed, yet `migrate` showed green and
+  the pipeline moved on to `terraform apply` against an empty schema.
+- **The smoke test verifies the schema, not just connectivity.**
+  `/health/deep`'s `postgres` check compares `alembic_version` against the
+  head revision(s) in the image's own `alembic/` directory, and 503s on a
+  mismatch or a missing `alembic_version` table. `SELECT 1` alone passes on
+  an empty database, so the smoke test would not have caught the failure
+  above. This is detection, not prevention: by the time the smoke test runs,
+  the new image is already live. Its job is to turn a silent unmigrated
+  deploy into a red pipeline.
 
 ### Terraform state: S3 + DynamoDB, bootstrapped by hand once, never self-managed
 

@@ -443,6 +443,8 @@ deploy. After that, every push to `main` handles itself via
    ```bash
    cd backend && ALEMBIC_DATABASE_URL="$ALEMBIC_DATABASE_URL" python -m alembic upgrade head
    ```
+   `ALEMBIC_DATABASE_URL` is the only variable this needs. Alembic reads the
+   DB-only `get_migration_settings()`, not the full app `Settings`.
 7. **Verify:** `curl $(terraform -chdir=infra output -raw api_invoke_url)/health/deep`
    — all four checks green, against real Neon/S3/SQS/Cognito this time, not
    LocalStack.
@@ -566,6 +568,7 @@ postman/               Postman collection for manual API testing
 | The API URL returns `Internal Server Error` while direct Lambda invocation works | Recreate `aws_lambda_permission.api_gateway`; replacing a Lambda removes its invoke policy, and Terraform must recreate that permission with it. |
 | Edits do not hot-reload | Repo is on the Windows filesystem. Move it into WSL. |
 | `/health/deep` returns 503 | Read the failing check's `error` field — it names the specific dependency. |
+| `postgres` check fails with "schema at revision X, code expects Y" | The DB isn't migrated to this code's Alembic head. Locally: `docker compose run --rm migrate`. In prod: check the deploy's `migrate` job log for real `Running upgrade` lines. |
 | `cognito` check fails in `/health/deep`, or every request 401s | `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` are empty or wrong. Run `./scripts/cognito-bootstrap.sh` (see [Auth setup](#auth-setup)) and restart. |
 | A clip never leaves `queued` | Check `docker compose logs -f worker` — it should log `polling <queue url>` on startup and one line per message it processes. |
 | Uploading to the presigned URL fails to connect / DNS error | `AWS_PUBLIC_ENDPOINT_URL` is missing from `.env` (needs `http://localhost:4566`) or the API wasn't restarted after adding it. Presigned URLs are signed against the Docker-network `localstack` hostname, which nothing outside `docker compose` can resolve — see CLAUDE.md's gotchas. |

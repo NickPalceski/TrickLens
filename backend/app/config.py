@@ -73,6 +73,34 @@ class Settings(BaseSettings):
         return f"https://cognito-idp.{self.aws_region}.amazonaws.com/{self.cognito_user_pool_id}"
 
 
+class MigrationSettings(BaseSettings):
+    """The database-only subset of Settings that Alembic needs.
+
+    CI's migrate job (.github/workflows/deploy.yml) runs `alembic upgrade
+    head` straight from the runner with only ALEMBIC_DATABASE_URL set. It has
+    no S3 bucket, queue URL or CDN, and shouldn't need them. Building the
+    full Settings there fails validation on those required fields.
+    """
+
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
+
+    database_url: str = ""
+    alembic_database_url: str = ""
+
+    @property
+    def sync_url(self) -> str:
+        """psycopg URL for Alembic: ALEMBIC_DATABASE_URL, else DATABASE_URL re-driven."""
+        url = self.alembic_database_url or self.database_url.replace("+asyncpg", "+psycopg")
+        if not url:
+            raise RuntimeError("Set ALEMBIC_DATABASE_URL or DATABASE_URL to run migrations.")
+        return url
+
+
+def get_migration_settings() -> MigrationSettings:
+    resolve_database_url()
+    return MigrationSettings()
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Cached so Lambda parses the environment once per container, not per request.

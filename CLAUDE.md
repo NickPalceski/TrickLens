@@ -201,6 +201,33 @@ can live anywhere.
   A fix to these roles can't go through CI, because CI can't assume the
   broken role: apply it locally with
   `-target=aws_iam_role.gha_deploy -target=aws_iam_role.gha_plan`.
+- **The CI roles need DynamoDB on the Terraform lock table.** Nothing in
+  `infra/` references `tricklens-terraform-locks`, because the bootstrap
+  script creates it outside Terraform. So the deploy role was originally
+  missing `dynamodb:GetItem`/`PutItem`/`DeleteItem`, and the first CI
+  `terraform apply` died on "Error acquiring the state lock". Fixed in
+  `infra/iam.tf` (`local.tf_lock_table_arn`). Same chicken-and-egg as the
+  OIDC fix: a CI role's own permissions must be fixed with a local
+  `-target=aws_iam_role_policy.gha_deploy -target=aws_iam_role_policy.gha_plan`
+  apply. While in there, the roles also got the read calls the AWS provider
+  makes that the original wildcards missed: `ssm:DescribeParameters`/
+  `ListTagsForResource`, `s3:Get*` instead of `s3:GetBucket*` (bucket reads
+  hit `GetLifecycleConfiguration` etc.), and `cognito-idp:GetUserPoolMfaConfig`.
+  If CI apply hits another `AccessDenied`, fix it the same way. Don't widen
+  locally and forget to commit.
+- **The first deploy's `migrate` job was green but migrated nothing.**
+  `alembic/env.py` called `get_settings()`, which requires
+  S3/SQS/CDN settings the runner doesn't have (it only has
+  `ALEMBIC_DATABASE_URL`). So every attempt failed with a pydantic
+  `ValidationError`. The retry loop ended on `sleep 5` (exit 0), so the step
+  passed anyway. Fixed: `env.py` uses the DB-only
+  `get_migration_settings()`, and the last retry attempt runs outside the
+  loop so its exit code is the step's. Keep migrations free of any
+  non-DB config, and never end a CI retry loop on a command that can't
+  fail.
+  `/health/deep`'s postgres check now also compares `alembic_version` with
+  the image's Alembic head, so the post-deploy smoke test fails loudly on
+  an unmigrated schema (`tests/test_health.py`).
 
 ## Current state
 
@@ -212,6 +239,7 @@ Running locally:
 cd ~/git-repos/TrickLens
 docker compose up -d
 curl -s localhost:8000/health/deep    # expect 200, all four checks green
+                                      # (postgres also checks alembic_version == head)
 ```
 
 - `postgres`, `localstack` (S3 + SQS), `api` (FastAPI on the Lambda base

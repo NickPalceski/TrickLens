@@ -194,6 +194,14 @@ resource "aws_iam_role" "gha_plan" {
 # by name/ARN prefix everywhere the AWS API supports resource-level
 # conditions; explicitly denied the handful of actions that would let it
 # mint a persistent credential if ever misused.
+# Terraform's S3 backend takes a lock row in this table (bootstrapped by
+# scripts/terraform-bootstrap.sh, outside this config) on every plan/apply,
+# so both CI roles need it. Without it, CI fails before reading any state,
+# with "Error acquiring the state lock".
+locals {
+  tf_lock_table_arn = "arn:aws:dynamodb:${var.aws_region}:${data.aws_caller_identity.current.account_id}:table/tricklens-terraform-locks"
+}
+
 data "aws_iam_policy_document" "gha_deploy_policy" {
   statement {
     sid = "BroadManage"
@@ -220,16 +228,29 @@ data "aws_iam_policy_document" "gha_deploy_policy" {
       "iam:ListRolePolicies",
       "iam:ListAttachedRolePolicies",
       "iam:TagRole",
+      "iam:UntagRole",
+      "iam:UpdateAssumeRolePolicy",
+      "iam:ListInstanceProfilesForRole",
       "iam:CreateOpenIDConnectProvider",
       "iam:DeleteOpenIDConnectProvider",
       "iam:GetOpenIDConnectProvider",
       "iam:UpdateOpenIDConnectProviderThumbprint",
+      "iam:TagOpenIDConnectProvider",
+      "iam:UntagOpenIDConnectProvider",
       "ssm:PutParameter",
       "ssm:GetParameter",
       "ssm:DeleteParameter",
+      "ssm:DescribeParameters",
+      "ssm:ListTagsForResource",
       "ssm:AddTagsToResource",
+      "ssm:RemoveTagsFromResource",
     ]
     resources = ["*"]
+  }
+  statement {
+    sid       = "TerraformStateLock"
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"]
+    resources = [local.tf_lock_table_arn]
   }
   statement {
     sid       = "DenyPersistentCredentialCreation"
@@ -255,18 +276,27 @@ data "aws_iam_policy_document" "gha_plan_policy" {
       "lambda:Get*", "lambda:List*",
       "apigateway:GET",
       "cloudfront:Get*", "cloudfront:List*",
-      "s3:GetBucket*", "s3:GetObject*", "s3:ListBucket", "s3:ListAllMyBuckets",
+      # s3:Get*, not s3:GetBucket* — reading an aws_s3_bucket also calls
+      # GetLifecycleConfiguration/GetEncryptionConfiguration/
+      # GetReplicationConfiguration/GetAccelerateConfiguration, none of
+      # which match GetBucket*.
+      "s3:Get*", "s3:ListBucket", "s3:ListAllMyBuckets",
       "sqs:GetQueue*", "sqs:List*",
-      "cognito-idp:Describe*", "cognito-idp:List*",
+      "cognito-idp:Describe*", "cognito-idp:List*", "cognito-idp:GetUserPoolMfaConfig",
       "events:Describe*", "events:List*",
-      "budgets:View*", "budgets:Describe*",
+      "budgets:View*", "budgets:Describe*", "budgets:ListTagsForResource",
       "logs:Describe*", "logs:List*", "logs:Get*",
       "iam:GetRole", "iam:GetRolePolicy", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
       "iam:GetOpenIDConnectProvider",
-      "ssm:DescribeParameters", "ssm:GetParameter",
+      "ssm:DescribeParameters", "ssm:GetParameter", "ssm:ListTagsForResource",
       "sts:GetCallerIdentity",
     ]
     resources = ["*"]
+  }
+  statement {
+    sid       = "TerraformStateLock"
+    actions   = ["dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:DeleteItem"]
+    resources = [local.tf_lock_table_arn]
   }
 }
 

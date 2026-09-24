@@ -69,12 +69,17 @@ jobs:
         run: |
           # Neon free-tier databases can be "scaled to zero" and take a
           # moment to wake on the first connection — retry rather than
-          # failing the whole deploy on a cold start.
-          for attempt in 1 2 3 4 5; do
-            python -m alembic upgrade head && break
+          # failing the whole deploy on a cold start. The final attempt
+          # runs outside the loop so its exit code is the step's: a loop
+          # ending in `sleep` would exit 0 and let the deploy continue
+          # against an unmigrated schema (this happened on the first
+          # deploy).
+          for attempt in 1 2 3 4; do
+            python -m alembic upgrade head && exit 0
             echo "attempt $attempt failed, retrying in 5s..."
             sleep 5
           done
+          python -m alembic upgrade head
 
   terraform-apply:
     needs: migrate
@@ -123,12 +128,18 @@ jobs:
         env:
           API_URL: ${{ needs.terraform-apply.outputs.api_invoke_url }}
         run: |
+          # /health/deep 503s if any dependency is down *or* the schema
+          # isn't at the image's Alembic head (an unmigrated DB). Print the
+          # body either way. `curl -f` would swallow it on a 503, and the
+          # body is where the failing check's error lives.
           for attempt in 1 2 3 4 5; do
-            if curl -sf "$API_URL/health/deep" | tee /tmp/health.json; then
+            status=$(curl -s -o /tmp/health.json -w '%{http_code}' "$API_URL/health/deep" || true)
+            cat /tmp/health.json 2>/dev/null; echo
+            if [ "$status" = "200" ]; then
               echo "healthy"
               exit 0
             fi
-            echo "attempt $attempt not healthy yet, retrying in 5s..."
+            echo "attempt $attempt: HTTP $status, retrying in 5s..."
             sleep 5
           done
           echo "::error::/health/deep never returned 200 — deploy is up but unhealthy, see logs above."
