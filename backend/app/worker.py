@@ -88,7 +88,7 @@ async def _process_media(clip: Clip) -> str | None:
     Imported lazily: app.analyzer is worker-image-only code, and this module
     is also imported by the API image's test suite.
     """
-    from app.analyzer import media
+    from app.analyzer import localize, media
 
     storage = get_storage()
     ext = os.path.splitext(clip.s3_key)[1]
@@ -103,7 +103,35 @@ async def _process_media(clip: Clip) -> str | None:
             await asyncio.to_thread(media.transcode, raw, processed, info)
         except media.MediaError as e:
             return e.reason
-        await asyncio.to_thread(media.thumbnail, processed, thumb, info.duration_ms // 2)
+
+        # Stage A (6b): find the tricks. Advisory until 6c, since scoring is
+        # still the stub. So a failure here is logged and the clip carries
+        # on rather than becoming unanalyzable, and the windows themselves
+        # are only logged, not stored.
+        thumb_at_ms = info.duration_ms // 2
+        try:
+            processed_info = await asyncio.to_thread(media.probe, processed)
+            stage_a = await asyncio.to_thread(
+                localize.analyze, processed, processed_info, get_settings().yolox_model_path
+            )
+        except Exception:
+            log.exception("worker: clip %s stage A failed, continuing without it", clip.id)
+        else:
+            log.info(
+                "worker: clip %s stage A: %d trick(s) %s | skater in %.0f%% of samples, "
+                "%.2f of frame height | %s",
+                clip.id,
+                len(stage_a.windows),
+                [(round(w.pop_ms), round(w.apex_ms), round(w.land_ms)) for w in stage_a.windows],
+                100 * stage_a.skater_coverage,
+                stage_a.skater_height_frac,
+                {k: round(v, 2) for k, v in stage_a.timings_s.items()},
+            )
+            if stage_a.windows:
+                # The poster frame is the highest moment of the biggest pop.
+                best = max(stage_a.windows, key=lambda w: w.peak_elevation)
+                thumb_at_ms = int(best.apex_ms)
+        await asyncio.to_thread(media.thumbnail, processed, thumb, thumb_at_ms)
 
         processed_key = f"{PREFIX_PROCESSED}/{clip.id}.mp4"
         thumb_key = f"{PREFIX_THUMBS}/{clip.id}.jpg"

@@ -9,7 +9,8 @@ Discover.
 
 > **Status: steps 1–5 done — the social app is live in AWS, deployed by
 > GitHub Actions on every push to `main`. Step 6 (the real analyzer) is
-> under way: 6a is done and live in prod. The worker now has its own image with
+> under way: 6a is done and live in prod, and 6b (finding the tricks in a
+> clip) is done locally, not yet deployed. The worker now has its own image with
 > ffmpeg, and it verifies, transcodes and thumbnails every upload. Scoring
 > itself is still the stub until 6c.** Steps 1–3 are done and verified (local dev
 > foundation, Cognito auth/users/profiles, a clip's full path from draft
@@ -27,7 +28,7 @@ Discover.
 |---|---|
 | Frontend | Next.js + Tailwind + shadcn/ui *(step 4)* |
 | API | Python 3.12, FastAPI, SQLAlchemy 2.0 (async), Alembic |
-| ML worker | Python; ffmpeg *(6a — live)*; YOLOX on ONNX Runtime + ByteTrack *(6b)*, MediaPipe pose *(6c)*. Scorer still stubbed until 6c |
+| ML worker | Python; ffmpeg *(6a — live)*; YOLOX-Tiny on ONNX Runtime + an in-house IoU tracker *(6b)*; MediaPipe pose *(6c)*. Scorer still stubbed until 6c |
 | Database | PostgreSQL — Neon in production |
 | Media | S3 + CloudFront |
 | Queue | SQS |
@@ -215,6 +216,24 @@ rotation applied, source frame rate capped at 60, max 30s) under
 until then) and `thumb_url` is set. A file ffprobe can't read, a file with
 no video stream, or a clip under 0.5s goes straight to `unanalyzable` with
 that specific reason.
+
+**Then it finds the tricks (6b, Stage A).** It detects the skater and
+board at 15fps and finds every pop: the board *and* the feet leaving the
+ground together. It logs each pop/apex/landing (`docker compose logs
+worker` shows `stage A: N trick(s) [...]`) and uses the biggest pop's apex
+as the thumbnail. Nothing new is stored yet; the windows feed 6c's scoring.
+To see what it saw on any local clip:
+
+```bash
+make analyze-clip FILE=tests/fixtures/clips/kickflip_sketchy_60fps.mov   # path relative to backend/
+# prints the trick windows + timings, and writes
+# backend/tests/fixtures/clips/_debug/<clip>.debug.mp4 (boxes, elevation curves, windows)
+```
+
+`backend/tests/fixtures/clips/` is gitignored: real test clips are personal
+footage and never committed. `make test-worker` runs the tests on them when
+they're present (with the expected timings from their frames) and skips
+them otherwise, as in CI.
 
 **The score itself is still a stub** (see docs/ARCHITECTURE.md §4). It
 fabricates a plausible six-subscore breakdown (or, ~10% of the time, an
@@ -549,7 +568,8 @@ call at this scale.
 | `make shell` | Bash into the API container | `docker compose exec api /bin/bash` |
 | `make fmt` | Format and lint | `docker compose run --rm api python -m ruff format app` |
 | `make test` | Run the test suite | `docker compose run --rm api python -m pytest` |
-| `make test-worker` | Run the worker-image tests (ffmpeg media pipeline; they skip under `make test`) | `docker compose run --rm worker python -m pytest tests/test_media.py` |
+| `make test-worker` | Run the worker-image tests: media pipeline + analyzer (they skip under `make test`; the real-clip ones also skip without the gitignored clips) | `docker compose run --rm worker python -m pytest tests/test_media.py tests/test_analyzer_detect.py tests/test_analyzer_localize.py tests/test_analyzer_real_clips.py` |
+| `make analyze-clip FILE=...` | Run Stage A on a local clip; print the trick windows and write a debug video | `docker compose run --rm --no-deps --user "$(id -u):$(id -g)" worker python -m app.analyzer.cli <file>` |
 | `make licenses` | Fail if any worker-image Python dependency is AGPL | see the `licenses` target in the `Makefile` |
 | `make rankings` | Rebuild Discover rankings + team score snapshots | `docker compose run --rm api python -m app.rankings` |
 | `make tf-init` | Init Terraform against the account-specific state backend | see the flags in `scripts/terraform-bootstrap.sh`'s header |
@@ -564,7 +584,7 @@ call at this scale.
 | `postgres` | 5432 | Local database |
 | `localstack` | 4566 | Emulated S3 + SQS |
 | `migrate` | — | One-shot; runs `alembic upgrade head` and exits |
-| `worker` | — | Long-polls SQS: ffmpeg probe/transcode/thumbnail, then the (still stubbed) scorer. Built from `backend/Dockerfile.worker`; `docker compose logs -f worker` to watch it |
+| `worker` | — | Long-polls SQS: ffmpeg probe/transcode, Stage A trick finding, apex thumbnail, then the (still stubbed) scorer. Built from `backend/Dockerfile.worker`; `docker compose logs -f worker` to watch it |
 
 `docker compose up` is self-provisioning: `scripts/localstack-init.sh` creates
 the bucket (with CORS and a lifecycle rule) and both queues automatically, and
@@ -588,6 +608,11 @@ backend/
                        per message)
     analyzer/          The real analyzer, worker image only (step 6).
                        media.py: ffprobe/ffmpeg probe, transcode, thumbnail
+                       frames.py: decode the transcode at a sample rate
+                       detect.py: YOLOX on ONNX Runtime
+                       track.py: IoU person tracker + skater pick
+                       localize.py: Stage A, pops -> trick windows
+                       cli.py: `make analyze-clip` + debug video
     rankings.py        Discover rebuild — clip_rankings + team_score_history
                        (dev: `make rankings` on demand, prod: EventBridge ->
                        app.rankings.lambda_handler on a schedule)

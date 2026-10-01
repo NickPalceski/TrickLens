@@ -197,6 +197,28 @@ can live anywhere.
   failure. 6a's own failures are only "unreadable video file", "no video
   stream found" and "clip too short". The prod-check collection's step 8
   now tells them apart.
+- **`ADD --chmod` also chmods the directories it creates.**
+  `Dockerfile.worker`'s first version did `ADD --chmod=644 <url>
+  /var/task/models/yolox_tiny.onnx`, which left `models/` as `drw-r--r--`.
+  Root (every `docker compose` container) could still read it, but Lambda
+  runs as a non-root user, and ONNX Runtime failed with errno 13 as uid
+  65534. Fixed by `mkdir -m 755` first plus a build step that reads the
+  model as uid 65534. Any file the Lambda reads must be checked as
+  non-root: root-run local tests can't catch this.
+- **Restarting the worker mid-long-poll strands the next SQS message.**
+  `docker compose restart worker` killed the poll loop during a 20s
+  `ReceiveMessage` long poll. LocalStack kept that request open, handed the
+  next message to the dead connection, and the message sat in flight with
+  its clip `queued` until the 600s visibility timeout. That's
+  at-least-once SQS working as designed (the redelivery then processed
+  it), not a worker bug. When verifying by hand, wait ~20s after
+  restarting the worker before enqueueing, or expect a 10-minute delay.
+  Prod doesn't poll this way: Lambda's event-source mapping does it.
+- **`analyze-clip` and `ruff format` must run as the host user.** The
+  containers run as root, so anything they write into the bind-mounted
+  repo (debug videos, reformatted files) comes out root-owned. The
+  Makefile's `analyze-clip` passes `--user "$(id -u):$(id -g)"`; do the
+  same for any ad-hoc `docker compose run` that writes files.
 - **`make up`'s worker container is a second consumer of the test
   suite's queue.** `test_clips.py`'s full-flow test used to send a real SQS
   message on `POST /complete` and then run `_process_message` itself.
@@ -268,7 +290,8 @@ can live anywhere.
 (likes + comments), 4c (teams) and 4d (Discover) are all done, and step 5
 (Terraform + GitHub Actions) is live in AWS. Step 6a (worker image + ffmpeg
 media pipeline) is done and live, verified in prod with two real clips.
-6b is next.**
+Step 6b (Stage A: finding the tricks) is done and verified locally, not yet
+deployed. The user is holding the push until 6b is verified.**
 Running locally:
 
 ```bash
@@ -433,8 +456,8 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 
   What 6a added:
   - `Dockerfile.worker` + `requirements-worker.txt`: static ffmpeg 9.0.2
-    plus ONNX Runtime, supervision, MediaPipe, headless OpenCV, NumPy and
-    SciPy, installed and import-checked but unused until 6b/6c;
+    plus ONNX Runtime, MediaPipe, headless OpenCV, NumPy and SciPy,
+    installed and import-checked (supervision too, until 6b dropped it);
   - `ANALYZER=stub|real` in `get_settings()`, set to `real` by the worker
     image itself;
   - `app/analyzer/media.py`: probe, transcode, thumbnail;
@@ -459,6 +482,37 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   test users don't exist in prod (separate Cognito pool and Neon DB), so a
   prod user was signed up via the collection.
 
+- **Step 6b (Stage A: find the tricks)** done and verified locally. 35/35
+  `make test-worker` tests pass (16 media, 7 detect/track, 10 synthetic
+  pop-finding, and 2 on the user's real clips); the API image still passes
+  51 (19 skip there); ruff and `make licenses` are clean. On the real clips,
+  also checked frame by frame in the debug videos:
+  - tripod kickflip: one trick, pop 1.23s / apex 1.47s / land 1.57s, peak
+    0.32 of skater height, board tracked through the flip;
+  - follow-cam bail: one pop at 1.10s, peak 0.093, landing *without* the
+    board at 1.33s (6c's landed-check evidence).
+
+  Through the live worker container, the bail logged `stage A: 1 trick(s)`
+  and got its apex thumbnail.
+
+  What 6b added:
+  - `app/analyzer/{frames,detect,track,localize,cli}.py`;
+  - YOLOX-Tiny weights built into the worker image (`ADD --checksum`);
+  - `yolox_model_path` in settings;
+  - the worker runs Stage A advisory-only: windows logged, apex
+    thumbnail, failures logged without failing the clip, nothing stored;
+  - `make analyze-clip FILE=...` with a debug video;
+  - `supervision` dropped.
+
+  Design changes from the plan, all in ARCHITECTURE.md §4/§10:
+  - zoomed board pass around the feet;
+  - board *centre* + feet, min of the two;
+  - local rolling ground instead of camera-motion cancelling;
+  - in-house IoU tracker instead of the deprecated ByteTrack.
+
+  Known limits: the bail's 0.093 peak sits just over `MIN_POP` 0.08, and
+  terrain changes (drops, stairs) aren't modelled.
+
 **Not done yet:** no frontend code in this repo (a visual prototype exists as
 a separate Artifact canvas, outside the repo — now covers auth/profile/
 upload/clip-status *and* the 4c team flows above, added in the same session).
@@ -478,8 +532,9 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
 6. 🔶 Replace the stub with the real steeze analyzer — sub-phases:
    - 6a ✅ worker image split + ffprobe/transcode/thumbnail + `processed_key`
      (migration `0008`) *(live, verified in prod)*
-   - 6b ⬜ YOLOX + ByteTrack detection/tracking, camera-motion cancelling,
-     Stage A pop localization. Two real clips are in the gitignored
+   - 6b ✅ YOLOX-Tiny + zoomed board pass, IoU tracker, local ground estimate,
+     Stage A pop localization, apex thumbnail, `make analyze-clip` *(verified
+     locally, not yet deployed)*. Two real clips are in the gitignored
      `backend/tests/fixtures/clips/`, with the user's notes in
      `test_video_details.md`:
      - a tripod kickflip, skater only ~13% of frame height;
@@ -509,6 +564,9 @@ acceptance criteria pass.
   number reads as a bug; a breakdown reads as an opinion.
 - **Fail safe.** Low confidence returns `unanalyzable` with a *specific*
   reason, never a guess.
+- **In-house IoU tracker, not ByteTrack.** supervision's ByteTrack is
+  deprecated (removed in 0.31), and its successor needs non-headless
+  OpenCV. One skater at 15fps doesn't need ByteTrack's crowd handling.
 - **YOLOX on ONNX Runtime, not Ultralytics YOLOv8.** Ultralytics is
   AGPL-3.0 (the network clause would force the whole backend open), and
   TrickLens goes closed-source at MVP. Never add an AGPL dependency;

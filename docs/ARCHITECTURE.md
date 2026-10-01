@@ -122,11 +122,11 @@ reach a feed, and the user gets to correct the trick tag first.
 | Constant frame rate at the source rate, capped at 60 | Phone footage is usually variable-frame-rate. 6b/6c turn frame indices into milliseconds, which needs evenly spaced frames. The cap keeps 120/240fps slow-mo files a sane size; `source_fps` still records the real rate |
 | Capped at 30s | Clips are 30s max; this enforces it on the actual file, not just the client's claim |
 | Unreadable file / no video stream / under 0.5s → `unanalyzable` with that reason | Same fail-safe rule as the scorer: the user gets a specific reason, never a guess |
-| Poster frame from the middle of the clip | Placeholder. 6b can move it to the apex of the best trick once it knows where that is |
+| Poster frame at the apex of the biggest pop (6b), else the middle of the clip | The most representative frame of a skate clip is the trick in the air |
 
 ---
 
-## 4. The steeze score *(step 6 — 6a done, 6b–6d planned)*
+## 4. The steeze score *(step 6 — 6a live, 6b done locally, 6c–6d planned)*
 
 ### What it is not
 
@@ -144,18 +144,94 @@ GPUs, fully deterministic.
 
 1. **ffmpeg** *(6a, done)*: verify, normalize to 720p at a constant frame
    rate, cap at 30s. See §3.
-2. **YOLOX-Tiny on ONNX Runtime + ByteTrack** *(6b)*: detect and track the
-   skater and board. YOLOX is trained on COCO, which already has both
-   `person` and `skateboard` classes, so this needs no training. Tracking
-   comes from the `supervision` library's ByteTrack. Not Ultralytics
-   YOLOv8, for licensing reasons: see §10.
-3. **Localize (stage A, cheap)** — at ~10fps, find pops from the board's
-   vertical trajectory and foot–board separation.
-4. **Score (stage B, expensive)** — only on the ~1.2s window around each pop,
-   at native fps, using MediaPipe pose.
+2. **Detect and track** *(6b, done)*: YOLOX-Tiny on ONNX Runtime finds
+   people and skateboards. It's COCO-trained, which already has both
+   classes, so no training is needed. Not Ultralytics YOLOv8, for licensing
+   reasons (§10). A small IoU tracker (`app/analyzer/track.py`) follows each
+   person, and the **skater** is the big, frequently-present person with a
+   board at their feet, which beats a bystander nearer the camera.
+3. **Localize — Stage A** *(6b, done)*: at 15fps over the whole clip, find
+   the **pops**, then cut a ~1.2s window around each. Details below.
+4. **Score — Stage B** *(6c)*: only inside those windows, at native fps,
+   using MediaPipe pose.
 
 > Two-stage localization is what makes 30s clips affordable: full-cost
 > processing runs on roughly 5% of frames, and multi-trick lines come free.
+
+### Stage A, as built (6b)
+
+Two decode passes over the processed 720p clip, at `SAMPLE_FPS = 15`:
+
+1. **Full frame:** people and boards in every sample, then track people and
+   pick the skater.
+2. **Zoomed board pass:** crop a square of 1.4 skater-heights around the
+   skater's feet and detect boards in it, merging with the full-frame boards
+   (IoU dedupe). On the tripod kickflip, where the skater is ~13% of the
+   frame height, full-frame-only found the board in 30/59 frames, and full
+   frame + crop found it in 56/59, including mid-flip with the board
+   upside-down. That matches YOLOX-S at about a quarter of the cost
+   (~23ms/frame for both passes vs ~90ms). The full-frame pass still
+   matters: when the board shoots away in a bail, only it sees the board.
+
+Then, per sample, three numbers: the skater's **feet** (bottom of their
+box, i.e. the lowest foot), the **board's centre**, and the skater's
+**height**. From those (`app/analyzer/localize.py`):
+
+- **Ground is estimated locally**: a rolling 80th percentile of each
+  signal's own y over 1.5s (image y grows downward, so high y is the
+  ground). The plan was to cancel camera motion instead, but measuring the
+  follow-cam bail showed that motion estimated from background features
+  (distant trees) made the ground drift *worse*: 40px over 1.4s, against
+  23px uncorrected. The background isn't the surface the skater rolls on,
+  and the skater also moves toward the camera. The local estimate absorbs
+  slow camera drift and approach/recede without modelling the camera.
+- **Elevation = (ground − y) ÷ standing height**, so it's in skater heights
+  and camera-distance invariant. Standing height is a rolling median, not
+  per frame, because the box grows mid-trick (arms up: 194 → 242px).
+- **Airborne = min(feet elevation, board elevation).** On the ground the
+  board box jitters by ~0.1 of the skater's height, as much as a small pop,
+  while the feet are steadier. Requiring both means noise in one can't fake
+  a pop, a carried board can't (feet down), and a hop off the board can't
+  (board down). Where the board is missed for a few samples (edge-on
+  mid-flip), the feet stand in, but each pop still needs the board itself
+  to rise ≥ 0.06 somewhere.
+- **The board's centre, not its bottom edge.** On a low pop the tail stays
+  near the ground while the nose lifts: the bail's board bottom rose for one
+  sample, while its centre rose a steady ~0.12 over four.
+- **Pops** are peaks of the airborne signal ≥ `MIN_POP = 0.08`, with
+  pop/landing where it crosses 30% of the peak, 130–1500ms of airtime, and
+  ≥ 0.6s apart. Each becomes a window of [pop − 0.4s, max(pop + 0.8s,
+  landing + 0.4s)].
+
+**On the real clips**, also checked by eye in the debug video:
+
+| Clip | Pop | Apex | Landing | Peak | Notes |
+|---|---|---|---|---|---|
+| Tripod kickflip | 1.23s | 1.47s | 1.57s | 0.32 | board caught mid-flip |
+| Follow-cam bail | 1.10s | 1.13s | 1.30s | 0.093 | lands *without* the board at 1.33s, which is the evidence 6c's landed check will use |
+
+Both run in about 0.45s of detection per second of clip locally (4.7s clip:
+2.1s). The worker uses the biggest pop's apex as the clip's thumbnail.
+Until 6c, Stage A is **advisory**: its windows are only logged, nothing new
+is stored, and a Stage A failure is logged without failing the clip.
+
+**Known limits, for 6c/6d:**
+- **The bail's peak (0.093) is just over `MIN_POP` (0.08).** A lower pop
+  would be missed. The threshold can't safely drop without clips that show
+  what false alarms look like.
+- **Terrain changes aren't modelled.** The rolling ground adopts any level
+  held longer than ~0.75s. An ollie up onto a ledge or manual pad registers
+  as one pop (reasonable), but on a drop or stair set the pop is found
+  while the landing time and peak aren't trustworthy, because the skater
+  lands lower than they took off. `MAX_AIRTIME_MS` is only a backstop.
+- **A shaky handheld clip** may need real camera-shake cancelling. Neither
+  test clip has it.
+
+`make analyze-clip FILE=tests/fixtures/clips/<clip>` runs exactly the
+worker's path on a local file. It prints the windows and timings and
+writes a debug video (boxes, elevation curves, windows) under
+`tests/fixtures/clips/_debug/`. That video is the real check on Stage A
+until calibration.
 
 **Subscores**, ranked by how reliably they compute from phone footage:
 
@@ -627,8 +703,9 @@ CV libraries, so splitting early would have been premature. 6a is where the
 split became necessary. `backend/Dockerfile.worker` is the same Lambda base
 image plus a static ffmpeg/ffprobe (copied from the pinned
 `mwader/static-ffmpeg` image, so no package manager is involved) and the CV
-stack in `requirements-worker.txt` (ONNX Runtime, `supervision`, MediaPipe,
-headless OpenCV, NumPy, SciPy). That's 2.5GB locally against the API's 1GB.
+stack in `requirements-worker.txt` (ONNX Runtime, MediaPipe, headless
+OpenCV, NumPy, SciPy), plus the YOLOX-Tiny weights (6b), downloaded at
+build time and pinned by checksum. That's 2.5GB locally against the API's 1GB.
 It still reuses `app.db`, `app.models` and `app.services` exactly like the
 API does, because it's built from the same `backend/app/` source.
 
@@ -705,10 +782,9 @@ closed-source once it reaches a stable MVP, so neither works.
 
 **YOLOX** (Apache-2.0) is also COCO-trained with the same `person` and
 `skateboard` classes, so it needs no training either. It runs on
-**ONNX Runtime** (MIT), with tracking from `supervision`'s **ByteTrack**
-(MIT, the same algorithm Ultralytics uses internally). The costs: ~150
-lines of glue code Ultralytics would have provided (resizing input frames,
-filtering duplicate boxes, wiring up the tracker), and slightly lower
+**ONNX Runtime** (MIT). The costs: ~150 lines of glue code Ultralytics
+would have provided (resizing input frames, decoding the raw output,
+filtering duplicate boxes, tracking), and slightly lower
 accuracy at the same speed (COCO mAP roughly 33 for YOLOX-Tiny vs 37 for
 YOLOv8n; YOLOX-S closes the gap at about 2× the compute). The detector
 only has to find the skater and the board for Stage A, so the accuracy gap
@@ -722,6 +798,40 @@ anything installed via `pip install ultralytics` is AGPL, even models whose
 original release wasn't. ffmpeg's static build is GPL (x264), which is
 fine here: it runs as a separate process inside a private image that is
 never distributed, and the ordinary GPL is only triggered by distribution.
+
+### A small in-house IoU tracker, not ByteTrack (6b)
+
+The plan named `supervision`'s ByteTrack. While building 6b it turned out
+supervision deprecated ByteTrack in 0.28 and removes it in 0.31. Its
+successor, Roboflow's `trackers` package (Apache-2.0), depends on the
+non-headless `opencv-python`, which is the same libGL problem
+`Dockerfile.worker` already works around for mediapipe, plus `rich`,
+`requests` and more. ByteTrack's strengths (recovering low-score
+detections, many objects crossing in a crowd) also aren't what this needs.
+The job is following one skater at 15fps, usually alone or with a few
+bystanders, with the board matched per frame rather than tracked.
+
+`app/analyzer/track.py` is a greedy IoU tracker (~60 lines) that survives
+an 8-sample (~0.5s) miss. `supervision` was dropped from
+`requirements-worker.txt`. If crowded skatepark footage ever breaks it, the
+tracker is one module to swap.
+
+### The YOLOX weights are built into the image, and permissions matter
+
+`Dockerfile.worker` downloads Megvii's official `yolox_tiny.onnx`
+(0.1.1rc0) with `ADD --checksum`, so a changed upstream file fails the
+build instead of silently changing detections. Lambda runs the function as
+a **non-root** user, and the first attempt broke exactly there:
+- `ADD` from a URL writes the file `600`, root-owned;
+- `--chmod=644` also applies to any directory `ADD` creates, so `models/`
+  became untraversable.
+
+Loading the model as a non-root user failed with errno 13, which is exactly
+what the worker Lambda would have hit. The directory is now created `755`
+first, and the build itself reads the model as uid 65534, so a regression
+fails the build. The weights load on first use per container
+(`get_detector()` is cached), not at import, which keeps cold-start init
+cheap (see the measurements above).
 
 ### Trick classification deferred
 
@@ -894,7 +1004,7 @@ per Lambda function, and an AWS Budget alarm at $5 (step 5, `infra/budget.tf`).
 | 5 | Terraform + GitHub Actions → deploy to AWS | **done, live** |
 | 6 | Replace the stub with the real steeze analyzer | **in progress** |
 | 6a | Worker image split, ffprobe verify + 720p transcode + thumbnail, `processed_key` (migration `0008`), worker S3 IAM + Lambda sizing, AGPL licence guard | **done, live** |
-| 6b | YOLOX + ByteTrack detection/tracking, camera-motion cancelling, Stage A pop localization | |
+| 6b | YOLOX-Tiny + zoomed board pass, IoU tracker, local ground estimate, Stage A pop localization, apex thumbnail, `make analyze-clip` debug video | **done (local); not yet deployed** |
 | 6c | MediaPipe pose, six subscores, confidence gate, averaging landed tricks, `steeze-v0-uncalibrated` | |
 | 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | |
 

@@ -158,8 +158,8 @@ def transcode(src: str, dst: str, info: VideoInfo) -> None:
 def thumbnail(src: str, dst: str, at_ms: int) -> None:
     """One JPEG frame from the *processed* file (already upright and 720p).
 
-    Placeholder position: the middle of the clip. 6b can move it to the
-    apex of the best trick once it knows where that is.
+    The worker picks `at_ms`: the apex of the biggest pop Stage A found
+    (6b), or the middle of the clip if it found none.
     """
     proc = subprocess.run(
         [

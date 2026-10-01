@@ -10,10 +10,14 @@
 # docs/ARCHITECTURE.md §4.
 #
 # Installed in 6a to prove the image builds and imports cleanly on Lambda.
-# Nothing imports them until 6b (detection/tracking) and 6c (pose).
+# 6b uses onnxruntime, OpenCV, NumPy and SciPy; mediapipe waits for 6c.
+#
+# No tracker library: supervision's ByteTrack was the plan, but it's
+# deprecated (removed in supervision 0.31), and its successor `trackers`
+# needs the non-headless OpenCV again. app/analyzer/track.py is a small
+# IoU tracker instead. See docs/ARCHITECTURE.md §10.
 
 onnxruntime==1.30.*        # runs the YOLOX ONNX model (6b), MIT
-supervision==0.30.*        # ByteTrack tracker (6b), MIT
 mediapipe==1.0.*           # pose landmarks (6c), Apache-2.0
 # mediapipe depends on the *non-headless* opencv-contrib-python, which needs
 # libGL, and the Lambda base image doesn't have that. Dockerfile.worker

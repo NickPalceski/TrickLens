@@ -1,3 +1,6 @@
+# syntax=docker/dockerfile:1
+# (The syntax line enables ADD --checksum below.)
+#
 # The analysis worker's image (step 6a). Same Lambda base image as the API's
 # Dockerfile, with ffmpeg and the CV stack on top. That makes it several times the
 # API image's size, which is why it's a separate image in a separate ECR
@@ -25,8 +28,28 @@ RUN pip install --no-cache-dir \
         -r ${LAMBDA_TASK_ROOT}/requirements-worker.txt \
     && pip uninstall -y opencv-contrib-python opencv-python \
     && pip install --no-cache-dir --force-reinstall --no-deps "opencv-contrib-python-headless==5.0.*" \
-    && python -c "import cv2, onnxruntime, mediapipe, supervision, scipy; print('cv2', cv2.__version__)" \
+    && python -c "import cv2, onnxruntime, mediapipe, scipy; print('cv2', cv2.__version__)" \
     && ffmpeg -hide_banner -version | head -n 1
+
+# YOLOX-Tiny weights (6b): Megvii's official 0.1.1rc0 ONNX export,
+# Apache-2.0. Pinned by checksum, so a changed upstream file fails the build
+# instead of silently changing detections. Path matches app/config.py's
+# yolox_model_path default.
+#
+# Permissions matter because Lambda runs the function as a non-root user:
+# - ADD from a URL writes the file 600, root-owned;
+# - `--chmod` also applies to any directory ADD creates, so `--chmod=644`
+#   left models/ untraversable (no execute bit).
+# So the directory is created 755 first, and the file is added 644. The
+# check at the end reads the model as a non-root user, failing the build
+# if this ever regresses.
+RUN mkdir -p -m 755 ${LAMBDA_TASK_ROOT}/models
+ADD --checksum=sha256:427cc366d34e27ff7a03e2899b5e3671425c262ea2291f88bb942bc1cc70b0f7 --chmod=644 \
+    https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx \
+    ${LAMBDA_TASK_ROOT}/models/yolox_tiny.onnx
+RUN chmod 755 ${LAMBDA_TASK_ROOT}/models \
+    && python -c "import os; os.setgroups([]); os.setgid(65534); os.setuid(65534); \
+open('${LAMBDA_TASK_ROOT}/models/yolox_tiny.onnx', 'rb').read(4); print('model readable as non-root')"
 
 # This image is the one that has ffmpeg, so it's the one that opts into
 # real media processing. The API image leaves the default, "stub" (see

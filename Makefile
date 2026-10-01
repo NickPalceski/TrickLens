@@ -1,6 +1,12 @@
 .DEFAULT_GOAL := help
+
+# Worker-image-only test files (need ffmpeg / the CV stack). Under `make test`
+# (API image) they all skip.
+WORKER_TESTS := tests/test_media.py tests/test_analyzer_detect.py \
+	tests/test_analyzer_localize.py tests/test_analyzer_real_clips.py
+
 .PHONY: help init up down clean logs ps health migrate revision shell psql fmt test test-worker \
-	licenses rankings \
+	licenses analyze-clip rankings \
 	tf-init tf-plan tf-apply
 
 help: ## Show available commands
@@ -53,8 +59,12 @@ fmt: ## Format and lint
 test: ## Run the test suite
 	docker compose run --rm api python -m pytest
 
-test-worker: ## Run the worker-image tests (ffmpeg media pipeline)
-	docker compose run --rm worker python -m pytest tests/test_media.py
+test-worker: ## Run the worker-image tests (media pipeline + analyzer; real-clip tests skip without clips)
+	docker compose run --rm worker python -m pytest $(WORKER_TESTS)
+
+analyze-clip: ## Run Stage A on a local clip + write a debug video:  make analyze-clip FILE=tests/fixtures/clips/x.mov
+	@test -n "$(FILE)" || (echo 'usage: make analyze-clip FILE=tests/fixtures/clips/<clip> (path relative to backend/)' && exit 1)
+	docker compose run --rm --no-deps --user "$$(id -u):$$(id -g)" worker python -m app.analyzer.cli $(FILE)
 
 licenses: ## Fail if any worker-image Python dependency is AGPL (TrickLens goes closed-source)
 	docker compose run --rm --no-deps worker sh -c \

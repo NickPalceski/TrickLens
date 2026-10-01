@@ -64,6 +64,9 @@ class Settings(BaseSettings):
     # Dockerfile.worker sets ANALYZER=real, so the image that actually has
     # ffmpeg is the one that opts in.
     analyzer: Literal["stub", "real"] = "stub"
+    # YOLOX-Tiny ONNX weights (6b), downloaded into the worker image by
+    # Dockerfile.worker, pinned by checksum. Only read when analyzer == "real".
+    yolox_model_path: str = "/var/task/models/yolox_tiny.onnx"
 
     @property
     def is_dev(self) -> bool:
