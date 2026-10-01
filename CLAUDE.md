@@ -513,6 +513,13 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   Known limits: the bail's 0.093 peak sits just over `MIN_POP` 0.08, and
   terrain changes (drops, stairs) aren't modelled.
 
+  README's sneak peek, `docs/media/stage-a-kickflip.gif`, is the kickflip's
+  debug video (trimmed to the trick, half speed, 360px, ~600KB). It's the
+  user's own footage, published deliberately at their request. Every other
+  clip and debug video stays in the gitignored `backend/tests/fixtures/clips/`.
+  Regenerate the GIF from `make analyze-clip` output if the debug view
+  changes.
+
 **Not done yet:** no frontend code in this repo (a visual prototype exists as
 a separate Artifact canvas, outside the repo — now covers auth/profile/
 upload/clip-status *and* the 4c team flows above, added in the same session).
