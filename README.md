@@ -8,16 +8,17 @@ compactness, catch). Follow skaters and teams, and see the week's best on
 Discover.
 
 > **Status: steps 1–5 done — the social app is live in AWS, deployed by
-> GitHub Actions on every push to `main`.** Steps 1–3 are done and verified (local dev
+> GitHub Actions on every push to `main`. Step 6 (the real analyzer) is
+> under way: 6a is done locally. The worker now has its own image with
+> ffmpeg, and it verifies, transcodes and thumbnails every upload. Scoring
+> itself is still the stub until 6c.** Steps 1–3 are done and verified (local dev
 > foundation, Cognito auth/users/profiles, a clip's full path from draft
 > through a stubbed analysis to published). Steps 4a (following users + the
 > home feed), 4b (likes + comments), 4c (teams), and 4d (Discover) are all
 > done and verified end-to-end. See [Clips](#clips),
 > [Feed & follows](#feed--follows), [Likes & comments](#likes--comments),
 > [Teams](#teams), and [Discover](#discover) to try it locally, and
-> [Deployment](#deployment) for what running this in real AWS looks like
-> (infra code is done; the first live apply is a manual bootstrap step,
-> not yet run). [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full
+> [Deployment](#deployment) for what running this in real AWS looks like. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) has the full
 > design.
 
 ## Stack
@@ -26,7 +27,7 @@ Discover.
 |---|---|
 | Frontend | Next.js + Tailwind + shadcn/ui *(step 4)* |
 | API | Python 3.12, FastAPI, SQLAlchemy 2.0 (async), Alembic |
-| ML worker | Python (stubbed scorer, step 3); ffmpeg, YOLOv8, MediaPipe *(step 6)* |
+| ML worker | Python; ffmpeg *(6a — live)*; YOLOX on ONNX Runtime + ByteTrack *(6b)*, MediaPipe pose *(6c)*. Scorer still stubbed until 6c |
 | Database | PostgreSQL — Neon in production |
 | Media | S3 + CloudFront |
 | Queue | SQS |
@@ -171,7 +172,8 @@ resp=$(curl -s -X POST localhost:8000/clips \
 clip_id=$(echo "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin)["clip"]["id"])')
 upload_url=$(echo "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin)["upload_url"])')
 
-# 2. Upload straight to S3 (LocalStack) — a real video isn't required for the stub
+# 2. Upload straight to S3 (LocalStack). Must be a real video since 6a:
+#    the worker ffprobes it and marks junk bytes "unreadable video file"
 curl -X PUT "$upload_url" -H "Content-Type: video/mp4" --data-binary @/path/to/clip.mp4
 
 # 3. Confirm the upload landed and queue it for analysis
@@ -201,10 +203,20 @@ curl -X PATCH "localhost:8000/clips/$clip_id/score-inclusion" \
   -d '{"included": false}'
 ```
 
-The scorer is a stub (see docs/ARCHITECTURE.md §4/§5) — it fabricates a
-plausible six-subscore breakdown (or, ~10% of the time, an `unanalyzable`
-result with a specific reason) rather than actually analyzing the video.
-Real analysis is step 6.
+**What the worker really does (6a).** It downloads the raw upload and
+ffprobes it, overwriting the client-reported `duration_ms`/`source_fps` with
+the real values. It then transcodes to 720p H.264 (short side 720, phone
+rotation applied, source frame rate capped at 60, max 30s) under
+`processed/`, and writes a poster frame under `thumbs/`. Once that exists,
+`video_url` is the transcode's CDN URL (the raw upload is presigned only
+until then) and `thumb_url` is set. A file ffprobe can't read, a file with
+no video stream, or a clip under 0.5s goes straight to `unanalyzable` with
+that specific reason.
+
+**The score itself is still a stub** (see docs/ARCHITECTURE.md §4). It
+fabricates a plausible six-subscore breakdown (or, ~10% of the time, an
+`unanalyzable` result with a specific reason) rather than actually
+analyzing the video. Real scoring arrives in 6b/6c.
 
 ## Feed & follows
 
@@ -373,7 +385,7 @@ These are computed live, same cost class as `follower_count`; only the two
 Step 5's infra code (`infra/*.tf`, `.github/workflows/`) is written and
 `terraform plan`-validated against a real AWS account — see
 [docs/ARCHITECTURE.md §10](docs/ARCHITECTURE.md) for the design decisions
-(the 3-Lambdas-from-1-image structure, why the CI deploy role is broad by
+(the API image shared by 2 Lambdas plus the worker's own image, why the CI deploy role is broad by
 design, why `DATABASE_URL` lives in SSM instead of a plain Lambda env var,
 the no-canary rollback approach, and the migrate-before-deploy ordering
 rule). The one-time bootstrap below has been run, and TrickLens is live in
@@ -399,6 +411,19 @@ deploy. After that, every push to `main` handles itself via
    a real external account, not something Terraform manages). Save both
    connection strings — the asyncpg-flavored one and the psycopg-flavored
    one — as GitHub repo secrets `DATABASE_URL` and `ALEMBIC_DATABASE_URL`.
+   The two drivers spell the TLS parameter differently, and Neon's
+   copy-paste string is the psycopg/libpq form:
+
+   | Secret | Driver | Form |
+   |---|---|---|
+   | `DATABASE_URL` | asyncpg (the app) | `postgresql+asyncpg://user:pass@host/db?ssl=require` |
+   | `ALEMBIC_DATABASE_URL` | psycopg (Alembic) | `postgresql+psycopg://user:pass@host/db?sslmode=require` |
+
+   asyncpg doesn't accept `sslmode` or `channel_binding`. For the asyncpg
+   string, replace Neon's `sslmode=require` with `ssl=require` and drop
+   `channel_binding=require`. `DATABASE_URL` is also what
+   `TF_VAR_database_url` takes in every manual `terraform apply` below,
+   since it's the value written into the SSM parameter the Lambdas read.
 2. **Bootstrap the Terraform state backend:**
    ```bash
    ./scripts/terraform-bootstrap.sh
@@ -422,14 +447,17 @@ deploy. After that, every push to `main` handles itself via
    ("Not authorized to perform sts:AssumeRoleWithWebIdentity"), compare the
    variable with `sub_claim_prefix` from
    `curl -s https://api.github.com/repos/NickPalceski/TrickLens/actions/oidc/customization/sub`.
-4. **Bootstrap the ECR repo, then a first image** (a genuine
+4. **Bootstrap both ECR repos, then a first image in each** (a genuine
    Terraform chicken-and-egg: a Lambda container function needs its image to
    already exist in ECR, and Terraform can't build/push one itself):
    ```bash
    make tf-init
-   terraform -chdir=infra apply -target=aws_ecr_repository.main
+   terraform -chdir=infra apply \
+     -target=aws_ecr_repository.main -target=aws_ecr_repository.worker
    docker build backend/ -t <ecr_repo_url>:bootstrap
    docker push <ecr_repo_url>:bootstrap
+   docker build -f backend/Dockerfile.worker backend/ -t <ecr_worker_repo_url>:bootstrap
+   docker push <ecr_worker_repo_url>:bootstrap
    ```
 5. **First full apply:**
    ```bash
@@ -452,14 +480,33 @@ deploy. After that, every push to `main` handles itself via
    build/push a real image → migrate → `terraform apply` → smoke test. None
    of the above repeats.
 
+### Upgrading an existing deployment to step 6a — one-time, by hand
+
+Step 6a adds a second ECR repo, `tricklens-worker`. `deploy.yml` pushes the
+worker image to it *before* `terraform apply` runs, so on the first push
+that includes 6a the repo doesn't exist yet and the build job would fail.
+Create it once, locally, before pushing:
+
+```bash
+make tf-init
+TF_VAR_database_url="$DATABASE_URL" TF_VAR_budget_email="you@example.com" \
+  terraform -chdir=infra apply \
+    -target=aws_ecr_repository.worker -target=aws_ecr_lifecycle_policy.worker
+```
+
+That's the whole manual part. The same push's `terraform apply` then
+points the worker Lambda at the new image and applies the rest of 6a: 3008MB
+memory, 300s timeout, 2GB `/tmp`, the 1800s SQS visibility timeout and the
+worker's S3 permissions.
+
 ### Ongoing deploys
 
 Nothing to do — push to `main`. `.github/workflows/deploy.yml` builds and
-pushes a new image tagged with the commit SHA, runs `alembic upgrade head`
+pushes both images (API and worker) tagged with the commit SHA, runs `alembic upgrade head`
 against Neon *before* the new image goes live (see the migration-ordering
 rule in ARCHITECTURE.md — this is a hard requirement for any migration
 shipped this way, not just a detail), then `terraform apply`s the new
-`image_tag` to all 3 Lambda functions in one pass, then smoke-tests
+`image_tag` to all 3 Lambda functions in one pass (both images share it), then smoke-tests
 `/health/deep`. Rollback is `terraform apply -var image_tag=<previous_sha>`
 — no aliases/canary machinery, see ARCHITECTURE.md for why that's the right
 call at this scale.
@@ -479,6 +526,8 @@ call at this scale.
 | `make shell` | Bash into the API container | `docker compose exec api /bin/bash` |
 | `make fmt` | Format and lint | `docker compose run --rm api python -m ruff format app` |
 | `make test` | Run the test suite | `docker compose run --rm api python -m pytest` |
+| `make test-worker` | Run the worker-image tests (ffmpeg media pipeline; they skip under `make test`) | `docker compose run --rm worker python -m pytest tests/test_media.py` |
+| `make licenses` | Fail if any worker-image Python dependency is AGPL | see the `licenses` target in the `Makefile` |
 | `make rankings` | Rebuild Discover rankings + team score snapshots | `docker compose run --rm api python -m app.rankings` |
 | `make tf-init` | Init Terraform against the account-specific state backend | see the flags in `scripts/terraform-bootstrap.sh`'s header |
 | `make tf-plan` | `terraform plan` against prod | `terraform -chdir=infra plan` |
@@ -492,7 +541,7 @@ call at this scale.
 | `postgres` | 5432 | Local database |
 | `localstack` | 4566 | Emulated S3 + SQS |
 | `migrate` | — | One-shot; runs `alembic upgrade head` and exits |
-| `worker` | — | Long-polls SQS and runs the (stubbed) analyzer; `docker compose logs -f worker` to watch it |
+| `worker` | — | Long-polls SQS: ffmpeg probe/transcode/thumbnail, then the (still stubbed) scorer. Built from `backend/Dockerfile.worker`; `docker compose logs -f worker` to watch it |
 
 `docker compose up` is self-provisioning: `scripts/localstack-init.sh` creates
 the bucket (with CORS and a lifecycle rule) and both queues automatically, and
@@ -511,8 +560,11 @@ backend/
     db.py              Async engine + session dependency
     main.py            FastAPI assembly
     lambda_handler.py  Production entrypoint (Mangum)
-    worker.py          SQS consumer + stubbed analyzer (dev: poll loop,
-                       prod: app.worker.lambda_handler per message)
+    worker.py          SQS consumer: media processing + stubbed scorer
+                       (dev: poll loop, prod: app.worker.lambda_handler
+                       per message)
+    analyzer/          The real analyzer, worker image only (step 6).
+                       media.py: ffprobe/ffmpeg probe, transcode, thumbnail
     rankings.py        Discover rebuild — clip_rankings + team_score_history
                        (dev: `make rankings` on demand, prod: EventBridge ->
                        app.rankings.lambda_handler on a schedule)
@@ -525,6 +577,9 @@ backend/
     services/          storage.py (S3), queue.py (SQS), auth.py (Cognito),
                        secrets.py (SSM, step 5) — the only AWS-aware code
   alembic/             Migrations
+  Dockerfile           API image (also runs migrate and rankings)
+  Dockerfile.worker    Worker image: the API's base + static ffmpeg + the
+                       CV stack in requirements-worker.txt
 infra/                 Terraform (step 5) — one resource file per AWS
                        service; see Deployment above
 .github/workflows/     _test.yml (reusable), ci.yml (PR checks), deploy.yml
@@ -536,12 +591,14 @@ postman/               Postman collection for manual API testing
 
 ## Notes
 
-- **One image, three prod entrypoints.** `backend/Dockerfile` builds on the
+- **Two images, three prod entrypoints.** `backend/Dockerfile` builds on the
   AWS Lambda base image. Locally, Compose overrides the entrypoint to run
-  uvicorn with hot-reload; in production (step 5) the same image backs 3
-  separate Lambda functions — API, worker, rankings — distinguished only by
-  an `image_config.command` override in Terraform, never a rebuild. Same
-  image, same digest, everywhere.
+  uvicorn with hot-reload; in production the same image backs the API and
+  rankings Lambdas, distinguished only by an `image_config.command`
+  override in Terraform, never a rebuild. The worker has had its own image
+  since 6a (`backend/Dockerfile.worker`: same base plus ffmpeg and the CV
+  stack), in its own ECR repo. Either way, Compose runs exactly the image
+  Lambda runs.
 - **`DATABASE_URL` is SSM in prod, everything else is a plain Lambda env
   var.** The one secret worth the extra ceremony — see
   `app/services/secrets.py` and [Deployment](#deployment).
@@ -570,5 +627,7 @@ postman/               Postman collection for manual API testing
 | `/health/deep` returns 503 | Read the failing check's `error` field — it names the specific dependency. |
 | `postgres` check fails with "schema at revision X, code expects Y" | The DB isn't migrated to this code's Alembic head. Locally: `docker compose run --rm migrate`. In prod: check the deploy's `migrate` job log for real `Running upgrade` lines. |
 | `cognito` check fails in `/health/deep`, or every request 401s | `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` are empty or wrong. Run `./scripts/cognito-bootstrap.sh` (see [Auth setup](#auth-setup)) and restart. |
+| `docker compose up` fails with `error mounting ... to rootfs at "/etc/localstack/init/ready.d/init.sh": no such file or directory` | Docker Desktop (WSL2) lost the existing container's single-file bind mount, typically after Docker Desktop restarts. `docker compose up -d --force-recreate localstack`. LocalStack's state is throwaway and the init script rebuilds it. |
+| A real video comes back `unanalyzable` with "unreadable video file" / "no video stream found" / "clip too short" | Since 6a the worker ffprobes every upload. That reason is ffprobe's verdict on the file, not a scoring failure. Check the file with `ffprobe <file>`. |
 | A clip never leaves `queued` | Check `docker compose logs -f worker` — it should log `polling <queue url>` on startup and one line per message it processes. |
 | Uploading to the presigned URL fails to connect / DNS error | `AWS_PUBLIC_ENDPOINT_URL` is missing from `.env` (needs `http://localhost:4566`) or the API wasn't restarted after adding it. Presigned URLs are signed against the Docker-network `localstack` hostname, which nothing outside `docker compose` can resolve — see CLAUDE.md's gotchas. |

@@ -52,13 +52,19 @@ class Clip(Base, UUIDPrimaryKey, TimestampMixin):
 
     # S3 key, never a URL — see CLAUDE.md conventions. Assigned at creation,
     # before the browser has uploaded anything, so it can be presigned.
+    # Always the raw upload, under raw/ — which a lifecycle rule deletes
+    # after 7 days, so nothing that must outlive a draft can point here.
     s3_key: Mapped[str] = mapped_column(String(512), nullable=False)
-    # Stays null until step 6 adds ffmpeg thumbnailing to the worker.
+    # The worker's 720p H.264 transcode, under processed/ (step 6a). This is
+    # what a clip plays from once it exists, via the CDN. Null for clips
+    # analyzed before 6a, or by the stub-only worker (ANALYZER=stub).
+    processed_key: Mapped[str | None] = mapped_column(String(512))
+    # Poster frame under thumbs/, written alongside processed_key.
     thumb_key: Mapped[str | None] = mapped_column(String(512))
 
-    # Client-reported (read off the browser's <video> element), not yet
-    # server-verified — the stub worker has no ffprobe. Step 6 can cross-check
-    # these once the worker actually decodes the video.
+    # Client-reported in POST /clips (read off the browser's <video>
+    # element), then overwritten with ffprobe's values by the real worker
+    # (6a). Stays client-reported only for stub-analyzed clips.
     duration_ms: Mapped[int | None] = mapped_column()
     source_fps: Mapped[int | None] = mapped_column()
 

@@ -1,0 +1,24 @@
+# Worker-image-only dependencies (Dockerfile.worker), installed on top of
+# requirements.txt. The API image never gets these. They're most of the
+# worker image's size, and the API has no use for them.
+#
+# Licences matter here: TrickLens is going closed-source, so nothing
+# AGPL/GPL may be imported. Every package below is permissive (Apache-2.0,
+# MIT or BSD), and CI's licence check (`make licenses`) fails the build if a
+# transitive dependency ever changes that. That's also why the detector is
+# YOLOX on ONNX Runtime rather than Ultralytics YOLOv8 (AGPL-3.0). See
+# docs/ARCHITECTURE.md §4.
+#
+# Installed in 6a to prove the image builds and imports cleanly on Lambda.
+# Nothing imports them until 6b (detection/tracking) and 6c (pose).
+
+onnxruntime==1.30.*        # runs the YOLOX ONNX model (6b), MIT
+supervision==0.30.*        # ByteTrack tracker (6b), MIT
+mediapipe==1.0.*           # pose landmarks (6c), Apache-2.0
+# mediapipe depends on the *non-headless* opencv-contrib-python, which needs
+# libGL, and the Lambda base image doesn't have that. Dockerfile.worker
+# uninstalls it and force-reinstalls this headless build in its place (both
+# ship the same cv2 package, so they can't coexist).
+opencv-contrib-python-headless==5.0.*
+numpy==2.5.*
+scipy==1.18.*              # find_peaks for pop localization (6b)

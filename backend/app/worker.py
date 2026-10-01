@@ -1,4 +1,4 @@
-"""Stubbed analyzer + SQS consumer.
+"""SQS consumer: media processing (step 6a) + stubbed scorer.
 
 Same processing code either way: locally, the __main__ block long-polls SQS
 in a loop; in production (from step 5) an SQS event-source-mapping invokes
@@ -6,7 +6,12 @@ lambda_handler once per message instead. Only the trigger differs — polling
 vs. invoked is the worker's dev/prod seam, same idea as AWS_ENDPOINT_URL
 elsewhere in the app.
 
-The scorer here stands in for the real analyzer (step 6): it fabricates
+With settings.analyzer == "real" (the worker image, Dockerfile.worker), the
+raw upload is first probed, transcoded to processed/ and thumbnailed via
+app/analyzer/media.py; with "stub" (the API image and its test suite, which
+have no ffmpeg) that step is skipped entirely.
+
+The scorer here stands in for the real analyzer (step 6c): it fabricates
 output in the exact shape the real one will produce — six subscores, a
 confidence, and occasionally `unanalyzable` with a specific reason — so
 everything downstream (schemas, the publish gate, eventually the UI) gets
@@ -17,21 +22,33 @@ build-order rationale for why step 3 stubs this instead of skipping it.
 import asyncio
 import json
 import logging
+import os
 import random
+import tempfile
 import uuid
+from datetime import timedelta
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, or_, select, update
 
+from app.config import get_settings
 from app.db import SessionLocal
 from app.models.clip import Analysis, Clip
 from app.models.enums import ClipStatus
 from app.services.queue import get_queue
+from app.services.storage import PREFIX_PROCESSED, PREFIX_THUMBS, get_storage
 
 log = logging.getLogger("tricklens.worker")
 
 MODEL_VERSION = "stub-v1"
+
+# How long an `analyzing` clip belongs to the run that claimed it. It must
+# be longer than the worker Lambda's 300s timeout (infra/lambda.tf), so a
+# clip still `analyzing` after this can only mean its run died. It must also
+# be shorter than the SQS visibility timeout (1800s in prod, 600s locally),
+# so a redelivery arrives after the lease has expired, not before.
+ANALYZING_LEASE = timedelta(seconds=360)
 
 _SUBSCORES = ("pop", "landing_stability", "roll_away", "stomp", "compactness", "catch")
 _FAILURE_REASONS = (
@@ -62,22 +79,100 @@ def _stub_score(clip_id: uuid.UUID) -> dict[str, Any]:
     }
 
 
+async def _process_media(clip: Clip) -> str | None:
+    """Probe, transcode and thumbnail the raw upload (step 6a), updating
+    `clip` in place. Returns a user-facing failure reason if the file itself
+    is unusable, None on success. Any other exception propagates, so SQS
+    retries the message.
+
+    Imported lazily: app.analyzer is worker-image-only code, and this module
+    is also imported by the API image's test suite.
+    """
+    from app.analyzer import media
+
+    storage = get_storage()
+    ext = os.path.splitext(clip.s3_key)[1]
+    with tempfile.TemporaryDirectory(prefix="tricklens-") as tmp:
+        raw = os.path.join(tmp, f"raw{ext}")
+        processed = os.path.join(tmp, "processed.mp4")
+        thumb = os.path.join(tmp, "thumb.jpg")
+
+        await storage.download(clip.s3_key, raw)
+        try:
+            info = await asyncio.to_thread(media.probe, raw)
+            await asyncio.to_thread(media.transcode, raw, processed, info)
+        except media.MediaError as e:
+            return e.reason
+        await asyncio.to_thread(media.thumbnail, processed, thumb, info.duration_ms // 2)
+
+        processed_key = f"{PREFIX_PROCESSED}/{clip.id}.mp4"
+        thumb_key = f"{PREFIX_THUMBS}/{clip.id}.jpg"
+        await storage.upload(processed, processed_key, "video/mp4")
+        await storage.upload(thumb, thumb_key, "image/jpeg")
+
+    clip.processed_key = processed_key
+    clip.thumb_key = thumb_key
+    # Server-verified now, overwriting what the browser reported in
+    # POST /clips (see docs/ARCHITECTURE.md §3).
+    clip.duration_ms = info.duration_ms
+    clip.source_fps = round(info.fps)
+    return None
+
+
 async def _process_message(body: dict[str, Any]) -> None:
     clip_id = uuid.UUID(body["clip_id"])
 
     async with SessionLocal() as db:
+        # Claim the clip atomically: one UPDATE, so two consumers can never
+        # both own it. SQS is at-least-once, so a duplicate delivery must be
+        # able to lose this race cleanly.
+        #
+        # A stale ANALYZING clip is claimable too. A Lambda timeout or crash
+        # mid-analysis leaves the clip there, and SQS redelivers after the
+        # visibility timeout. Without this, the clip would be stuck in
+        # `analyzing` forever. Reprocessing is safe: every S3 key is
+        # deterministic per clip and simply overwritten.
+        claimed = await db.scalar(
+            update(Clip)
+            .where(
+                Clip.id == clip_id,
+                or_(
+                    Clip.status == ClipStatus.QUEUED,
+                    and_(
+                        Clip.status == ClipStatus.ANALYZING,
+                        Clip.updated_at < func.now() - ANALYZING_LEASE,
+                    ),
+                ),
+            )
+            .values(status=ClipStatus.ANALYZING, updated_at=func.now())
+            .returning(Clip.id)
+        )
+        await db.commit()
+
         clip = await db.scalar(select(Clip).where(Clip.id == clip_id))
         if clip is None:
             log.warning("worker: clip %s no longer exists, dropping message", clip_id)
             return
-        if clip.status != ClipStatus.QUEUED:
-            # SQS is at-least-once delivery — redelivery of a message this
-            # worker already handled is an expected case, not an error.
-            log.info("worker: clip %s is %s, not queued — skipping", clip_id, clip.status)
+        if claimed is None:
+            # Finished work (ANALYZED onward), or another run's live lease.
+            log.info("worker: clip %s is %s, not claimable — skipping", clip_id, clip.status)
             return
 
-        clip.status = ClipStatus.ANALYZING
-        await db.commit()
+        if get_settings().analyzer == "real":
+            failure = await _process_media(clip)
+            if failure is not None:
+                db.add(
+                    Analysis(
+                        clip_id=clip.id,
+                        model_version=MODEL_VERSION,
+                        confidence=Decimal("0"),
+                        failure_reason=failure,
+                    )
+                )
+                clip.status = ClipStatus.UNANALYZABLE
+                await db.commit()
+                log.info("worker: clip %s -> %s (%s)", clip_id, clip.status, failure)
+                return
 
         result = _stub_score(clip.id)
 

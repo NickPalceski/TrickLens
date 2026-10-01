@@ -14,6 +14,7 @@ import pytest_asyncio
 
 from app import worker
 from app.api import deps
+from app.api.routes import clips as clips_routes
 from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
@@ -76,7 +77,28 @@ async def _create_and_upload(client: httpx.AsyncClient) -> dict:
     return body["clip"]
 
 
-async def test_full_upload_to_publish_flow(authed_client):
+class _CapturingQueue:
+    """Stands in for app.services.queue's Queue on POST /complete.
+
+    The real queue is shared with `make up`'s worker container, which polls
+    it with ANALYZER=real. Since 6a, that container would race this test for
+    the clip and ffprobe its fake upload bytes into `unanalyzable`. This
+    test runs the worker itself anyway, so it only needs to check what
+    would have been sent. SQS reachability is covered by /health/deep and
+    test_health.py.
+    """
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def enqueue(self, body: dict) -> None:
+        self.sent.append(body)
+
+
+async def test_full_upload_to_publish_flow(authed_client, monkeypatch):
+    queue = _CapturingQueue()
+    monkeypatch.setattr(clips_routes, "get_queue", lambda: queue)
+
     clip = await _create_and_upload(authed_client)
     clip_id = clip["id"]
     assert clip["status"] == "draft"
@@ -84,11 +106,12 @@ async def test_full_upload_to_publish_flow(authed_client):
     resp = await authed_client.post(f"/clips/{clip_id}/complete")
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "queued"
+    assert queue.sent == [{"clip_id": clip_id, "s3_key": f"raw/{clip_id}.mp4"}]
 
     # Runs the worker's processing function directly rather than through
     # real SQS timing — deterministic, and this is the same code path the
     # poll loop and the Lambda handler both call.
-    await worker._process_message({"clip_id": clip_id})
+    await worker._process_message(queue.sent[0])
 
     resp = await authed_client.get(f"/clips/{clip_id}")
     body = resp.json()

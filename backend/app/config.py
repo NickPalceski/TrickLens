@@ -11,6 +11,7 @@ only thing that reads an env var.
 """
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -54,6 +55,15 @@ class Settings(BaseSettings):
     # here explicitly — there is no endpoint-override seam for this one.
     cognito_user_pool_id: str = ""
     cognito_client_id: str = ""
+
+    # --- Worker ---
+    # "stub": skip all media processing and fabricate a score (app/worker.py's
+    # _stub_score). The API image has no ffmpeg, so its test suite and CI
+    # always run this way. "real": probe + transcode + thumbnail with ffmpeg
+    # (step 6a), then score. Scoring itself is still the stub until 6c.
+    # Dockerfile.worker sets ANALYZER=real, so the image that actually has
+    # ffmpeg is the one that opts in.
+    analyzer: Literal["stub", "real"] = "stub"
 
     @property
     def is_dev(self) -> bool:

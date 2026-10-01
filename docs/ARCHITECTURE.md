@@ -61,7 +61,7 @@ designed but not yet built.
 |---|---|---|
 | **Next.js** | UI | Deploys free on Vercel; shadcn/ui gives a good-looking baseline without deep frontend work |
 | **API Lambda** | HTTP, auth, CRUD, presigning | Scales to zero — no idle cost |
-| **Worker Lambda** | Video analysis | Separate image (~2GB vs ~200MB) and separate scaling from the API — *from step 6*; the step 3 stub shares the API's image (see §10) |
+| **Worker Lambda** | Video analysis | Its own image (ffmpeg + CV stack, ~2.5× the API image) and separate scaling from the API, since step 6a (see §10) |
 | **Postgres** | All relational state | The domain is deeply relational: follows, teams, likes, comments |
 | **S3** | Video and image bytes | Never in the database — the DB stores keys only |
 | **CloudFront** | Media delivery | Speed, *and* the 1TB/mo always-free egress tier. Without it, bandwidth would be the largest bill |
@@ -80,9 +80,10 @@ designed but not yet built.
 3. POST /clips/{id}/complete  → API verifies the object exists, status=queued,
                                 message onto SQS
 4. SQS triggers worker        → status=analyzing
-                                (stub, step 3) fabricates a scored breakdown
-                                (real, step 6) ffmpeg normalize → localize
-                                tricks → score → writes processed/ + thumbs/
+                                (6a, live) ffprobe verify → ffmpeg 720p
+                                transcode → processed/ + thumbs/
+                                (stub, until 6c) fabricates a scored breakdown
+                                (6b/6c) localize tricks → score
                                 status=analyzed (or unanalyzable + reason)
 5. GET /clips/{id}            → client polls until terminal status
 6. POST /clips/{id}/tricks    → user tags trick(s), reviews score
@@ -97,20 +98,35 @@ relay. The API issues a short-lived signed URL and steps out of the way.
 **Why a clip stays a draft until published:** a failed analysis must never
 reach a feed, and the user gets to correct the trick tag first.
 
-**Two step-3 scoping calls, both revisited later:**
+**Two step-3 scoping calls, both resolved in 6a:**
 
-- **`duration_ms`/`source_fps` are client-reported, not server-verified.**
-  The step-3 worker has no ffmpeg/ffprobe — that's step 6's fat image — so
-  the browser reads them off its `<video>` element and sends them in
-  `POST /clips`. Not a trust boundary that matters yet; step 6 can
-  cross-check them once the worker actually decodes the video.
-- **No `processed/` video exists yet.** `GET /clips/{id}` presigns the *raw*
-  key regardless of status — there's no transcode step until step 6, so
-  `thumb_key` just stays null.
+- **`duration_ms`/`source_fps` were client-reported only.** The browser
+  still sends them in `POST /clips` (so a draft has *something* to show),
+  but the worker now overwrites both with ffprobe's values before anything
+  downstream reads them.
+- **Clips used to play from the raw upload.** That was a real bug in
+  production: `raw/` expires after 7 days, so every published clip's video
+  died a week after upload. The worker now writes a 720p transcode to
+  `processed/` (never expired) and a poster frame to `thumbs/`, and
+  `video_url`/`thumb_url` are CDN URLs for those. Only a clip with no
+  transcode yet (queued, analyzing, stub-analyzed, or from before 6a) still
+  gets a presigned raw URL. Pre-6a published clips were not backfilled, and
+  their raw objects may already be gone.
+
+**What 6a's media step does, exactly** (`app/analyzer/media.py`):
+
+| Decision | Why |
+|---|---|
+| Short side scaled to 720, never upscaled | 720p is enough for phone playback and for 6b/6c's detectors. Short side rather than height, so portrait clips aren't squashed to 405 wide |
+| Phone rotation applied (ffmpeg auto-rotate), output has no rotation metadata | Phones store portrait video as landscape pixels plus a rotation flag. Baking the rotation in means every consumer (players, 6b's detector) sees upright frames |
+| Constant frame rate at the source rate, capped at 60 | Phone footage is usually variable-frame-rate. 6b/6c turn frame indices into milliseconds, which needs evenly spaced frames. The cap keeps 120/240fps slow-mo files a sane size; `source_fps` still records the real rate |
+| Capped at 30s | Clips are 30s max; this enforces it on the actual file, not just the client's claim |
+| Unreadable file / no video stream / under 0.5s → `unanalyzable` with that reason | Same fail-safe rule as the scorer: the user gets a specific reason, never a guess |
+| Poster frame from the middle of the clip | Placeholder. 6b can move it to the apex of the best trick once it knows where that is |
 
 ---
 
-## 4. The steeze score *(planned, step 6)*
+## 4. The steeze score *(step 6 — 6a done, 6b–6d planned)*
 
 ### What it is not
 
@@ -126,9 +142,13 @@ GPUs, fully deterministic.
 
 **Pipeline:**
 
-1. **ffmpeg** — normalize to 720p, cap at 30s.
-2. **YOLOv8-nano** — detect and track skater + board. COCO already includes
-   both `person` and `skateboard` classes, so this needs no training.
+1. **ffmpeg** *(6a, done)*: verify, normalize to 720p at a constant frame
+   rate, cap at 30s. See §3.
+2. **YOLOX-Tiny on ONNX Runtime + ByteTrack** *(6b)*: detect and track the
+   skater and board. YOLOX is trained on COCO, which already has both
+   `person` and `skateboard` classes, so this needs no training. Tracking
+   comes from the `supervision` library's ByteTrack. Not Ultralytics
+   YOLOv8, for licensing reasons: see §10.
 3. **Localize (stage A, cheap)** — at ~10fps, find pops from the board's
    vertical trajectory and foot–board separation.
 4. **Score (stage B, expensive)** — only on the ~1.2s window around each pop,
@@ -151,6 +171,26 @@ GPUs, fully deterministic.
 Normalizing by skater pixel-height is what makes scores camera-distance
 invariant.
 
+**Scoring a clip with several tricks** *(decided, built in 6c)*: each
+subscore is averaged across the clip's **landed** tricks, and
+`steeze_score` is the mean of those averages. Bails are excluded, not
+averaged in as zeros, so one bail in a line doesn't sink the clip, but a
+weak landed trick does pull it down. Per-trick detail is stored alongside
+the breakdown for the UI.
+
+**Calibration comes after the pipeline** *(decided)*. No public dataset
+rates execution quality, so turning a raw measurement (pop height ÷ skater
+height, airtime in ms, ...) into a 0–100 subscore needs constants tuned
+against real, hand-judged clips. Those clips don't exist yet. So:
+- 6c ships with reasonable guesses, all in one module (`calibration.py`),
+  and stamps its analyses `model_version = "steeze-v0-uncalibrated"`.
+- It stores each trick's **raw measurements**, not just the resulting
+  scores.
+- 6d tunes the constants once the clips exist, bumps the version, and
+  recalculates existing analyses from those stored measurements. That
+  needs no video re-run, and works even for clips whose raw upload has
+  expired.
+
 **The breakdown is always shown.** A bare number reads as a bug; a visible
 breakdown reads as an opinion the user can argue with.
 
@@ -158,7 +198,9 @@ breakdown reads as an opinion the user can argue with.
 
 Low confidence returns `unanalyzable` with a **specific** reason, never a
 guess: *skater too far from camera*, *trick left the frame*, *too dark*, *no
-clean airtime found*, *no landed trick detected*.
+clean airtime found*, *no landed trick detected*. 6a added the file-level
+reasons that come before any scoring: *unreadable video file*, *no video
+stream found*, *clip too short*.
 
 Bails are handled by scoring only landed tricks. A clip with zero landed
 tricks is rejected — rather than rejecting any clip that *contains* a bail,
@@ -226,9 +268,10 @@ users     id, cognito_sub (not null, unique), username, display_name, bio,
           avatar_key, timestamps
 profiles  user_id → users, stance, style, board, board_size, wheels,
           wheel_size, trucks, bearings
-clips     id, user_id, status, s3_key, thumb_key?, duration_ms?, source_fps?,
+clips     id, user_id, status, s3_key, processed_key?, thumb_key?, duration_ms?, source_fps?,
           steeze_score?, published_at?, team_id?, score_included, timestamps
-          (team_id, score_included: 4c — see below)
+          (team_id, score_included: 4c — see below; processed_key: 6a —
+          the transcode, see §3)
 analyses  id, clip_id, model_version, confidence,
           steeze_breakdown jsonb?, failure_reason?, created_at
 tricks    id, canonical_name (unique), aliases[]
@@ -477,9 +520,9 @@ included (see §5 and the decision below), so dev and prod differ only in
 | Cognito | Real AWS, `tricklens-dev` pool | Real AWS, `tricklens-prod` pool (`infra/cognito.tf`, step 5) |
 | `AWS_ENDPOINT_URL` | `http://localstack:4566` | *(empty)* |
 | API process | uvicorn `--reload` | Lambda (`app.lambda_handler.handler`) behind an API Gateway HTTP API |
-| Worker process | SQS poll loop | Lambda (`app.worker.lambda_handler`), one SQS event-source-mapping, `batch_size=1` |
+| Worker process | SQS poll loop | Lambda (`app.worker.lambda_handler`), one SQS event-source-mapping, `batch_size=1`, 3008MB / 300s / 2GB `/tmp` |
 | Rankings | `make rankings` on demand | Lambda (`app.rankings.lambda_handler`) on an EventBridge schedule (`rate(30 minutes)` default) |
-| Image | `backend/Dockerfile` | **the same image**, one ECR repo, 3 Lambda functions via `image_config.command` overrides — see the Decisions below |
+| Image | `backend/Dockerfile` (api, migrate), `backend/Dockerfile.worker` (worker) | **the same two images**: the API image in ECR `tricklens` backs the api and rankings Lambdas via `image_config.command` overrides; the worker image in ECR `tricklens-worker` backs the worker. See the Decisions below |
 
 No application code branches on environment. `app/services/storage.py`,
 `app/services/queue.py`, `app/services/auth.py`, and (step 5)
@@ -577,37 +620,95 @@ LocalStack gives every other service. Accepted, since Cognito is the one
 service here where faithful local emulation isn't actually available for
 free.
 
-### The worker shares the API's image until step 6, not a separate one
+### The worker has its own image since step 6a
 
-The component map above describes the worker as a separate ~2GB image from
-the API — that's the step-6 target state, once real CV dependencies
-(ffmpeg, YOLO, MediaPipe) actually make it fat. A stub needs none of that,
-so splitting the image now would be premature: `app/worker.py` reuses
-`app.db`, `app.models`, and `app.services.queue`/`storage` exactly like
-every API route does, and ships in the same Docker image, with a third
-entrypoint alongside the API's two (uvicorn locally, `app.lambda_handler`
-in Lambda) — see the Environments section above. The image only needs to
-actually split when step 6 adds the dependencies that make it necessary.
+Through step 5 the worker shared the API's image: a stub needs no ffmpeg or
+CV libraries, so splitting early would have been premature. 6a is where the
+split became necessary. `backend/Dockerfile.worker` is the same Lambda base
+image plus a static ffmpeg/ffprobe (copied from the pinned
+`mwader/static-ffmpeg` image, so no package manager is involved) and the CV
+stack in `requirements-worker.txt` (ONNX Runtime, `supervision`, MediaPipe,
+headless OpenCV, NumPy, SciPy). That's 2.5GB locally against the API's 1GB.
+It still reuses `app.db`, `app.models` and `app.services` exactly like the
+API does, because it's built from the same `backend/app/` source.
 
-In production (step 5) this becomes concrete: one ECR repository holds the
-image, and `infra/lambda.tf` defines **three** `aws_lambda_function`
-resources — API, worker, rankings — all pointing at the same
-`image_uri`, distinguished only by an `image_config.command` override
-(`app.lambda_handler.handler` / `app.worker.lambda_handler` /
-`app.rankings.lambda_handler`). Lambda supports overriding a container
-image's `CMD` per function without rebuilding, so this is one Terraform
-resource attribute, not three images. A deploy is a single `terraform
-apply` that bumps `image_uri`'s tag on all three at once — see the Rollout
-decision below. CI disables BuildKit provenance and targets `linux/amd64` so
-ECR receives a single image manifest that Lambda accepts, rather than an OCI
-image index. The worker does not reserve concurrency at the initial account
-quota because AWS requires at least 10 executions to remain unreserved; a
-reservation can be added after requesting a higher account concurrency quota.
-Each function has its own least-privilege IAM execution
-role (`infra/iam.tf`): the worker's role deliberately has no S3
-permissions yet, since the stub never touches S3 — step 6 must add them
-when the real analyzer starts reading `raw/` and writing
-`processed/`/`thumbs/`.
+In production, `infra/lambda.tf` has three `aws_lambda_function`s. API and
+rankings share the API image from the `tricklens` ECR repo, distinguished
+only by an `image_config.command` override
+(`app.lambda_handler.handler` / `app.rankings.lambda_handler`). The worker
+points at the worker image in its own `tricklens-worker` repo. It's a
+separate repo, not a tag prefix in one repo, so each keeps its own last-5
+lifecycle history for rollback. CI builds and pushes both under the same
+git-SHA tag, and one `terraform apply` moves all three functions at once
+(see the Rollout decision below). CI disables BuildKit provenance and
+targets `linux/amd64` so ECR receives a single image manifest that Lambda
+accepts, rather than an OCI image index.
+
+A few smaller decisions that come with it:
+
+- **`ANALYZER=real` is set by the image, not by Terraform or `.env`.** The
+  worker image is the one with ffmpeg, so it's the one that opts in. The API
+  image defaults to `stub`, which is why `make test` (API image) still
+  exercises the full clip flow without ffmpeg, while `make test-worker`
+  runs the media tests in the worker image.
+- **The worker Lambda got 3008MB, 300s and 2GB of `/tmp`.** Memory is really
+  the CPU knob (Lambda allocates ~1 vCPU per 1769MB), and 3008MB is the cap
+  new AWS accounts start with. The SQS visibility timeout went from 90s to
+  1800s, AWS's recommended 6× the function timeout.
+- **mediapipe's OpenCV is swapped for the headless build.** mediapipe
+  depends on `opencv-contrib-python`, which needs `libGL`, and the Lambda
+  base image doesn't have it. The Dockerfile uninstalls it, force-reinstalls
+  `opencv-contrib-python-headless`, and then imports every CV library as a
+  build step, so a broken swap fails the build, not the first invocation.
+- **The worker claims a clip atomically, with a lease.** One `UPDATE ...
+  WHERE status = 'queued' OR (status = 'analyzing' AND updated_at < now()
+  - 360s) RETURNING id` decides ownership, so two consumers can never
+  process the same clip at once (SQS is at-least-once). The lease is what
+  recovers a crashed run. A Lambda timeout mid-transcode leaves the clip
+  `analyzing`, and SQS redelivers after its visibility timeout. The stub
+  worker skipped anything not `queued`, which would strand it forever; now
+  a clip still `analyzing` past the lease is reclaimed, since it outlived
+  the 300s Lambda timeout. Every output key is deterministic per clip, so
+  reprocessing just overwrites them. The ordering matters: 300s Lambda
+  timeout < 360s lease < SQS visibility timeout (1800s prod, 600s local).
+  A redelivery that arrived *inside* the lease would be skipped and
+  deleted.
+
+The worker role (`infra/iam.tf`) got S3 access in 6a, scoped per prefix:
+`GetObject` on `raw/*` only, `PutObject` on `processed/*` and `thumbs/*`
+only. Each function still has its own least-privilege IAM execution role.
+The worker still reserves no concurrency: at the initial account quota,
+AWS requires at least 10 executions to stay unreserved. A reservation can
+be added after requesting a higher account concurrency quota.
+
+### YOLOX on ONNX Runtime, not Ultralytics YOLOv8 — licensing
+
+The original plan named YOLOv8-nano. Ultralytics' library *and* its
+pretrained weights are **AGPL-3.0**. Unlike the ordinary GPL, the AGPL
+applies to software used over a network. Serving TrickLens with it
+imported would oblige offering the whole backend's source under the AGPL,
+or buying an Ultralytics Enterprise licence. TrickLens is meant to go
+closed-source once it reaches a stable MVP, so neither works.
+
+**YOLOX** (Apache-2.0) is also COCO-trained with the same `person` and
+`skateboard` classes, so it needs no training either. It runs on
+**ONNX Runtime** (MIT), with tracking from `supervision`'s **ByteTrack**
+(MIT, the same algorithm Ultralytics uses internally). The costs: ~150
+lines of glue code Ultralytics would have provided (resizing input frames,
+filtering duplicate boxes, wiring up the tracker), and slightly lower
+accuracy at the same speed (COCO mAP roughly 33 for YOLOX-Tiny vs 37 for
+YOLOv8n; YOLOX-S closes the gap at about 2× the compute). The detector
+only has to find the skater and the board for Stage A, so the accuracy gap
+matters much less than a permanent licence constraint. A side benefit:
+dropping PyTorch keeps the worker image far smaller.
+
+Guardrail: `make licenses` (run in CI by `_test.yml`) fails the build if
+any Python package in the worker image declares an AGPL licence. It's
+verified to catch `ultralytics`. Ultralytics' own RT-DETR port counts too:
+anything installed via `pip install ultralytics` is AGPL, even models whose
+original release wasn't. ffmpeg's static build is GPL (x264), which is
+fine here: it runs as a separate process inside a private image that is
+never distributed, and the ordinary GPL is only triggered by distribution.
 
 ### Trick classification deferred
 
@@ -615,13 +716,15 @@ Covered in §4. Users tag their own tricks; the analyzer scores execution
 only. This removes the project's only research-grade risk while still
 accumulating the dataset that would make classification possible later.
 
-### One image for dev and production
+### The same images in dev and production
 
 `backend/Dockerfile` builds on `public.ecr.aws/lambda/python:3.12`. Locally,
 Compose overrides the entrypoint to run uvicorn with hot-reload; in
 production the Lambda runtime invokes `app.lambda_handler.handler`. Identical
 layers and digest in both places, so environment drift cannot be a source of
-bugs.
+bugs. Since 6a the same holds for the worker: Compose's `worker` service
+builds `backend/Dockerfile.worker`, the exact image the worker Lambda runs,
+and only swaps the Lambda entrypoint for the poll loop.
 
 ### GitHub Actions' deploy role is broad by design, not by oversight
 
@@ -748,13 +851,13 @@ sequence.
 
 | Service | Free allowance | Expected |
 |---|---|---|
-| Lambda | 1M requests + 400k GB-s/mo, always free | $0 |
+| Lambda | 1M requests + 400k GB-s/mo, always free | $0. The worker is the big consumer from 6a on: 3008MB for ~30–60s per clip is roughly 90–180 GB-s, so a couple of thousand clips a month (an estimate, not yet measured in prod) |
 | SQS | 1M requests/mo, always free | $0 |
 | CloudFront | 1TB egress/mo, always free | $0 |
 | Cognito | 50k MAU, always free — dev and prod pools both count against this | $0 |
 | EventBridge | Free | $0 |
 | S3 | 5GB free 12mo, then ~$0.023/GB | ~$0.20 |
-| ECR | 500MB free 12mo | ~$0.40 |
+| ECR | 500MB free 12mo, then $0.10/GB-mo | ~$0.40 before 6a; more once the worker image lands (estimate: its layers only change when `requirements*.txt` or the Dockerfile does, so most deploys add just the small `app/` layer) |
 | Neon | Free tier | $0 |
 | SSM Parameter Store | SecureString parameters + API calls at this volume, always free | $0 |
 | DynamoDB (Terraform locks) | On-demand billing, negligible request volume | $0 |
@@ -776,7 +879,11 @@ per Lambda function, and an AWS Budget alarm at $5 (step 5, `infra/budget.tf`).
 | 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | **done** |
 | 4 | Social app — feed, likes, comments, teams, discover | **done** |
 | 5 | Terraform + GitHub Actions → deploy to AWS | **done, live** |
-| 6 | Replace the stub with the real steeze analyzer | |
+| 6 | Replace the stub with the real steeze analyzer | **in progress** |
+| 6a | Worker image split, ffprobe verify + 720p transcode + thumbnail, `processed_key` (migration `0008`), worker S3 IAM + Lambda sizing, AGPL licence guard | **done (local); not yet deployed** |
+| 6b | YOLOX + ByteTrack detection/tracking, camera-motion cancelling, Stage A pop localization | |
+| 6c | MediaPipe pose, six subscores, confidence gate, averaging landed tricks, `steeze-v0-uncalibrated` | |
+| 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | |
 
 Step 3 deliberately stubs the analyzer so that a complete, deployed, working
 product exists before the hardest component is attempted.

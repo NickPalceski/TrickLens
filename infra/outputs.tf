@@ -6,6 +6,10 @@ output "ecr_repo_url" {
   value = aws_ecr_repository.main.repository_url
 }
 
+output "ecr_worker_repo_url" {
+  value = aws_ecr_repository.worker.repository_url
+}
+
 output "cloudfront_domain" {
   value = aws_cloudfront_distribution.media.domain_name
 }

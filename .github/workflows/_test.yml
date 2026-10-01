@@ -29,6 +29,17 @@ jobs:
       - name: pytest
         run: docker compose run --rm api python -m pytest
 
+      # The worker image (6a) is the only one with ffmpeg, so the media
+      # tests only really run here. In the api run above they skip.
+      - name: pytest (worker image — media pipeline)
+        run: docker compose run --rm worker python -m pytest tests/test_media.py
+
+      # TrickLens is going closed-source: an AGPL dependency (e.g. anything
+      # from `pip install ultralytics`) must never land in the worker image.
+      # See docs/ARCHITECTURE.md §4.
+      - name: licence check (no AGPL in the worker image)
+        run: make licenses
+
       - name: docker compose logs (on failure)
         if: failure()
         run: docker compose logs

@@ -84,6 +84,19 @@ data "aws_iam_policy_document" "worker_lambda_policy" {
     actions   = ["ssm:GetParameter"]
     resources = [aws_ssm_parameter.database_url.arn]
   }
+  # Step 6a: reads the raw upload, writes the transcode and poster frame.
+  # Scoped per prefix. It can't touch avatars/, and it can't write raw/.
+  statement {
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.media.arn}/raw/*"]
+  }
+  statement {
+    actions = ["s3:PutObject"]
+    resources = [
+      "${aws_s3_bucket.media.arn}/processed/*",
+      "${aws_s3_bucket.media.arn}/thumbs/*",
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "worker_lambda" {

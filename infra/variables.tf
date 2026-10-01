@@ -24,10 +24,17 @@ variable "ecr_repo_name" {
   default = "tricklens"
 }
 
+variable "ecr_worker_repo_name" {
+  type    = string
+  default = "tricklens-worker"
+}
+
 variable "image_tag" {
   description = <<-EOT
-    Immutable tag (the deploying git SHA) of the image all 3 Lambda
-    functions point at. Defaults to "bootstrap" only so the very first
+    Immutable tag (the deploying git SHA) of the images all 3 Lambda
+    functions point at: the API image (`ecr_repo_name`) for api/rankings,
+    the worker image (`ecr_worker_repo_name`, step 6a) for the worker. CI
+    pushes both under the same SHA. Defaults to "bootstrap" only so the very first
     `terraform apply -target=aws_ecr_repository.main` (before any real image
     has ever been pushed, see README's Deployment section) doesn't require
     -var — every real deploy passes this explicitly.

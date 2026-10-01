@@ -4,8 +4,15 @@ resource "aws_sqs_queue" "analysis_dlq" {
 }
 
 resource "aws_sqs_queue" "analysis" {
-  name                       = "tricklens-analysis"
-  visibility_timeout_seconds = 90 # >= the worker Lambda's timeout, so SQS never redelivers mid-processing
+  name = "tricklens-analysis"
+  # AWS's guidance for a Lambda-triggered queue: at least 6x the function's
+  # timeout (300s, infra/lambda.tf). Being merely >= the timeout isn't
+  # enough, because the event-source mapping's own retries on a throttled
+  # invoke also eat into the window. Lower, and a clip still processing
+  # gets delivered a second time. It must also stay above app/worker.py's
+  # ANALYZING_LEASE (360s), which is what lets a redelivery recover a clip
+  # whose run died.
+  visibility_timeout_seconds = 1800
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.analysis_dlq.arn

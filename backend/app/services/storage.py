@@ -103,6 +103,21 @@ class Storage:
 
         return await asyncio.to_thread(_head)
 
+    async def download(self, key: str, path: str) -> None:
+        """Worker-only: pull an object to local disk (Lambda's /tmp)."""
+        await asyncio.to_thread(_client().download_file, self.bucket, key, path)
+
+    async def upload(self, path: str, key: str, content_type: str) -> None:
+        """Worker-only: push a local file the worker produced (processed
+        video, thumbnail). Served later through public_url(), not presigned."""
+        await asyncio.to_thread(
+            _client().upload_file,
+            path,
+            self.bucket,
+            key,
+            ExtraArgs={"ContentType": content_type},
+        )
+
     async def check(self) -> None:
         """Health probe. Raises if the bucket is unreachable."""
         await asyncio.to_thread(_client().head_bucket, Bucket=self.bucket)

@@ -30,3 +30,23 @@ resource "aws_ecr_lifecycle_policy" "main" {
     ]
   })
 }
+
+# The worker's image (step 6a, backend/Dockerfile.worker): the API's base
+# plus ffmpeg and the CV stack. A separate repo, not a second tag prefix in
+# `main`, so each keeps its own last-5 history. Two images per deploy in one
+# repo would halve how far back `-var image_tag=<sha>` can roll back.
+# Created by hand once, before the first deploy that pushes to it (README's
+# Deployment section): CI pushes images *before* `terraform apply` runs.
+resource "aws_ecr_repository" "worker" {
+  name                 = var.ecr_worker_repo_name
+  image_tag_mutability = "MUTABLE" # same reasoning as `main`
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "worker" {
+  repository = aws_ecr_repository.worker.name
+  policy     = aws_ecr_lifecycle_policy.main.policy
+}

@@ -1,5 +1,6 @@
 locals {
-  image_uri = "${aws_ecr_repository.main.repository_url}:${var.image_tag}"
+  image_uri        = "${aws_ecr_repository.main.repository_url}:${var.image_tag}"
+  worker_image_uri = "${aws_ecr_repository.worker.repository_url}:${var.image_tag}"
 
   # One shared env for all three functions: app.config.Settings requires
   # s3_bucket/sqs_analysis_queue_url/cdn_base_url/etc. unconditionally
@@ -40,16 +41,27 @@ resource "aws_lambda_function" "api" {
   depends_on = [aws_cloudwatch_log_group.api]
 }
 
+# Its own image since step 6a (backend/Dockerfile.worker, which sets
+# ANALYZER=real itself — no env var needed here).
 resource "aws_lambda_function" "worker" {
   function_name = "tricklens-worker"
   role          = aws_iam_role.worker_lambda.arn
   package_type  = "Image"
-  image_uri     = local.image_uri
+  image_uri     = local.worker_image_uri
   image_config {
     command = ["app.worker.lambda_handler"]
   }
-  timeout     = 90
-  memory_size = 512
+  # Download + ffprobe + a 30s 720p libx264 transcode today, and detection
+  # and pose on top from 6b/6c. Lambda allocates CPU in proportion to
+  # memory (~1 vCPU per 1769MB), so memory is really the CPU knob here.
+  # 3008MB is the cap new AWS accounts start with. It can go to 10240 after
+  # a quota increase if 6b/6c need more.
+  timeout     = 300
+  memory_size = 3008
+  # /tmp holds the raw upload, the transcode and the thumbnail at once.
+  ephemeral_storage {
+    size = 2048
+  }
 
   environment {
     variables = local.lambda_env

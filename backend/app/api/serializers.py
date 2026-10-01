@@ -29,6 +29,21 @@ def _avatar_url(user: User) -> str | None:
     return get_storage().public_url(user.avatar_key) if user.avatar_key else None
 
 
+async def _video_url(clip: Clip) -> str:
+    """The processed transcode through the CDN once it exists (6a).
+
+    Falls back to presigning the raw upload for clips the worker hasn't
+    transcoded: still queued/analyzing, analyzed by the stub-only worker, or
+    from before 6a. For a published pre-6a clip this link dies once raw/'s
+    7-day lifecycle rule deletes the object. That was the pre-6a behaviour
+    for every clip, and processed_key is what fixes it going forward.
+    """
+    storage = get_storage()
+    if clip.processed_key:
+        return storage.public_url(clip.processed_key)
+    return await storage.presign_download(clip.s3_key)
+
+
 def user_brief(user: User) -> UserBrief:
     return UserBrief(
         id=user.id,
@@ -197,7 +212,8 @@ async def clip_out(
         id=clip.id,
         status=clip.status,
         author=user_brief(clip.user),
-        video_url=await get_storage().presign_download(clip.s3_key),
+        video_url=await _video_url(clip),
+        thumb_url=get_storage().public_url(clip.thumb_key) if clip.thumb_key else None,
         duration_ms=clip.duration_ms,
         source_fps=clip.source_fps,
         steeze_score=clip.steeze_score,

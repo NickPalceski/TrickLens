@@ -17,8 +17,8 @@ from app.schemas.user import UserBrief
 
 class ClipCreate(BaseModel):
     """Body for POST /clips. duration_ms/source_fps are read off the
-    browser's <video> element — best-effort until step 6 can verify them
-    server-side with ffprobe."""
+    browser's <video> element, so a draft has something to show. The worker
+    overwrites both with ffprobe's values (6a)."""
 
     content_type: str
     duration_ms: int = Field(gt=0, le=30_000)  # clips are capped at 30s
@@ -48,7 +48,11 @@ class ClipOut(BaseModel):
     id: uuid.UUID
     status: ClipStatus
     author: UserBrief
-    video_url: str  # presigned at response time — never the raw key
+    # The processed/ transcode's CDN URL once the worker has made one (6a);
+    # until then (or for clips from before 6a), a presigned URL for the raw
+    # upload. Built at response time either way, never stored.
+    video_url: str
+    thumb_url: str | None = None  # CDN URL of the poster frame, same lifecycle
     duration_ms: int | None = None
     source_fps: int | None = None
     steeze_score: Decimal | None = None

@@ -105,15 +105,17 @@ services:
         condition: service_completed_successfully
 
   # ---------------------------------------------------------------------
-  # The worker. Same image as the API (see app/worker.py's module docstring)
-  # — locally it long-polls SQS in a loop; in production (step 5) an SQS
-  # event-source-mapping invokes app.worker.lambda_handler per message
-  # instead. `restart: unless-stopped` because this is a long-running
-  # process, unlike the one-shot `migrate`.
+  # The worker. Its own image since step 6a (backend/Dockerfile.worker:
+  # the API's base plus ffmpeg and the CV stack, and ANALYZER=real) — the
+  # exact image the worker Lambda runs. Locally it long-polls SQS in a loop;
+  # in production an SQS event-source-mapping invokes
+  # app.worker.lambda_handler per message instead. `restart: unless-stopped`
+  # because this is a long-running process, unlike the one-shot `migrate`.
   # ---------------------------------------------------------------------
   worker:
     build:
       context: ./backend
+      dockerfile: Dockerfile.worker
     env_file:
       - .env
     entrypoint: []

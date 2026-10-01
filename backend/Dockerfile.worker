@@ -1,0 +1,39 @@
+# The analysis worker's image (step 6a). Same Lambda base image as the API's
+# Dockerfile, with ffmpeg and the CV stack on top. That makes it several times the
+# API image's size, which is why it's a separate image in a separate ECR
+# repo. See docs/ARCHITECTURE.md §10.
+#
+# Same dev/prod rule as the API image: Compose runs exactly this image,
+# overriding only the entrypoint (poll loop instead of the Lambda runtime).
+
+# Statically linked ffmpeg/ffprobe, pinned, multi-arch (amd64 for Lambda,
+# arm64 for a MacBook's Docker). A static binary needs nothing from the base
+# image's package manager. GPL build (x264), which is fine: it runs as a
+# separate process inside a private image that's never distributed.
+FROM mwader/static-ffmpeg:9.0.2 AS ffmpeg
+
+FROM public.ecr.aws/lambda/python:3.12
+
+COPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/
+
+COPY requirements.txt requirements-worker.txt ${LAMBDA_TASK_ROOT}/
+# The uninstall/reinstall swaps mediapipe's non-headless OpenCV for the
+# headless build (see requirements-worker.txt). The final import line fails
+# the build, not the first Lambda invocation, if that swap ever stops working.
+RUN pip install --no-cache-dir \
+        -r ${LAMBDA_TASK_ROOT}/requirements.txt \
+        -r ${LAMBDA_TASK_ROOT}/requirements-worker.txt \
+    && pip uninstall -y opencv-contrib-python opencv-python \
+    && pip install --no-cache-dir --force-reinstall --no-deps "opencv-contrib-python-headless==5.0.*" \
+    && python -c "import cv2, onnxruntime, mediapipe, supervision, scipy; print('cv2', cv2.__version__)" \
+    && ffmpeg -hide_banner -version | head -n 1
+
+# This image is the one that has ffmpeg, so it's the one that opts into
+# real media processing. The API image leaves the default, "stub" (see
+# app/config.py).
+ENV ANALYZER=real
+
+COPY pyproject.toml ${LAMBDA_TASK_ROOT}/
+COPY app/ ${LAMBDA_TASK_ROOT}/app/
+
+CMD ["app.worker.lambda_handler"]

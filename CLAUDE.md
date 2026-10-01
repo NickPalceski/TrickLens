@@ -189,6 +189,31 @@ can live anywhere.
   disables it permanently (`sudo launchctl bootout system/postgresql-<version>`
   stops it just for the current boot).
 
+- **`make up`'s worker container is a second consumer of the test
+  suite's queue.** `test_clips.py`'s full-flow test used to send a real SQS
+  message on `POST /complete` and then run `_process_message` itself.
+  Harmless while both sides were the stub. From 6a the live worker
+  container (ANALYZER=real) sometimes won that race, ffprobed the test's
+  fake upload bytes into `unanalyzable`, and the test's publish then 409'd.
+  This was flaky locally, and never in CI, because `docker compose run api`
+  doesn't start the worker. Fixed two ways: the worker now claims clips
+  atomically with a lease, and the test captures the enqueue
+  (monkeypatched `get_queue`) instead of sending it. Any new test that
+  drives the worker must not put real messages on the shared queue.
+- **Docker Desktop (WSL2) can lose LocalStack's single-file bind mount.**
+  After Docker Desktop restarts, `docker compose up` failed with
+  `error mounting ... to rootfs at "/etc/localstack/init/ready.d/init.sh":
+  no such file or directory`, and a plain retry didn't help. It's the
+  *existing* container's stale mount reference, not the file.
+  `docker compose up -d --force-recreate localstack` fixes it. LocalStack
+  state is throwaway anyway.
+- **mediapipe drags in the non-headless OpenCV.** `mediapipe` depends on
+  `opencv-contrib-python`, which needs `libGL`, and the Lambda base image
+  has none. Both OpenCV builds ship the same `cv2` package, so they can't
+  coexist either. `Dockerfile.worker` uninstalls the non-headless one and
+  `--force-reinstall --no-deps`es `opencv-contrib-python-headless`, then
+  imports every CV library as a build step. Keep that order if the pip
+  line ever changes.
 - **GitHub OIDC `sub` claim uses the immutable format on this repo.** The repo
   has GitHub's immutable subject enabled, so Actions tokens carry
   `sub = repo:NickPalceski@128099643/TrickLens@1306046704:ref:refs/heads/main`,
@@ -233,7 +258,10 @@ can live anywhere.
 
 **Steps 1–5 complete and verified: step 4's 4a (follows + home feed), 4b
 (likes + comments), 4c (teams) and 4d (Discover) are all done, and step 5
-(Terraform + GitHub Actions) is live in AWS.**
+(Terraform + GitHub Actions) is live in AWS. Step 6a (worker image + ffmpeg
+media pipeline) is done and verified locally, but not yet deployed. It needs
+the one-time `tricklens-worker` ECR targeted apply first (README →
+Deployment).**
 Running locally:
 
 ```bash
@@ -244,11 +272,12 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 ```
 
 - `postgres`, `localstack` (S3 + SQS), `api` (FastAPI on the Lambda base
-  image), a `worker` (SQS poll loop, stubbed analyzer), and a one-shot
+  image), a `worker` (its own image since 6a, `backend/Dockerfile.worker`:
+  SQS poll loop, ffmpeg media pipeline, stubbed scorer), and a one-shot
   `migrate` service, all under Compose.
-- Schema at revision `0007`: `users` + `profiles` (step 1–2); `clips`,
+- Schema at revision `0008`: `users` + `profiles` (step 1–2); `clips`,
   `analyses`, `tricks`, `clip_tricks` (step 3, `team_id`/`score_included`
-  added in 4c); `follows` (step 4a — two nullable FKs + XOR check,
+  added in 4c, `processed_key` in 6a); `follows` (step 4a — two nullable FKs + XOR check,
   `followee_team_id`'s FK completed in 4c); `likes`, `comments` (step 4b);
   `teams`, `team_members`, `team_join_requests` (step 4c); `clip_views`,
   `clip_rankings`, `team_score_history` (step 4d — see below). Enum types
@@ -380,6 +409,39 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
     resolves `DATABASE_URL` from SSM before `Settings()` is built, a no-op
     locally); `make tf-init`/`tf-plan`/`tf-apply` targets.
 
+- **Step 6a (worker image + media pipeline)** migration `0008` applied;
+  51/51 API-image tests pass (the 16 media tests skip there, since that
+  image has no ffmpeg), 16/16 `make test-worker` tests pass in the worker
+  image (12 ffmpeg unit tests plus 4 end-to-end worker tests against real
+  Postgres and LocalStack), and `make licenses` is clean. Also verified end
+  to end through the *running* services:
+  - a phone-style clip (landscape pixels + 90° rotation, 60fps, audio) went
+    through `POST /clips` → real S3 upload → `complete` → real SQS → the
+    worker container's poll loop → `analyzed`;
+  - bogus client-reported 24fps/12.3s were overwritten with ffprobe's
+    60/3000ms;
+  - `video_url`/`thumb_url` came back as CDN URLs, and fetching them from
+    the host gave a 720×1280 60fps H.264+AAC file with no leftover rotation
+    metadata and a 720×1280 JPEG.
+
+  What 6a added:
+  - `Dockerfile.worker` + `requirements-worker.txt`: static ffmpeg 9.0.2
+    plus ONNX Runtime, supervision, MediaPipe, headless OpenCV, NumPy and
+    SciPy, installed and import-checked but unused until 6b/6c;
+  - `ANALYZER=stub|real` in `get_settings()`, set to `real` by the worker
+    image itself;
+  - `app/analyzer/media.py`: probe, transcode, thumbnail;
+  - worker changes: it claims a clip with one atomic `UPDATE` plus a 360s
+    lease (`ANALYZING_LEASE`), so duplicate deliveries can't double-process
+    and a crashed run's clip gets reclaimed (ARCHITECTURE.md §10);
+    `test_clips.py` captures its enqueue instead of sending it (see the
+    gotcha below);
+  - `thumb_url` on `ClipOut`;
+  - a second ECR repo, worker Lambda 3008MB/300s/2GB `/tmp`, SQS visibility
+    1800s, worker S3 IAM per prefix;
+  - `deploy.yml` builds both images, and `_test.yml` runs the worker tests
+    and the licence check.
+
 **Not done yet:** no frontend code in this repo (a visual prototype exists as
 a separate Artifact canvas, outside the repo — now covers auth/profile/
 upload/clip-status *and* the 4c team flows above, added in the same session).
@@ -396,7 +458,14 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
      FK, migration `0006`) *(verified)*
    - 4d ✅ Discover (precomputed rankings + team score history) *(verified)*
 5. ✅ Terraform + GitHub Actions → deploy to AWS *(live, verified)*
-6. ⬜ Replace the stub with the real steeze analyzer
+6. 🔶 Replace the stub with the real steeze analyzer — sub-phases:
+   - 6a ✅ worker image split + ffprobe/transcode/thumbnail + `processed_key`
+     (migration `0008`) *(verified locally, not yet deployed)*
+   - 6b ⬜ YOLOX + ByteTrack detection/tracking, camera-motion cancelling,
+     Stage A pop localization *(user is gathering 3–5 test clips for this)*
+   - 6c ⬜ MediaPipe pose, six subscores, confidence gate, averaging landed
+     tricks, `steeze-v0-uncalibrated`, raw per-trick measurements stored
+   - 6d ⬜ calibration once the user has hand-judged clips → `steeze-v1`
 
 Steps are sequential. Do not start a step before the previous one's
 acceptance criteria pass.
@@ -417,3 +486,12 @@ acceptance criteria pass.
   number reads as a bug; a breakdown reads as an opinion.
 - **Fail safe.** Low confidence returns `unanalyzable` with a *specific*
   reason, never a guess.
+- **YOLOX on ONNX Runtime, not Ultralytics YOLOv8.** Ultralytics is
+  AGPL-3.0 (the network clause would force the whole backend open), and
+  TrickLens goes closed-source at MVP. Never add an AGPL dependency;
+  `make licenses` enforces it in CI.
+- **Multi-trick clips score the average of their *landed* tricks.** Bails
+  are excluded, not zeroed.
+- **Calibration after the pipeline.** 6c ships guessed constants in one
+  module as `steeze-v0-uncalibrated` and stores raw per-trick
+  measurements, so 6d can recalculate scores without re-running video.

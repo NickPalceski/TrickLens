@@ -1,5 +1,6 @@
 .DEFAULT_GOAL := help
-.PHONY: help init up down clean logs ps health migrate revision shell psql fmt test rankings \
+.PHONY: help init up down clean logs ps health migrate revision shell psql fmt test test-worker \
+	licenses rankings \
 	tf-init tf-plan tf-apply
 
 help: ## Show available commands
@@ -51,6 +52,13 @@ fmt: ## Format and lint
 
 test: ## Run the test suite
 	docker compose run --rm api python -m pytest
+
+test-worker: ## Run the worker-image tests (ffmpeg media pipeline)
+	docker compose run --rm worker python -m pytest tests/test_media.py
+
+licenses: ## Fail if any worker-image Python dependency is AGPL (TrickLens goes closed-source)
+	docker compose run --rm --no-deps worker sh -c \
+	  "pip install -q pip-licenses && pip-licenses --partial-match --fail-on 'AGPL;Affero'"
 
 rankings: ## Rebuild Discover rankings + team score snapshots (on demand; scheduled automatically in prod, step 5)
 	docker compose run --rm api python -m app.rankings

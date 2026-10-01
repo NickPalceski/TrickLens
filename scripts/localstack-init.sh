@@ -49,10 +49,14 @@ DLQ_ARN=$(awslocal sqs get-queue-attributes \
   --query 'Attributes.QueueArn' --output text)
 
 # VisibilityTimeout must exceed the worker's max runtime, or a slow clip gets
-# picked up twice. 90s of analysis -> 300s here, with headroom.
+# picked up twice. It must also exceed app/worker.py's ANALYZING_LEASE
+# (360s): a redelivery that arrives while the lease is still live is
+# skipped and deleted, which would strand a clip whose run had died.
+# Production uses 1800s (6x the Lambda's 300s timeout, see infra/sqs.tf).
+# That multiple only matters when Lambda is doing the invoking.
 echo "[init] creating SQS queue: ${QUEUE} (maxReceiveCount=3 -> DLQ)"
 awslocal sqs create-queue --queue-name "${QUEUE}" --attributes "{
-  \"VisibilityTimeout\": \"300\",
+  \"VisibilityTimeout\": \"600\",
   \"MessageRetentionPeriod\": \"345600\",
   \"RedrivePolicy\": \"{\\\"deadLetterTargetArn\\\":\\\"${DLQ_ARN}\\\",\\\"maxReceiveCount\\\":\\\"3\\\"}\"
 }"
