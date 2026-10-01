@@ -1,0 +1,512 @@
+{
+  "info": {
+    "_postman_id": "979b2a6b-712c-4886-b896-f5515e186f82",
+    "name": "TrickLens \u2014 Prod Check",
+    "description": "Runs against PRODUCTION (real API Gateway, Cognito prod pool, S3, SQS, worker Lambda, CloudFront). Kept separate from the main TrickLens collection so a local test can never hit prod by accident.\n\nFill in before step 0: prod_base_url, prod_cdn_base_url, prod_cognito_client_id, prod_email, prod_password, prod_username (none are secrets except the password \u2014 put that in Current Value only). Get the first three with `terraform -chdir=infra output`. After step 1: prod_confirmation_code. Before step 6: pick the video file in that request's Body tab. Everything else is set by test scripts.\n\nRun in order, 0 \u2192 10. The prod Cognito pool and prod database are separate from local dev, so local test users don't exist here.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{prod_id_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "0. Health (GET /health/deep)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{prod_base_url}}/health/deep",
+          "host": [
+            "{{prod_base_url}}"
+          ],
+          "path": [
+            "health",
+            "deep"
+          ]
+        },
+        "description": "No auth. All four checks should be ok, and the postgres check's detail.revision should be \"0008\" \u2014 proof that 6a's migration reached Neon.",
+        "auth": {
+          "type": "noauth"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const d = pm.response.json();",
+              "pm.test('200 OK', () => pm.response.to.have.status(200));",
+              "const pg = (d.checks || []).find(c => c.name === 'postgres');",
+              "pm.test('schema at revision 0008', () => pm.expect(pg && pg.detail && pg.detail.revision).to.eql('0008'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Sign Up (prod Cognito)",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-amz-json-1.1"
+          },
+          {
+            "key": "X-Amz-Target",
+            "value": "AWSCognitoIdentityProviderService.SignUp"
+          }
+        ],
+        "url": {
+          "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+          "protocol": "https",
+          "host": [
+            "cognito-idp",
+            "{{aws_region}}",
+            "amazonaws",
+            "com"
+          ],
+          "path": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"ClientId\": \"{{prod_cognito_client_id}}\",\n  \"Username\": \"{{prod_email}}\",\n  \"Password\": \"{{prod_password}}\",\n  \"UserAttributes\": [\n    {\n      \"Name\": \"email\",\n      \"Value\": \"{{prod_email}}\"\n    }\n  ]\n}"
+        },
+        "description": "No AWS credentials needed. Creates the user UNCONFIRMED and emails a 6-digit code to prod_email (sender: no-reply@verificationemail.com \u2014 check spam). UsernameExistsException means you already signed up: skip to 3."
+      }
+    },
+    {
+      "name": "2. Confirm Sign Up (code from email)",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-amz-json-1.1"
+          },
+          {
+            "key": "X-Amz-Target",
+            "value": "AWSCognitoIdentityProviderService.ConfirmSignUp"
+          }
+        ],
+        "url": {
+          "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+          "protocol": "https",
+          "host": [
+            "cognito-idp",
+            "{{aws_region}}",
+            "amazonaws",
+            "com"
+          ],
+          "path": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"ClientId\": \"{{prod_cognito_client_id}}\",\n  \"Username\": \"{{prod_email}}\",\n  \"ConfirmationCode\": \"{{prod_confirmation_code}}\"\n}"
+        },
+        "description": "Put the emailed code in the prod_confirmation_code variable first. Unlike the local collection's Admin Confirm, this needs no AWS keys. An empty {} response means success."
+      }
+    },
+    {
+      "name": "2b. Resend Code (only if needed)",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-amz-json-1.1"
+          },
+          {
+            "key": "X-Amz-Target",
+            "value": "AWSCognitoIdentityProviderService.ResendConfirmationCode"
+          }
+        ],
+        "url": {
+          "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+          "protocol": "https",
+          "host": [
+            "cognito-idp",
+            "{{aws_region}}",
+            "amazonaws",
+            "com"
+          ],
+          "path": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"ClientId\": \"{{prod_cognito_client_id}}\",\n  \"Username\": \"{{prod_email}}\"\n}"
+        },
+        "description": "Only if the code expired or never arrived."
+      }
+    },
+    {
+      "name": "3. Log In (prod Cognito)",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/x-amz-json-1.1"
+          },
+          {
+            "key": "X-Amz-Target",
+            "value": "AWSCognitoIdentityProviderService.InitiateAuth"
+          }
+        ],
+        "url": {
+          "raw": "https://cognito-idp.{{aws_region}}.amazonaws.com/",
+          "protocol": "https",
+          "host": [
+            "cognito-idp",
+            "{{aws_region}}",
+            "amazonaws",
+            "com"
+          ],
+          "path": []
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"AuthFlow\": \"USER_PASSWORD_AUTH\",\n  \"ClientId\": \"{{prod_cognito_client_id}}\",\n  \"AuthParameters\": {\n    \"USERNAME\": \"{{prod_email}}\",\n    \"PASSWORD\": \"{{prod_password}}\"\n  }\n}"
+        },
+        "description": "Saves prod_id_token, which every request below uses. Tokens last an hour \u2014 re-send this if you start getting 401s."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const d = pm.response.json();",
+              "pm.test('got an IdToken', () => pm.expect(d.AuthenticationResult && d.AuthenticationResult.IdToken).to.be.a('string'));",
+              "if (d.AuthenticationResult) pm.collectionVariables.set('prod_id_token', d.AuthenticationResult.IdToken);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Register (POST /users)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{prod_base_url}}/users",
+          "host": [
+            "{{prod_base_url}}"
+          ],
+          "path": [
+            "users"
+          ]
+        },
+        "description": "Creates your user row in the prod database (Neon). 201 the first time; 409 on later runs is fine.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{prod_username}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('201 created, or 409 already registered', () => pm.expect(pm.response.code).to.be.oneOf([201, 409]));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Create Clip (POST /clips)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{prod_base_url}}/clips",
+          "host": [
+            "{{prod_base_url}}"
+          ],
+          "path": [
+            "clips"
+          ]
+        },
+        "description": "duration_ms and source_fps are deliberately WRONG (9999 / 24): step 8 checks that the worker replaced them with ffprobe's real values. content_type must match the file you upload in step 6 \u2014 video/quicktime for your .mov clips.",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"content_type\": \"video/quicktime\",\n  \"duration_ms\": 9999,\n  \"source_fps\": 24\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const d = pm.response.json();",
+              "pm.test('201 created', () => pm.response.to.have.status(201));",
+              "pm.collectionVariables.set('prod_clip_id', d.clip.id);",
+              "pm.collectionVariables.set('prod_upload_url', d.upload_url);",
+              "console.log('clip', d.clip.id, 'is', d.clip.status);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Upload Video to S3 (PUT presigned URL)",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "PUT",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "video/quicktime"
+          }
+        ],
+        "url": "{{prod_upload_url}}",
+        "body": {
+          "mode": "file",
+          "file": {
+            "src": ""
+          }
+        },
+        "description": "BEFORE SENDING: Body tab \u2192 binary \u2192 Select File \u2192 backend/tests/fixtures/clips/kickflip_sketchy_60fps.mov. The URL carries its own auth, so no token. The Content-Type header must stay video/quicktime: it's part of the URL's signature, and a mismatch is a 403 SignatureDoesNotMatch. The URL expires 15 minutes after step 5 \u2014 re-run 5 if you get a 403 AccessDenied/expired."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('S3 accepted the upload (200)', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Complete Upload (POST /clips/:clip_id/complete)",
+      "request": {
+        "method": "POST",
+        "url": {
+          "raw": "{{prod_base_url}}/clips/{{prod_clip_id}}/complete",
+          "host": [
+            "{{prod_base_url}}"
+          ],
+          "path": [
+            "clips",
+            "{{prod_clip_id}}",
+            "complete"
+          ]
+        },
+        "description": "Confirms the object landed in S3 and puts the clip on the real SQS queue, which triggers the worker Lambda."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 and queued', () => { pm.response.to.have.status(200); pm.expect(pm.response.json().status).to.eql('queued'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Get Clip Status \u2014 re-send to poll (GET /clips/:clip_id)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{prod_base_url}}/clips/{{prod_clip_id}}",
+          "host": [
+            "{{prod_base_url}}"
+          ],
+          "path": [
+            "clips",
+            "{{prod_clip_id}}"
+          ]
+        },
+        "description": "Re-send every few seconds until status is no longer queued/analyzing. The very first run can take ~10\u201330s longer than locally (Lambda cold-starts the big worker image). Once it's analyzed, the Test Results tab shows the 6a checks, and video_url/thumb_url are saved for steps 9\u201310. Until 6c the score is still the stub, which marks ~10% of clips unanalyzable with a fake reason decided by the clip id; that's expected, and the tests treat it as a pass as long as the media checks pass."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const d = pm.response.json();",
+              "console.log('status:', d.status, '| duration_ms:', d.duration_ms, '| source_fps:', d.source_fps);",
+              "if (d.status === 'queued' || d.status === 'analyzing') {",
+              "  pm.test('still ' + d.status + ' \u2014 re-send in a few seconds', () => true);",
+              "  return;",
+              "}",
+              "// 6a's own failures (the file itself is bad). Any other unanalyzable reason",
+              "// on a stub-v1 analysis is the stub scorer's deliberate ~10% fake-failure roll,",
+              "// which is decided by the clip id and says nothing about the media pipeline.",
+              "const MEDIA_FAILURES = ['unreadable video file', 'no video stream found', 'clip too short'];",
+              "const reason = d.analysis && d.analysis.failure_reason;",
+              "pm.test('6a media pipeline accepted the file', () => pm.expect(MEDIA_FAILURES).to.not.include(reason));",
+              "if (d.status === 'unanalyzable' && d.analysis.model_version === 'stub-v1') {",
+              "  console.log('stub scorer rolled its ~10% fake failure (' + reason + ') \u2014 expected, not a 6a problem');",
+              "} else {",
+              "  pm.test('scored (analyzed)', () => pm.expect(d.status).to.eql('analyzed'));",
+              "}",
+              "pm.test('ffprobe replaced the fake duration (9999)', () => pm.expect(d.duration_ms).to.not.eql(9999));",
+              "pm.test('ffprobe replaced the fake fps (24)', () => pm.expect(d.source_fps).to.eql(60));",
+              "const cdn = pm.collectionVariables.get('prod_cdn_base_url').replace(/\\/$/, '');",
+              "pm.test('video_url is the processed/ copy on the CDN', () => pm.expect(d.video_url).to.eql(cdn + '/processed/' + d.id + '.mp4'));",
+              "pm.test('thumb_url is on the CDN', () => pm.expect(d.thumb_url).to.eql(cdn + '/thumbs/' + d.id + '.jpg'));",
+              "pm.collectionVariables.set('prod_video_url', d.video_url);",
+              "pm.collectionVariables.set('prod_thumb_url', d.thumb_url);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Fetch Processed Video (CloudFront)",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "url": "{{prod_video_url}}",
+        "description": "What a browser would download. To actually watch it, copy prod_video_url into a browser tab: it should play upright with sound."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 from CloudFront', () => pm.response.to.have.status(200));",
+              "pm.test('served as video/mp4', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('video/mp4'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Fetch Thumbnail (CloudFront)",
+      "request": {
+        "auth": {
+          "type": "noauth"
+        },
+        "method": "GET",
+        "url": "{{prod_thumb_url}}",
+        "description": "Postman previews the image in the response pane: it should be upright."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('200 from CloudFront', () => pm.response.to.have.status(200));",
+              "pm.test('served as image/jpeg', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('image/jpeg'));"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "aws_region",
+      "value": "us-east-1",
+      "type": "string"
+    },
+    {
+      "key": "prod_base_url",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_cdn_base_url",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_cognito_client_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_email",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_password",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_username",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_confirmation_code",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_id_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_clip_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_upload_url",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_video_url",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "prod_thumb_url",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

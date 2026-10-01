@@ -744,10 +744,12 @@
             ],
             "url": "{{upload_url}}",
             "body": {
-              "mode": "raw",
-              "raw": "fake video bytes for testing \u2014 the stub analyzer never decodes this"
+              "mode": "file",
+              "file": {
+                "src": ""
+              }
             },
-            "description": "Uses upload_url saved by step 1 \u2014 run that request first. Not authenticated with the bearer token; presigned URLs carry their own auth in the query string."
+            "description": "Uses upload_url saved by step 1 \u2014 run that request first. BEFORE SENDING: Body tab \u2192 binary \u2192 Select File \u2192 a real video. Since step 6a the worker ffprobes and transcodes the upload, so fake bytes end up `unanalyzable` (\"unreadable video file\"). The Content-Type header must match step 1's content_type (video/mp4 for .mp4, video/quicktime for .mov \u2014 phone clips are usually .mov), because it's part of the presigned URL's signature. Not authenticated with the bearer token; presigned URLs carry their own auth in the query string."
           }
         },
         {

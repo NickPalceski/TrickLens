@@ -24,3 +24,8 @@ out/
 
 volumes/
 *.log
+
+# Real skate clips used by the analyzer's local-only tests (step 6). Personal
+# footage in a public repo: never committed. Keep the originals somewhere
+# shared across machines. Tests that need them skip when this folder is missing.
+backend/tests/fixtures/clips/

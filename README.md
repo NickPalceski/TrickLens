@@ -9,7 +9,7 @@ Discover.
 
 > **Status: steps 1–5 done — the social app is live in AWS, deployed by
 > GitHub Actions on every push to `main`. Step 6 (the real analyzer) is
-> under way: 6a is done locally. The worker now has its own image with
+> under way: 6a is done and live in prod. The worker now has its own image with
 > ffmpeg, and it verifies, transcodes and thumbnails every upload. Scoring
 > itself is still the stub until 6c.** Steps 1–3 are done and verified (local dev
 > foundation, Cognito auth/users/profiles, a clip's full path from draft
@@ -155,7 +155,10 @@ between steps.
    instead. Re-run the folder with different `new_user_*` values for more
    users.
 4. **Run it:** *Auth → Login*, then *Users → Register* (once — 409 after
-   that is fine), then *Clips* 1 through 6 in order. Re-send *4. Get Clip
+   that is fine), then *Clips* 1 through 6 in order. *Clips → 2. Upload*
+   needs a real video picked in its Body tab (binary) since 6a, and its
+   `Content-Type` must match step 1's `content_type` (`video/quicktime` for
+   a `.mov`). Re-send *4. Get Clip
    Status* to poll — `docker compose logs -f worker` alongside it shows the
    same transition server-side. The *Social* folder (follow / unfollow /
    home feed) needs `follow_username` set to another registered user's name
@@ -499,6 +502,26 @@ points the worker Lambda at the new image and applies the rest of 6a: 3008MB
 memory, 300s timeout, 2GB `/tmp`, the 1800s SQS visibility timeout and the
 worker's S3 permissions.
 
+### Checking a deploy end to end (Postman)
+
+A green pipeline only proves `/health/deep` passes. To prove a clip really
+goes through the worker Lambda, import
+[`postman/TrickLens-prod-check.postman_collection.json`](postman/TrickLens-prod-check.postman_collection.json)
+(a separate collection, so local testing can never hit prod by accident) and
+run it top to bottom. It covers:
+- health (expects the current Alembic revision);
+- prod Cognito sign-up and confirm by emailed code (no AWS keys needed);
+- login and register;
+- create, upload a real clip, complete, and poll, with tests checking that
+  ffprobe replaced the fake duration/fps and that `video_url`/`thumb_url`
+  are CDN URLs;
+- fetching both from CloudFront.
+
+The collection's description lists the variables to fill in. The
+endpoint values come from `terraform -chdir=infra output` and aren't
+committed. The prod Cognito pool and Neon database are separate from local
+dev, so dev test users don't exist there; sign up once.
+
 ### Ongoing deploys
 
 Nothing to do — push to `main`. `.github/workflows/deploy.yml` builds and
@@ -586,7 +609,8 @@ infra/                 Terraform (step 5) — one resource file per AWS
                        (push-to-main pipeline) — step 5
 docs/ARCHITECTURE.md   System design and decisions
 scripts/               LocalStack + Cognito + Terraform-state bootstrap
-postman/               Postman collection for manual API testing
+postman/               Postman collections: TrickLens (local dev) and
+                       TrickLens-prod-check (end-to-end check against prod)
 ```
 
 ## Notes

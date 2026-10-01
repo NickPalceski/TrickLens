@@ -189,6 +189,14 @@ can live anywhere.
   disables it permanently (`sudo launchctl bootout system/postgresql-<version>`
   stops it just for the current boot).
 
+- **`unanalyzable` from a `stub-v1` analysis is not a pipeline failure.**
+  Until 6c, the stub scorer deliberately fails ~10% of clips with a random
+  reason ("no clean airtime found", etc.), decided by the clip id
+  (`random.Random(clip_id.int)`, reproducible offline). The 6a prod check
+  hit it twice in a row (rolls 0.056 and 0.003) and looked like a real
+  failure. 6a's own failures are only "unreadable video file", "no video
+  stream found" and "clip too short". The prod-check collection's step 8
+  now tells them apart.
 - **`make up`'s worker container is a second consumer of the test
   suite's queue.** `test_clips.py`'s full-flow test used to send a real SQS
   message on `POST /complete` and then run `_process_message` itself.
@@ -259,9 +267,8 @@ can live anywhere.
 **Steps 1–5 complete and verified: step 4's 4a (follows + home feed), 4b
 (likes + comments), 4c (teams) and 4d (Discover) are all done, and step 5
 (Terraform + GitHub Actions) is live in AWS. Step 6a (worker image + ffmpeg
-media pipeline) is done and verified locally, but not yet deployed. It needs
-the one-time `tricklens-worker` ECR targeted apply first (README →
-Deployment).**
+media pipeline) is done and live, verified in prod with two real clips.
+6b is next.**
 Running locally:
 
 ```bash
@@ -442,6 +449,16 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   - `deploy.yml` builds both images, and `_test.yml` runs the worker tests
     and the licence check.
 
+  **Verified in prod** via `postman/TrickLens-prod-check.postman_collection.json`
+  (a separate collection, prod endpoints not committed). Both real clips
+  (kickflip `.mov`, bail `.mov`, iPhone H.264 SDR portrait) came back with
+  ffprobe-corrected duration/fps, CDN `processed/` and `thumbs/` URLs, and
+  upright playback with sound. Worker `REPORT`: ~1.7s init on a cold start,
+  6.5s for the 2.7s clip, ~400MB used. The first run of a newly deployed
+  image hits the 10s init timeout once (see ARCHITECTURE.md §10). Local dev
+  test users don't exist in prod (separate Cognito pool and Neon DB), so a
+  prod user was signed up via the collection.
+
 **Not done yet:** no frontend code in this repo (a visual prototype exists as
 a separate Artifact canvas, outside the repo — now covers auth/profile/
 upload/clip-status *and* the 4c team flows above, added in the same session).
@@ -460,9 +477,15 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
 5. ✅ Terraform + GitHub Actions → deploy to AWS *(live, verified)*
 6. 🔶 Replace the stub with the real steeze analyzer — sub-phases:
    - 6a ✅ worker image split + ffprobe/transcode/thumbnail + `processed_key`
-     (migration `0008`) *(verified locally, not yet deployed)*
+     (migration `0008`) *(live, verified in prod)*
    - 6b ⬜ YOLOX + ByteTrack detection/tracking, camera-motion cancelling,
-     Stage A pop localization *(user is gathering 3–5 test clips for this)*
+     Stage A pop localization. Two real clips are in the gitignored
+     `backend/tests/fixtures/clips/`, with the user's notes in
+     `test_video_details.md`:
+     - a tripod kickflip, skater only ~13% of frame height;
+     - a follow-cam bail.
+
+     A multi-trick line is still wanted.
    - 6c ⬜ MediaPipe pose, six subscores, confidence gate, averaging landed
      tricks, `steeze-v0-uncalibrated`, raw per-trick measurements stored
    - 6d ⬜ calibration once the user has hand-judged clips → `steeze-v1`

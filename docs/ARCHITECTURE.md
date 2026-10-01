@@ -660,6 +660,19 @@ A few smaller decisions that come with it:
   base image doesn't have it. The Dockerfile uninstalls it, force-reinstalls
   `opencv-contrib-python-headless`, and then imports every CV library as a
   build step, so a broken swap fails the build, not the first invocation.
+- **Measured in prod (6a, two real 60fps phone clips).**
+  - A routine cold start takes ~1.7s to initialize. The 2.7s clip then took
+    6.5s end to end (download, ffprobe, transcode, two uploads, Neon), using
+    ~400MB of the 3008MB.
+  - The **first** invocation of a newly deployed image hit Lambda's 10s
+    init limit (`INIT_REPORT ... Status: timeout`). Lambda re-runs init
+    inside the invocation, so that first clip still succeeded, just ~38s
+    later. Lambda loads container images lazily, so the first run reads
+    every imported file from an empty cache. It happens once per deploy,
+    not per cold start.
+  - The rule for 6b/6c: keep the heavy CV imports (cv2, onnxruntime,
+    mediapipe) inside the handler path, never at module level, or every
+    cold start pays for them during init.
 - **The worker claims a clip atomically, with a lease.** One `UPDATE ...
   WHERE status = 'queued' OR (status = 'analyzing' AND updated_at < now()
   - 360s) RETURNING id` decides ownership, so two consumers can never
@@ -880,7 +893,7 @@ per Lambda function, and an AWS Budget alarm at $5 (step 5, `infra/budget.tf`).
 | 4 | Social app — feed, likes, comments, teams, discover | **done** |
 | 5 | Terraform + GitHub Actions → deploy to AWS | **done, live** |
 | 6 | Replace the stub with the real steeze analyzer | **in progress** |
-| 6a | Worker image split, ffprobe verify + 720p transcode + thumbnail, `processed_key` (migration `0008`), worker S3 IAM + Lambda sizing, AGPL licence guard | **done (local); not yet deployed** |
+| 6a | Worker image split, ffprobe verify + 720p transcode + thumbnail, `processed_key` (migration `0008`), worker S3 IAM + Lambda sizing, AGPL licence guard | **done, live** |
 | 6b | YOLOX + ByteTrack detection/tracking, camera-motion cancelling, Stage A pop localization | |
 | 6c | MediaPipe pose, six subscores, confidence gate, averaging landed tricks, `steeze-v0-uncalibrated` | |
 | 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | |
