@@ -189,6 +189,18 @@ can live anywhere.
   disables it permanently (`sudo launchctl bootout system/postgresql-<version>`
   stops it just for the current boot).
 
+- **Our INFO logs never reached CloudWatch, from step 5 to 6b.** Lambda's
+  runtime has already put its own handler on the root logger, so
+  `logging.basicConfig()` is a no-op there, and the root stays at
+  `WARNING`. The worker and rankings also configured logging only under
+  `__main__`. So every `log.info()` (`stage A: …`, `clip … -> analyzed`)
+  was dropped, while warnings and errors still showed up, which is why it
+  went unnoticed. In the 6a prod check the `-> analyzed` line was never
+  there either, and nobody caught it. Found when 6b's prod check looked for
+  `stage A:`. Fixed by `app/logs.py`: `configure_logging()` at import in
+  every entrypoint, setting INFO on the `tricklens` logger.
+  `tests/test_logs.py` reproduces the Lambda setup. New entrypoints must
+  call it at import too.
 - **`unanalyzable` from a `stub-v1` analysis is not a pipeline failure.**
   Until 6c, the stub scorer deliberately fails ~10% of clips with a random
   reason ("no clean airtime found", etc.), decided by the clip id
@@ -290,8 +302,11 @@ can live anywhere.
 (likes + comments), 4c (teams) and 4d (Discover) are all done, and step 5
 (Terraform + GitHub Actions) is live in AWS. Step 6a (worker image + ffmpeg
 media pipeline) is done and live, verified in prod with two real clips.
-Step 6b (Stage A: finding the tricks) is done and verified locally, not yet
-deployed. The user is holding the push until 6b is verified.**
+Step 6b (Stage A: finding the tricks) is deployed. Its first prod run
+(Postman 3→10 with the kickflip) was all green, but the `stage A:` log
+line was missing, which exposed that *no* INFO logging ever reached
+CloudWatch (see gotcha). That fix is in, and the prod confirmation of 6b
+is pending a deploy of it.**
 Running locally:
 
 ```bash

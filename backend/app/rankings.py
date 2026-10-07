@@ -17,6 +17,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import SessionLocal
+from app.logs import configure_logging
 from app.models.clip import Clip
 from app.models.discover import ClipRanking, TeamScoreHistory
 from app.models.enums import ClipStatus
@@ -24,6 +25,8 @@ from app.models.social import ClipView, Comment, Like
 from app.models.team import Team
 from app.scoring import team_average_score
 
+# At import, not in __main__, so it also applies under Lambda (see app/logs.py).
+configure_logging()
 log = logging.getLogger("tricklens.rankings")
 
 # Both Discover clip rankings and the team score delta use the same rolling
@@ -134,7 +137,4 @@ def lambda_handler(_event: dict[str, Any], _context: Any) -> dict[str, int]:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s | %(message)s"
-    )
     asyncio.run(run())

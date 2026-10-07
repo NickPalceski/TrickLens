@@ -34,11 +34,14 @@ from sqlalchemy import and_, func, or_, select, update
 
 from app.config import get_settings
 from app.db import SessionLocal
+from app.logs import configure_logging
 from app.models.clip import Analysis, Clip
 from app.models.enums import ClipStatus
 from app.services.queue import get_queue
 from app.services.storage import PREFIX_PROCESSED, PREFIX_THUMBS, get_storage
 
+# At import, not in __main__, so it also applies under Lambda (see app/logs.py).
+configure_logging()
 log = logging.getLogger("tricklens.worker")
 
 MODEL_VERSION = "stub-v1"
@@ -253,7 +256,4 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s | %(message)s"
-    )
     asyncio.run(_poll_forever())

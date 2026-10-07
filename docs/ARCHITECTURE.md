@@ -799,6 +799,31 @@ original release wasn't. ffmpeg's static build is GPL (x264), which is
 fine here: it runs as a separate process inside a private image that is
 never distributed, and the ordinary GPL is only triggered by distribution.
 
+### Logging is configured for Lambda, not just locally
+
+Every entrypoint (API, worker, rankings) calls `app.logs.configure_logging()`
+at import. Until the 6b prod check, none of our `INFO` lines ever reached
+CloudWatch:
+- the worker and rankings configured logging only in their local
+  `__main__` block;
+- the API's `logging.basicConfig()` is a no-op under Lambda, because the
+  runtime has already attached its own handler to the root logger;
+- the root stays at Python's default `WARNING`.
+
+So `stage A: …`, `clip … -> analyzed` and every other `log.info()` were
+dropped, while warnings and errors (including `log.exception` from a
+failed Stage A) still came through. That's why it went unnoticed. The fix
+sets `INFO` on our own `tricklens` logger, so its records propagate to
+whichever root handler exists: Lambda's in prod, `basicConfig`'s locally.
+`tests/test_logs.py` reproduces the Lambda setup in a subprocess, including
+a control case that drops the line exactly as prod did.
+
+Known harmless noise in the worker's CloudWatch logs: `sh: line 1: blkid:
+command not found`, `... hostname: ...` and an onnxruntime "Failed to
+persist telemetry device ID" warning. All come from onnxruntime's start-up
+code (disabling its telemetry doesn't stop them). The minimal Lambda image
+lacks those tools, and its filesystem is read-only outside `/tmp`.
+
 ### A small in-house IoU tracker, not ByteTrack (6b)
 
 The plan named `supervision`'s ByteTrack. While building 6b it turned out

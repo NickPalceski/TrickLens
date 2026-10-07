@@ -10,11 +10,9 @@ from fastapi.responses import JSONResponse
 from app.api.routes import clips, discover, feed, health, teams, users
 from app.config import get_settings
 from app.db import engine
+from app.logs import configure_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(name)s | %(message)s",
-)
+configure_logging()
 log = logging.getLogger("tricklens")
 
 settings = get_settings()
