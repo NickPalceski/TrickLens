@@ -25,8 +25,8 @@ with `make analyze-clip` (see [Clips](#clips)).
 
 > **Status: steps 1–5 done — the social app is live in AWS, deployed by
 > GitHub Actions on every push to `main`. Step 6 (the real analyzer) is
-> under way: 6a is done and live in prod, and 6b (finding the tricks in a
-> clip) is done locally, not yet deployed. The worker now has its own image with
+> under way: 6a and 6b (finding the tricks in a clip) are done and live in
+> prod; 6c (scoring with body pose) is next. The worker now has its own image with
 > ffmpeg, and it verifies, transcodes and thumbnails every upload. Scoring
 > itself is still the stub until 6c.** Steps 1–3 are done and verified (local dev
 > foundation, Cognito auth/users/profiles, a clip's full path from draft

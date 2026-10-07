@@ -126,7 +126,7 @@ reach a feed, and the user gets to correct the trick tag first.
 
 ---
 
-## 4. The steeze score *(step 6 — 6a live, 6b done locally, 6c–6d planned)*
+## 4. The steeze score *(step 6 — 6a and 6b live, 6c–6d planned)*
 
 ### What it is not
 
@@ -211,7 +211,15 @@ box, i.e. the lowest foot), the **board's centre**, and the skater's
 | Follow-cam bail | 1.10s | 1.13s | 1.30s | 0.093 | lands *without* the board at 1.33s, which is the evidence 6c's landed check will use |
 
 Both run in about 0.45s of detection per second of clip locally (4.7s clip:
-2.1s). The worker uses the biggest pop's apex as the clip's thumbnail.
+2.1s). **In prod** (worker Lambda, 3008MB ≈ 1.7 vCPU), the kickflip found
+the identical window `(1233, 1467, 1567)`, with the same coverage and
+skater size, but detection took **10.7s** (5.86s full frame + 4.84s
+zoomed pass), about 5× local, or **~2.3s per second of clip**. A 30s clip
+therefore costs ~70s of Stage A. That fits the 300s timeout, but it's the
+budget 6c's pose work has to share. Whole job: 31.6s, 568MB, 8.2s init.
+That was the first run after a deploy, so a warm run may be somewhat
+faster. If 6c needs headroom, the cheapest levers are `SAMPLE_FPS` 15 → 10
+and skipping the zoomed pass when the skater is already large in frame. The worker uses the biggest pop's apex as the clip's thumbnail.
 Until 6c, Stage A is **advisory**: its windows are only logged, nothing new
 is stored, and a Stage A failure is logged without failing the clip.
 
@@ -1029,7 +1037,7 @@ per Lambda function, and an AWS Budget alarm at $5 (step 5, `infra/budget.tf`).
 | 5 | Terraform + GitHub Actions → deploy to AWS | **done, live** |
 | 6 | Replace the stub with the real steeze analyzer | **in progress** |
 | 6a | Worker image split, ffprobe verify + 720p transcode + thumbnail, `processed_key` (migration `0008`), worker S3 IAM + Lambda sizing, AGPL licence guard | **done, live** |
-| 6b | YOLOX-Tiny + zoomed board pass, IoU tracker, local ground estimate, Stage A pop localization, apex thumbnail, `make analyze-clip` debug video | **done (local); not yet deployed** |
+| 6b | YOLOX-Tiny + zoomed board pass, IoU tracker, local ground estimate, Stage A pop localization, apex thumbnail, `make analyze-clip` debug video | **done, live** |
 | 6c | MediaPipe pose, six subscores, confidence gate, averaging landed tricks, `steeze-v0-uncalibrated` | |
 | 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | |
 

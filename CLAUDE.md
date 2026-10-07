@@ -302,11 +302,8 @@ can live anywhere.
 (likes + comments), 4c (teams) and 4d (Discover) are all done, and step 5
 (Terraform + GitHub Actions) is live in AWS. Step 6a (worker image + ffmpeg
 media pipeline) is done and live, verified in prod with two real clips.
-Step 6b (Stage A: finding the tricks) is deployed. Its first prod run
-(Postman 3→10 with the kickflip) was all green, but the `stage A:` log
-line was missing, which exposed that *no* INFO logging ever reached
-CloudWatch (see gotcha). That fix is in, and the prod confirmation of 6b
-is pending a deploy of it.**
+Step 6b (Stage A: finding the tricks) is done and live, verified in prod.
+6c is next.**
 Running locally:
 
 ```bash
@@ -528,6 +525,19 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   Known limits: the bail's 0.093 peak sits just over `MIN_POP` 0.08, and
   terrain changes (drops, stairs) aren't modelled.
 
+  **Verified in prod** (after the logging fix, `6e0db14`). The kickflip
+  logged `stage A: 1 trick(s) [(1233, 1467, 1567)] | skater in 83% of
+  samples, 0.14 of frame height`, identical to local, and step 10's
+  thumbnail showed the skater mid-kickflip. Timing on Lambda (first run
+  after the deploy):
+  - detect_full 5.86s + detect_crop 4.84s = 10.7s, about 5× local, or
+    ~2.3s per clip-second;
+  - whole job 31.6s, 568MB, 8.2s init.
+
+  That's 6c's budget constraint: a 30s clip ≈ 70s of Stage A within the
+  300s timeout. Getting there first surfaced the CloudWatch logging gotcha
+  below.
+
   README's sneak peek, `docs/media/stage-a-kickflip.gif`, is the kickflip's
   debug video (trimmed to the trick, half speed, 360px, ~600KB). It's the
   user's own footage, published deliberately at their request. Every other
@@ -555,8 +565,8 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
    - 6a ✅ worker image split + ffprobe/transcode/thumbnail + `processed_key`
      (migration `0008`) *(live, verified in prod)*
    - 6b ✅ YOLOX-Tiny + zoomed board pass, IoU tracker, local ground estimate,
-     Stage A pop localization, apex thumbnail, `make analyze-clip` *(verified
-     locally, not yet deployed)*. Two real clips are in the gitignored
+     Stage A pop localization, apex thumbnail, `make analyze-clip` *(live,
+     verified in prod)*. Two real clips are in the gitignored
      `backend/tests/fixtures/clips/`, with the user's notes in
      `test_video_details.md`:
      - a tripod kickflip, skater only ~13% of frame height;
