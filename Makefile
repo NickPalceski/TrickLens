@@ -3,7 +3,8 @@
 # Worker-image-only test files (need ffmpeg / the CV stack). Under `make test`
 # (API image) they all skip.
 WORKER_TESTS := tests/test_media.py tests/test_analyzer_detect.py \
-	tests/test_analyzer_localize.py tests/test_analyzer_real_clips.py
+	tests/test_analyzer_localize.py tests/test_analyzer_stage_b.py \
+	tests/test_analyzer_real_clips.py
 
 .PHONY: help init up down clean logs ps health migrate revision shell psql fmt test test-worker \
 	licenses analyze-clip rankings \

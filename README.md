@@ -26,7 +26,8 @@ with `make analyze-clip` (see [Clips](#clips)).
 > **Status: steps 1–5 done — the social app is live in AWS, deployed by
 > GitHub Actions on every push to `main`. Step 6 (the real analyzer) is
 > under way: 6a and 6b (finding the tricks in a clip) are done and live in
-> prod; 6c (scoring with body pose) is next. The worker now has its own image with
+> prod. 6c (scoring with body pose) is under way: 6c-1 (pose on each trick)
+> is done locally. The worker now has its own image with
 > ffmpeg, and it verifies, transcodes and thumbnails every upload. Scoring
 > itself is still the stub until 6c.** Steps 1–3 are done and verified (local dev
 > foundation, Cognito auth/users/profiles, a clip's full path from draft
@@ -238,12 +239,21 @@ board at 15fps and finds every pop: the board *and* the feet leaving the
 ground together. It logs each pop/apex/landing (`docker compose logs
 worker` shows `stage A: N trick(s) [...]`) and uses the biggest pop's apex
 as the thumbnail. Nothing new is stored yet; the windows feed 6c's scoring.
+
+**Then it looks closely at each trick (6c-1, Stage B).** It decodes just
+that trick's window at full frame rate (60fps), runs body pose (MediaPipe)
+on every frame, and pins down the exact take-off and touch-down from the
+feet. It logs `stage B trick N: takeoff … touchdown … | pose …%, feet vis
+…, board …%`. That's advisory until scoring lands in 6c-3.
+
 To see what it saw on any local clip:
 
 ```bash
 make analyze-clip FILE=tests/fixtures/clips/kickflip_sketchy_60fps.mov   # path relative to backend/
-# prints the trick windows + timings, and writes
-# backend/tests/fixtures/clips/_debug/<clip>.debug.mp4 (boxes, elevation curves, windows)
+# prints the trick windows, Stage B per trick, and timings, and writes to
+# backend/tests/fixtures/clips/_debug/:
+#   <clip>.debug.mp4         Stage A: boxes, elevation curves, windows
+#   <clip>.trick<N>.debug.mp4  Stage B: 60fps at 1/3 speed, pose skeleton, board, take-off/touch-down
 ```
 
 `backend/tests/fixtures/clips/` is gitignored: real test clips are personal
@@ -585,7 +595,7 @@ call at this scale.
 | `make fmt` | Format and lint | `docker compose run --rm api python -m ruff format app` |
 | `make test` | Run the test suite | `docker compose run --rm api python -m pytest` |
 | `make test-worker` | Run the worker-image tests: media pipeline + analyzer (they skip under `make test`; the real-clip ones also skip without the gitignored clips) | `docker compose run --rm worker python -m pytest tests/test_media.py tests/test_analyzer_detect.py tests/test_analyzer_localize.py tests/test_analyzer_real_clips.py` |
-| `make analyze-clip FILE=...` | Run Stage A on a local clip; print the trick windows and write a debug video | `docker compose run --rm --no-deps --user "$(id -u):$(id -g)" worker python -m app.analyzer.cli <file>` |
+| `make analyze-clip FILE=...` | Run the analyzer (Stage A + B) on a local clip; print the results and write debug videos | `docker compose run --rm --no-deps --user "$(id -u):$(id -g)" worker python -m app.analyzer.cli <file>` |
 | `make licenses` | Fail if any worker-image Python dependency is AGPL | see the `licenses` target in the `Makefile` |
 | `make rankings` | Rebuild Discover rankings + team score snapshots | `docker compose run --rm api python -m app.rankings` |
 | `make tf-init` | Init Terraform against the account-specific state backend | see the flags in `scripts/terraform-bootstrap.sh`'s header |
@@ -628,6 +638,8 @@ backend/
                        detect.py: YOLOX on ONNX Runtime
                        track.py: IoU person tracker + skater pick
                        localize.py: Stage A, pops -> trick windows
+                       pose.py: MediaPipe pose over a window
+                       stage_b.py: Stage B, pose + board + take-off/touch-down
                        cli.py: `make analyze-clip` + debug video
     rankings.py        Discover rebuild — clip_rankings + team_score_history
                        (dev: `make rankings` on demand, prod: EventBridge ->
@@ -695,6 +707,7 @@ postman/               Postman collections: TrickLens (local dev) and
 | `docker compose up` fails with `error mounting ... to rootfs at "/etc/localstack/init/ready.d/init.sh": no such file or directory` | Docker Desktop (WSL2) lost the existing container's single-file bind mount, typically after Docker Desktop restarts. `docker compose up -d --force-recreate localstack`. LocalStack's state is throwaway and the init script rebuilds it. |
 | A real video comes back `unanalyzable` with "unreadable video file" / "no video stream found" / "clip too short" | Since 6a the worker ffprobes every upload. That reason is ffprobe's verdict on the file, not a scoring failure. Check the file with `ffprobe <file>`. |
 | No `INFO` lines from the worker/API in CloudWatch (only `START`/`END`/`REPORT`) | Logging not configured for Lambda. Fixed by `app/logs.py` after 6b. Every entrypoint must call `configure_logging()` at import, not only under `__main__`. |
+| `OSError: libEGL.so.1: cannot open shared object file` from MediaPipe | The worker image is missing `mesa-libEGL`/`libglvnd-gles`. MediaPipe's native library needs them even on CPU. `Dockerfile.worker` installs them, and its model check fails the build without them. |
 | `sh: line 1: blkid: command not found` / `hostname` / onnxruntime "telemetry device ID" in worker logs | Harmless noise from onnxruntime's start-up code in the minimal Lambda image. |
 | A clip never leaves `queued` | Check `docker compose logs -f worker` — it should log `polling <queue url>` on startup and one line per message it processes. |
 | Uploading to the presigned URL fails to connect / DNS error | `AWS_PUBLIC_ENDPOINT_URL` is missing from `.env` (needs `http://localhost:4566`) or the API wasn't restarted after adding it. Presigned URLs are signed against the Docker-network `localstack` hostname, which nothing outside `docker compose` can resolve — see CLAUDE.md's gotchas. |

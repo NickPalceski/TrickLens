@@ -126,7 +126,7 @@ reach a feed, and the user gets to correct the trick tag first.
 
 ---
 
-## 4. The steeze score *(step 6 — 6a and 6b live, 6c–6d planned)*
+## 4. The steeze score *(step 6 — 6a and 6b live, 6c in progress, 6d planned)*
 
 ### What it is not
 
@@ -240,6 +240,66 @@ worker's path on a local file. It prints the windows and timings and
 writes a debug video (boxes, elevation curves, windows) under
 `tests/fixtures/clips/_debug/`. That video is the real check on Stage A
 until calibration.
+
+### Stage B, as built so far (6c-1)
+
+For each Stage A window, `app/analyzer/stage_b.py` decodes **just that
+window** at the clip's native rate (60fps for phone footage), and in one
+pass:
+- runs **pose** on every frame (`pose.py`): MediaPipe's BlazePose GHUM
+  "full" model in VIDEO mode, on the full frame;
+- runs the **board** detector on every other frame from 0.2s before the
+  pop to 0.7s after the landing, with Stage A's full-frame + zoomed-crop
+  merge. That covers the air and the landing check;
+- **refines take-off and touch-down** from the lowest foot point's height
+  above its own resting level. The level before the pop is the deck; the
+  level after landing is the deck or the ground (a bail), joined by a
+  line. Take-off and touch-down are where the feet cross 0.04 skater-heights.
+
+Choices made by measuring the real clips:
+- **"full" pose model:** of lite / full / heavy, heavy cost 3× (~37ms vs
+  ~11ms per frame locally) for no visible gain, and full was more
+  confident on the feet than lite.
+- **Full frame, not a crop:** MediaPipe runs its own person detector and
+  then tracks frame to frame. Cropping around the skater changed nothing.
+- **Visual check:** skeletons drawn on the key frames land on the real
+  joints and feet, for both the small tripod skater and the follow-cam one.
+
+| Clip | Stage A pop / land | Stage B take-off / touch-down | Pose / feet / board found |
+|---|---|---|---|
+| Tripod kickflip | 1.23s / 1.57s | **1.25s / 1.65s**, matching the frames (feet reach the board ~1.62–1.65s) | 92% / 0.92 / 93% |
+| Follow-cam bail | 1.10s / 1.30s | **1.08s / 1.33s**, down without the board | 100% / 0.95 / 100% |
+
+Stage B costs ~2.3–2.6s per trick locally (decode + pose ~1.7s, board
+~0.9s), so expect **~12s per trick on Lambda**. A 30s line with five tricks
+would then be ~70s of Stage A + ~60s of Stage B, inside the 300s timeout.
+6c-1 deploys **advisory**: the worker logs `stage B trick N: takeoff …
+touchdown … | pose …%, feet vis …, board …%` and stores nothing, until 6c-3
+scores from it. `make analyze-clip` also writes a per-trick debug video
+(`<clip>.trick<N>.debug.mp4`): the window at full rate, played at 1/3
+speed, with the skeleton, feet, board and take-off/touch-down marked.
+
+### Decisions for the rest of 6c
+
+- **Landed** = for 0.1–0.6s after touch-down, both feet over the board and
+  near its top, with the board moving along. "Board near the feet" isn't
+  enough: in the bail the flipped board lies *between* the feet at 1.45s.
+- **Subscores that can't apply are left out** of the average and shown as
+  n/a: catch when the feet never left the board (an ollie), and stomp when
+  the board is seen end-on, so its length can't be measured.
+- **New failure reason "body not clearly visible"**, for when pose can't
+  follow the skater. It's more honest than reusing "no clean airtime found".
+- **An analyzer crash marks the clip `unanalyzable` ("analysis failed")**
+  and logs the traceback. A code bug fails the same way on every retry,
+  so retrying would only park the clip in the DLQ, stuck at `analyzing`.
+  Infrastructure errors (S3, database) still raise and get SQS retries.
+- **Milestones:**
+  - 6c-1: pose + refined contacts, deployed advisory to prove MediaPipe on
+    Lambda;
+  - 6c-2: landed check + confidence gate;
+  - 6c-3: measurements, `calibration.py`, averaging, migration `0009`
+    (`analyses.details`), API, stub off;
+  - then the prod check.
 
 **Subscores**, ranked by how reliably they compute from phone footage:
 
@@ -866,6 +926,26 @@ fails the build. The weights load on first use per container
 (`get_detector()` is cached), not at import, which keeps cold-start init
 cheap (see the measurements above).
 
+### MediaPipe needs libEGL, and the build proves the models load (6c)
+
+MediaPipe 1.0's native Tasks library links against `libEGL`/`libGLESv2`
+even when it only runs on the CPU, and the Lambda base image has neither.
+6a's build check only *imported* mediapipe, which loads that library
+lazily, so the first real pose call would have failed in prod with
+`OSError: libEGL.so.1`. Found during 6c planning, before anything shipped.
+
+`Dockerfile.worker` now:
+- installs `mesa-libEGL` + `libglvnd-gles` (with the image's `microdnf`,
+  which has no `-q` flag);
+- adds the pose model the same way as YOLOX (`ADD --checksum`, Apache-2.0
+  per the BlazePose GHUM model card);
+- runs `backend/scripts/check_models.py` **as uid 65534**, which opens the
+  YOLOX session *and creates a pose landmarker*.
+
+That check exercises every native library and file the worker Lambda
+touches, as the kind of user Lambda runs as, so this class of bug now fails
+the build.
+
 ### Trick classification deferred
 
 Covered in §4. Users tag their own tricks; the analyzer scores execution
@@ -1038,7 +1118,10 @@ per Lambda function, and an AWS Budget alarm at $5 (step 5, `infra/budget.tf`).
 | 6 | Replace the stub with the real steeze analyzer | **in progress** |
 | 6a | Worker image split, ffprobe verify + 720p transcode + thumbnail, `processed_key` (migration `0008`), worker S3 IAM + Lambda sizing, AGPL licence guard | **done, live** |
 | 6b | YOLOX-Tiny + zoomed board pass, IoU tracker, local ground estimate, Stage A pop localization, apex thumbnail, `make analyze-clip` debug video | **done, live** |
-| 6c | MediaPipe pose, six subscores, confidence gate, averaging landed tricks, `steeze-v0-uncalibrated` | |
+| 6c | MediaPipe pose, six subscores, confidence gate, averaging landed tricks, `steeze-v0-uncalibrated` | **in progress** |
+| 6c-1 | Stage B: windowed 60fps decode, pose, board around the trick, refined take-off/touch-down, libEGL + pose model in the image, per-trick debug video | **done (local); deploys advisory** |
+| 6c-2 | Landed check + confidence gate | |
+| 6c-3 | Measurements, calibration, averaging, migration `0009`, API, stub off | |
 | 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | |
 
 Step 3 deliberately stubs the analyzer so that a complete, deployed, working

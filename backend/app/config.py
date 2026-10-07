@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     # YOLOX-Tiny ONNX weights (6b), downloaded into the worker image by
     # Dockerfile.worker, pinned by checksum. Only read when analyzer == "real".
     yolox_model_path: str = "/var/task/models/yolox_tiny.onnx"
+    # MediaPipe pose landmarker (6c), same image, same rules.
+    pose_model_path: str = "/var/task/models/pose_landmarker_full.task"
 
     @property
     def is_dev(self) -> bool:

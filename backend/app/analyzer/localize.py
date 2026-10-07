@@ -238,7 +238,7 @@ def _feet(box: Detection) -> tuple[float, float]:
     return (box.x1 + box.x2) / 2, box.y2
 
 
-def _board_near(boards: list[Detection], skater: Detection) -> Detection | None:
+def board_near(boards: list[Detection], skater: Detection) -> Detection | None:
     fx, fy = _feet(skater)
 
     def dist(b: Detection) -> float:
@@ -249,7 +249,7 @@ def _board_near(boards: list[Detection], skater: Detection) -> Detection | None:
     return min(near, key=dist, default=None)
 
 
-def _crop(skater: Detection, width: int, height: int) -> tuple[int, int, int, int]:
+def board_crop(skater: Detection, width: int, height: int) -> tuple[int, int, int, int]:
     side = CROP_SIDE * skater.height
     fx, fy = _feet(skater)
     x1, x2 = max(0, int(fx - side / 2)), min(width, int(fx + side / 2))
@@ -280,7 +280,7 @@ def analyze(path: str, info: VideoInfo, model_path: str) -> StageAResult:
 
     tracks = track_people(people)
     near = {
-        (tr.id, i): _board_near(full_boards[i], box) is not None
+        (tr.id, i): board_near(full_boards[i], box) is not None
         for tr in tracks
         for i, box in tr.boxes.items()
     }
@@ -296,14 +296,14 @@ def analyze(path: str, info: VideoInfo, model_path: str) -> StageAResult:
         i = f.index
         if i >= n or skater[i] is None:
             continue
-        x1, y1, x2, y2 = _crop(skater[i], w, h)
+        x1, y1, x2, y2 = board_crop(skater[i], w, h)
         crop_boards = [
             d.offset(x1, y1) for d in detector.detect(f.image[y1:y2, x1:x2], classes=(SKATEBOARD,))
         ]
         merged = list(full_boards[i]) + [
             c for c in crop_boards if all(iou(c, b) <= 0.5 for b in full_boards[i])
         ]
-        board[i] = _board_near(merged, skater[i])
+        board[i] = board_near(merged, skater[i])
     timings["detect_crop"] = time.perf_counter() - t0
 
     t0 = time.perf_counter()

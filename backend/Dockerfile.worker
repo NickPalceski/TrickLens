@@ -19,6 +19,15 @@ FROM public.ecr.aws/lambda/python:3.12
 
 COPY --from=ffmpeg /ffmpeg /ffprobe /usr/local/bin/
 
+# MediaPipe's native Tasks library (6c pose) links against libEGL/libGLESv2
+# and fails to load without them (`OSError: libEGL.so.1`), even though it
+# runs on the CPU. 6a's build check only *imported* mediapipe, which loads
+# that library lazily, so it didn't catch this. The check at the end of this
+# file now creates a pose landmarker. This dnf is the image's microdnf (no
+# -q flag).
+RUN dnf install -y --setopt=install_weak_deps=0 mesa-libEGL libglvnd-gles \
+    && dnf clean all
+
 COPY requirements.txt requirements-worker.txt ${LAMBDA_TASK_ROOT}/
 # The uninstall/reinstall swaps mediapipe's non-headless OpenCV for the
 # headless build (see requirements-worker.txt). The final import line fails
@@ -47,9 +56,23 @@ RUN mkdir -p -m 755 ${LAMBDA_TASK_ROOT}/models
 ADD --checksum=sha256:427cc366d34e27ff7a03e2899b5e3671425c262ea2291f88bb942bc1cc70b0f7 --chmod=644 \
     https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx \
     ${LAMBDA_TASK_ROOT}/models/yolox_tiny.onnx
+# MediaPipe pose landmarker, "full" variant (6c): Apache-2.0 per the
+# BlazePose GHUM model card. "full" over "lite"/"heavy" because, on the real
+# clips, heavy cost 3x the time with no visible gain and full found the
+# feet more confidently than lite. Same checksum + permissions rules as
+# YOLOX above.
+ADD --checksum=sha256:5134a3aad27a58b93da0088d431f366da362b44e3ccfbe3462b3827a839011b1 --chmod=644 \
+    https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task \
+    ${LAMBDA_TASK_ROOT}/models/pose_landmarker_full.task
+
+# Exercises everything the worker Lambda will, as a non-root user: reads the
+# YOLOX weights, then actually *creates* a pose landmarker, which loads
+# MediaPipe's native library (libEGL) and parses the model. An import alone
+# isn't enough: that's how the missing libEGL slipped past 6a's check.
+COPY scripts/check_models.py /tmp/check_models.py
 RUN chmod 755 ${LAMBDA_TASK_ROOT}/models \
-    && python -c "import os; os.setgroups([]); os.setgid(65534); os.setuid(65534); \
-open('${LAMBDA_TASK_ROOT}/models/yolox_tiny.onnx', 'rb').read(4); print('model readable as non-root')"
+    && python /tmp/check_models.py ${LAMBDA_TASK_ROOT}/models \
+    && rm /tmp/check_models.py
 
 # This image is the one that has ffmpeg, so it's the one that opts into
 # real media processing. The API image leaves the default, "stub" (see

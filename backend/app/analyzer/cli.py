@@ -1,11 +1,17 @@
-"""Run the analyzer on a local clip and see what it saw (step 6b).
+"""Run the analyzer on a local clip and see what it saw (steps 6b-6c).
 
     make analyze-clip FILE=tests/fixtures/clips/kickflip_sketchy_60fps.mov
 
 Same path as the worker: probe + transcode the file exactly as media.py
-does, then Stage A on the transcode. It prints the trick windows and
-timings, and writes a debug video next to the input (under `_debug/`).
-The debug video has:
+does, then Stage A on the transcode, then Stage B on each trick. It prints
+the results and timings, and writes debug videos next to the input (under
+`_debug/`).
+
+`<clip>.trick<N>.debug.mp4` (Stage B, 6c), one per trick: the window at full
+frame rate, played at 1/3 speed, with the pose skeleton (feet in magenta),
+the board box where it was sampled, and take-off/touch-down marked.
+
+`<clip>.debug.mp4` (Stage A) has:
 - the skater's box (green), the board (orange), other people (grey);
 - the elevation curves along the bottom: feet (blue), board (orange), and
   the airborne signal both must agree on (white), against the pop
@@ -26,7 +32,8 @@ import tempfile
 import cv2
 import numpy as np
 
-from app.analyzer import localize, media
+from app.analyzer import localize, media, stage_b
+from app.analyzer import pose as P
 from app.analyzer.frames import iter_frames
 from app.config import get_settings
 
@@ -115,6 +122,66 @@ def write_debug_video(
         raise RuntimeError("debug video encode failed")
 
 
+_SKELETON = [
+    (11, 12), (11, 13), (13, 15), (12, 14), (14, 16), (11, 23), (12, 24), (23, 24),
+    (23, 25), (25, 27), (24, 26), (26, 28), (27, 29), (29, 31), (27, 31), (28, 30),
+    (30, 32), (28, 32),
+]  # fmt: skip
+_MAGENTA = (255, 0, 255)
+_TRICK_SLOWDOWN = 3
+
+
+def write_trick_video(
+    processed: str, info: media.VideoInfo, obs: stage_b.TrickObservation, out: str
+) -> None:
+    w, h = info.width, info.height
+    enc = subprocess.Popen(
+        ["ffmpeg", "-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "bgr24",
+         "-s", f"{w}x{h}", "-r", str(obs.fps / _TRICK_SLOWDOWN), "-i", "-",
+         "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", out],
+        stdin=subprocess.PIPE,
+    )  # fmt: skip
+    assert enc.stdin is not None
+    frames = iter_frames(processed, w, h, obs.fps, obs.window.start_ms, obs.window.end_ms)
+    for row, f in enumerate(frames):
+        if row >= len(obs.pose.t_ms):
+            break
+        img = f.image.copy()
+        b = obs.board.get(row)
+        if b is not None:
+            _box(img, b, _ORANGE, "board")
+        if obs.pose.found[row]:
+            pts = [(int(x), int(y)) for x, y, _ in obs.pose.image[row]]
+            for a, c in _SKELETON:
+                cv2.line(img, pts[a], pts[c], _GREEN, 2)
+            for i in P.FEET:
+                cv2.circle(img, pts[i], 4, _MAGENTA, -1)
+        label = f"t={f.t_ms / 1000:.3f}s"
+        if obs.takeoff_ms is not None and abs(f.t_ms - obs.takeoff_ms) < 1:
+            label += "  TAKEOFF"
+        elif obs.touchdown_ms is not None and abs(f.t_ms - obs.touchdown_ms) < 1:
+            label += "  TOUCHDOWN"
+        elif (
+            obs.takeoff_ms is not None
+            and obs.touchdown_ms is not None
+            and obs.takeoff_ms < f.t_ms < obs.touchdown_ms
+        ):
+            label += "  in air"
+        e = obs.feet_elev[row]
+        if not np.isnan(e):
+            label += f"  feet {e:+.2f}"
+        cv2.rectangle(img, (0, 0), (w, 28), (0, 0, 0), -1)
+        cv2.putText(img, label, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        enc.stdin.write(img.tobytes())
+    enc.stdin.close()
+    if enc.wait() != 0:
+        raise RuntimeError("trick debug video encode failed")
+
+
+def _r(v: float | None) -> int | None:
+    return None if v is None else round(v)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -128,7 +195,14 @@ def main(argv: list[str] | None = None) -> int:
         info = media.probe(args.file)
         media.transcode(args.file, processed, info)
         pinfo = media.probe(processed)
-        r = localize.analyze(processed, pinfo, get_settings().yolox_model_path)
+        settings = get_settings()
+        r = localize.analyze(processed, pinfo, settings.yolox_model_path)
+        observations = [
+            stage_b.observe(
+                processed, pinfo, r, w, settings.yolox_model_path, settings.pose_model_path
+            )
+            for w in r.windows
+        ]
 
         print(json.dumps({
             "file": args.file,
@@ -144,6 +218,15 @@ def main(argv: list[str] | None = None) -> int:
                 for w in r.windows
             ],
             "timings_s": {k: round(v, 2) for k, v in r.timings_s.items()},
+            "stage_b": [
+                {"takeoff_ms": _r(o.takeoff_ms), "touchdown_ms": _r(o.touchdown_ms),
+                 "pose_found": round(o.pose.found_frac, 2),
+                 "feet_visibility": round(o.pose.feet_visibility(), 2),
+                 "board_found": round(o.board_found_frac, 2),
+                 "skater_h_px": round(o.skater_h),
+                 "timings_s": {k: round(v, 2) for k, v in o.timings_s.items()}}
+                for o in observations
+            ],
         }, indent=2))  # fmt: skip
 
         if not args.no_video:
@@ -155,6 +238,10 @@ def main(argv: list[str] | None = None) -> int:
             # Relative to backend/ (the container's /var/task), which is how
             # the file is reached on the host.
             print(f"debug video: backend/{os.path.relpath(out)}")
+            for n, obs in enumerate(observations, 1):
+                out = os.path.join(out_dir, f"{stem}.trick{n}.debug.mp4")
+                write_trick_video(processed, pinfo, obs, out)
+                print(f"trick {n} debug video: backend/{os.path.relpath(out)}")
     return 0
 
 

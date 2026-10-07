@@ -91,7 +91,7 @@ async def _process_media(clip: Clip) -> str | None:
     Imported lazily: app.analyzer is worker-image-only code, and this module
     is also imported by the API image's test suite.
     """
-    from app.analyzer import localize, media
+    from app.analyzer import localize, media, stage_b
 
     storage = get_storage()
     ext = os.path.splitext(clip.s3_key)[1]
@@ -134,6 +134,35 @@ async def _process_media(clip: Clip) -> str | None:
                 # The poster frame is the highest moment of the biggest pop.
                 best = max(stage_a.windows, key=lambda w: w.peak_elevation)
                 thumb_at_ms = int(best.apex_ms)
+            # Stage B (6c-1): pose + board at native fps per trick. Same
+            # advisory rules as Stage A until 6c-3 starts scoring from it.
+            settings = get_settings()
+            for n, window in enumerate(stage_a.windows, 1):
+                try:
+                    obs = await asyncio.to_thread(
+                        stage_b.observe,
+                        processed,
+                        processed_info,
+                        stage_a,
+                        window,
+                        settings.yolox_model_path,
+                        settings.pose_model_path,
+                    )
+                except Exception:
+                    log.exception("worker: clip %s stage B trick %d failed", clip.id, n)
+                    continue
+                log.info(
+                    "worker: clip %s stage B trick %d: takeoff %s touchdown %s | pose %.0f%%, "
+                    "feet vis %.2f, board %.0f%% | %s",
+                    clip.id,
+                    n,
+                    None if obs.takeoff_ms is None else round(obs.takeoff_ms),
+                    None if obs.touchdown_ms is None else round(obs.touchdown_ms),
+                    100 * obs.pose.found_frac,
+                    obs.pose.feet_visibility(),
+                    100 * obs.board_found_frac,
+                    {k: round(v, 2) for k, v in obs.timings_s.items()},
+                )
         await asyncio.to_thread(media.thumbnail, processed, thumb, thumb_at_ms)
 
         processed_key = f"{PREFIX_PROCESSED}/{clip.id}.mp4"

@@ -209,6 +209,17 @@ can live anywhere.
   failure. 6a's own failures are only "unreadable video file", "no video
   stream found" and "clip too short". The prod-check collection's step 8
   now tells them apart.
+- **MediaPipe needs `libEGL` even on CPU, and an import doesn't load it.**
+  `import mediapipe` passed 6a's build check, but creating a
+  `PoseLandmarker` loads MediaPipe's native library, which links
+  `libEGL.so.1`. The Lambda base image has none, so the first real pose
+  call would have died with `OSError: libEGL.so.1`. Found in 6c planning,
+  before anything shipped. Fixed with `dnf install mesa-libEGL
+  libglvnd-gles` plus `backend/scripts/check_models.py`, which *creates* a
+  landmarker as uid 65534 at build time. A build check must exercise
+  native code paths, not just imports. Also: the image's `dnf` is microdnf,
+  which rejects `-q`, and the failure got silently swallowed when its
+  output went to `/dev/null`.
 - **`ADD --chmod` also chmods the directories it creates.**
   `Dockerfile.worker`'s first version did `ADD --chmod=644 <url>
   /var/task/models/yolox_tiny.onnx`, which left `models/` as `drw-r--r--`.
@@ -303,7 +314,8 @@ can live anywhere.
 (Terraform + GitHub Actions) is live in AWS. Step 6a (worker image + ffmpeg
 media pipeline) is done and live, verified in prod with two real clips.
 Step 6b (Stage A: finding the tricks) is done and live, verified in prod.
-6c is next.**
+6c is in progress: 6c-1 (Stage B: pose + refined contacts) is done and
+verified locally, deploying advisory to prove MediaPipe on Lambda.**
 Running locally:
 
 ```bash
@@ -545,6 +557,31 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   Regenerate the GIF from `make analyze-clip` output if the debug view
   changes.
 
+- **Step 6c-1 (Stage B)** done and verified locally:
+  - `make test-worker` 44/44 (7 new synthetic Stage B tests, including a
+    windowed-vs-full decode equality check, plus 2 real-clip tests);
+  - API image 53;
+  - ruff and licences clean.
+
+  Real clips:
+  - kickflip: take-off 1.25s / touch-down 1.65s (Stage A's 15fps landing
+    was 80ms early), pose 92%, feet visibility 0.92, board 93%;
+  - bail: 1.08s / 1.33s, pose 100%.
+
+  Both clips went through the live worker container with Stage B logged.
+  ~2.5s per trick locally, so ~12s on Lambda (an estimate, to confirm in
+  the advisory deploy).
+
+  What 6c-1 added:
+  - `app/analyzer/{pose,stage_b}.py`;
+  - `iter_frames(start_ms, end_ms)`;
+  - `pose_model_path` setting;
+  - per-trick debug video in `analyze-clip`;
+  - `backend/scripts/check_models.py` (a build check: models load as
+    uid 65534);
+  - `mesa-libEGL` + `libglvnd-gles` in the worker image;
+  - `board_near`/`board_crop` made public in localize.
+
 **Not done yet:** no frontend code in this repo (a visual prototype exists as
 a separate Artifact canvas, outside the repo — now covers auth/profile/
 upload/clip-status *and* the 4c team flows above, added in the same session).
@@ -573,8 +610,15 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
      - a follow-cam bail.
 
      A multi-trick line is still wanted.
-   - 6c ⬜ MediaPipe pose, six subscores, confidence gate, averaging landed
-     tricks, `steeze-v0-uncalibrated`, raw per-trick measurements stored
+   - 6c 🔶 MediaPipe pose, six subscores, confidence gate, averaging landed
+     tricks, `steeze-v0-uncalibrated`, raw per-trick measurements stored.
+     Milestones:
+     - 6c-1 ✅ Stage B: 60fps windowed decode, pose ("full" model), board
+       around the trick, refined take-off/touch-down, libEGL + pose model in
+       the image, per-trick debug video *(verified locally; deploy advisory)*
+     - 6c-2 ⬜ landed check + confidence gate
+     - 6c-3 ⬜ measurements, `calibration.py`, averaging, migration `0009`
+       (`analyses.details`), API `tricks`, stub off
    - 6d ⬜ calibration once the user has hand-judged clips → `steeze-v1`
 
 Steps are sequential. Do not start a step before the previous one's
@@ -605,6 +649,13 @@ acceptance criteria pass.
   `make licenses` enforces it in CI.
 - **Multi-trick clips score the average of their *landed* tricks.** Bails
   are excluded, not zeroed.
+- **Subscores that can't apply are omitted and averaged without** (catch
+  for an ollie, stomp when the board is seen end-on), shown as n/a.
+- **"body not clearly visible"** is a new failure reason, for when pose
+  can't follow the skater.
+- **An analyzer crash marks the clip `unanalyzable` ("analysis failed")**,
+  logged, instead of retrying into the DLQ. Infrastructure errors still
+  retry.
 - **Calibration after the pipeline.** 6c ships guessed constants in one
   module as `steeze-v0-uncalibrated` and stores raw per-trick
   measurements, so 6d can recalculate scores without re-running video.
