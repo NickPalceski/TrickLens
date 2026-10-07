@@ -7,7 +7,7 @@ the same libGL problem Dockerfile.worker already works around for
 mediapipe. ByteTrack's strengths (recovering low-score detections, many
 objects crossing in a crowd) also aren't what this needs: one skater,
 followed at ~15fps, usually alone or with a few bystanders. See
-docs/ARCHITECTURE.md §10.
+docs/components/analyzer.md.
 
 Boards aren't tracked at all. localize.py picks, per frame, the board
 nearest the skater's feet.

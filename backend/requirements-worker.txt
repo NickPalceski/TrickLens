@@ -7,7 +7,7 @@
 # MIT or BSD), and CI's licence check (`make licenses`) fails the build if a
 # transitive dependency ever changes that. That's also why the detector is
 # YOLOX on ONNX Runtime rather than Ultralytics YOLOv8 (AGPL-3.0). See
-# docs/ARCHITECTURE.md §4.
+# docs/ARCHITECTURE.md (Decisions).
 #
 # Installed in 6a to prove the image builds and imports cleanly on Lambda.
 # 6b uses onnxruntime, OpenCV, NumPy and SciPy; mediapipe waits for 6c.
@@ -15,7 +15,7 @@
 # No tracker library: supervision's ByteTrack was the plan, but it's
 # deprecated (removed in supervision 0.31), and its successor `trackers`
 # needs the non-headless OpenCV again. app/analyzer/track.py is a small
-# IoU tracker instead. See docs/ARCHITECTURE.md §10.
+# IoU tracker instead. See docs/components/analyzer.md.
 
 onnxruntime==1.30.*        # runs the YOLOX ONNX model (6b), MIT
 mediapipe==1.0.*           # pose landmarks (6c), Apache-2.0

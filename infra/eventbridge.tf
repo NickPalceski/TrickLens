@@ -1,4 +1,4 @@
-# Discover is a precomputed snapshot (docs/ARCHITECTURE.md §7) — this is
+# Discover is a precomputed snapshot (docs/components/api.md, Feed and Discover) — this is
 # what rebuilds it in production, replacing `make rankings` run on demand.
 resource "aws_cloudwatch_event_rule" "rankings_schedule" {
   name                = "tricklens-rankings-schedule"

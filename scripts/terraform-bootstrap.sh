@@ -8,7 +8,7 @@
 # can't safely manage the store it's sitting in. See infra/backend.tf.
 #
 # Prereqs: an AWS account with `aws configure` already pointing at it (the
-# same one Cognito's dev pool lives in — see README's Auth setup).
+# same one Cognito's dev pool lives in — see docs/development.md, Auth setup).
 #
 # Usage: ./scripts/terraform-bootstrap.sh
 # Then: terraform -chdir=infra init \
@@ -71,7 +71,7 @@ id suffix), so this never needs to be shared between machines by hand — run
 this script once per machine before that machine's first 'make tf-init'.
 
 Next: 'make tf-init' (or see the -backend-config flags in this script's
-header) to point Terraform at this backend, then read README's Deployment
+header) to point Terraform at this backend, then read docs/deployment.md's
 section for the rest of the first-ever-deploy sequence.
 
 EOF

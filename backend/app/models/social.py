@@ -14,7 +14,7 @@ from app.models.user import User
 class Follow(Base, UUIDPrimaryKey):
     """One follow edge. The target is polymorphic — a user or a team — but
     modelled as two nullable FKs plus a check constraint, not an untyped
-    (type, id) pair (see docs/ARCHITECTURE.md §6). Postgres then enforces
+    (type, id) pair (see docs/components/data-model.md). Postgres then enforces
     referential integrity and cascade-deletes on both, which a bare
     `followee_id` never could.
     """

@@ -1,7 +1,7 @@
 """Home feed — published clips from everyone (and every team) you follow,
 newest first.
 
-Fan-out-on-read (docs/ARCHITECTURE.md §7): a live query against `clips`,
+Fan-out-on-read (docs/components/api.md, Feed and Discover): a live query against `clips`,
 keyset-paginated. Cheap enough at this scale that precomputed per-user
 timelines aren't worth their write amplification.
 """
@@ -53,7 +53,7 @@ async def home_feed(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "malformed cursor") from exc
 
     if keyset is not None:
-        # The (published_at, id) < (?, ?) keyset from ARCHITECTURE §7, spelled
+        # The (published_at, id) < (?, ?) keyset from docs/components/api.md, spelled
         # out as an OR rather than a row-value comparison — same result, and
         # each side is `column < scalar` so the bind-param types are never in
         # doubt (asyncpg is strict about that).

@@ -1,6 +1,6 @@
 """Discover (4d): a materialized weekly top-clips snapshot, and each team's
 score history. Both are written only by app/rankings.py's rebuild job, never
-by request-handling code — see docs/ARCHITECTURE.md §7 for why Discover is
+by request-handling code — see docs/components/api.md for why Discover is
 precomputed rather than ranked live.
 """
 

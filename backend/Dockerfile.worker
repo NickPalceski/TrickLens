@@ -4,7 +4,7 @@
 # The analysis worker's image (step 6a). Same Lambda base image as the API's
 # Dockerfile, with ffmpeg and the CV stack on top. That makes it several times the
 # API image's size, which is why it's a separate image in a separate ECR
-# repo. See docs/ARCHITECTURE.md §10.
+# repo. See docs/components/analyzer.md (Worker).
 #
 # Same dev/prod rule as the API image: Compose runs exactly this image,
 # overriding only the entrypoint (poll loop instead of the Lambda runtime).

@@ -6,7 +6,7 @@ Step 4c. `teams` isn't visible/joinable/followable until `founded_at` is set
 and `team_join_requests` both use composite primary keys, no surrogate id,
 same reasoning as `likes`. Also adds the two columns `clips`/`follows` were
 left with placeholders for: `clips.team_id` (+ `score_included`, a new 4c
-decision — see docs/ARCHITECTURE.md §6) and the deferred FK on
+decision — see docs/components/data-model.md) and the deferred FK on
 `follows.followee_team_id` (added back in 0004).
 
 Revision ID: 0006

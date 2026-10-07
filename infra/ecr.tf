@@ -9,7 +9,7 @@ resource "aws_ecr_repository" "main" {
 
 # Keeps the repo small — every deploy pushes a new SHA tag, and a hobby
 # project has no reason to keep more than a handful around for rollback
-# (see docs/ARCHITECTURE.md's Rollout decision: rollback is
+# (see docs/components/infrastructure.md's rollback decision: rollback is
 # `terraform apply -var image_tag=<previous_sha>`, which only works for
 # SHAs this policy hasn't expired yet).
 resource "aws_ecr_lifecycle_policy" "main" {
@@ -35,8 +35,8 @@ resource "aws_ecr_lifecycle_policy" "main" {
 # plus ffmpeg and the CV stack. A separate repo, not a second tag prefix in
 # `main`, so each keeps its own last-5 history. Two images per deploy in one
 # repo would halve how far back `-var image_tag=<sha>` can roll back.
-# Created by hand once, before the first deploy that pushes to it (README's
-# Deployment section): CI pushes images *before* `terraform apply` runs.
+# Created by hand once, before the first deploy that pushes to it (docs/
+# deployment.md): CI pushes images *before* `terraform apply` runs.
 resource "aws_ecr_repository" "worker" {
   name                 = var.ecr_worker_repo_name
   image_tag_mutability = "MUTABLE" # same reasoning as `main`

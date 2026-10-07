@@ -17,7 +17,7 @@ from app.models.enums import ClipStatus
 
 # Team score = average of the team's top 10 clips, not all of them —
 # otherwise the biggest roster always wins and a score could never fall
-# (docs/ARCHITECTURE.md §6/§10). A user's own average has no analogous
+# (docs/components/data-model.md). A user's own average has no analogous
 # fairness problem, so it stays uncapped.
 TEAM_SCORE_TOP_N = 10
 

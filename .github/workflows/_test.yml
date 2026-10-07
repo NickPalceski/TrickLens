@@ -3,8 +3,8 @@ name: _test
 # Reusable job, called by both ci.yml and deploy.yml so it's defined once.
 # Deliberately reuses the exact same tooling a developer runs locally
 # (make init / make test / ruff) rather than reimplementing the dependency
-# stack as GitHub Actions `services:` containers — see docs/ARCHITECTURE.md's
-# Decisions. tests/test_clips.py runs against real Postgres AND real
+# stack as GitHub Actions `services:` containers — see docs/components/
+# infrastructure.md. tests/test_clips.py runs against real Postgres AND real
 # LocalStack S3 (not mocks), so both have to come up, exactly as `make up`
 # does locally.
 
@@ -38,7 +38,7 @@ jobs:
 
       # TrickLens is going closed-source: an AGPL dependency (e.g. anything
       # from `pip install ultralytics`) must never land in the worker image.
-      # See docs/ARCHITECTURE.md §4.
+      # See docs/ARCHITECTURE.md (Decisions).
       - name: licence check (no AGPL in the worker image)
         run: make licenses
 

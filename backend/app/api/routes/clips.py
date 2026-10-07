@@ -1,7 +1,7 @@
 """Clip upload -> analyze -> tag -> publish endpoints.
 
 Cognito owns identity (see routes/users.py); this module owns the clip
-lifecycle described in docs/ARCHITECTURE.md §3. The browser uploads straight
+lifecycle described in docs/ARCHITECTURE.md (Key flows). The browser uploads straight
 to S3 — the API only ever hands out presigned URLs and moves the row through
 ClipStatus. The worker (app/worker.py) does the actual analyzing.
 """

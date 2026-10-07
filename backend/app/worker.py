@@ -173,7 +173,7 @@ async def _process_media(clip: Clip) -> str | None:
     clip.processed_key = processed_key
     clip.thumb_key = thumb_key
     # Server-verified now, overwriting what the browser reported in
-    # POST /clips (see docs/ARCHITECTURE.md §3).
+    # POST /clips (see docs/components/analyzer.md, Media).
     clip.duration_ms = info.duration_ms
     clip.source_fps = round(info.fps)
     return None

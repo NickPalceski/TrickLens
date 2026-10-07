@@ -1,6 +1,6 @@
 """Keyset-pagination cursor codec, shared by every `(timestamp, id)`-ordered
 listing — the home feed (routes/feed.py) and comment listings
-(routes/clips.py) both page this way. See docs/ARCHITECTURE.md §7 for why
+(routes/clips.py) both page this way. See docs/components/api.md for why
 keyset rather than OFFSET.
 """
 

@@ -103,8 +103,8 @@ class ClipScoreInclusionUpdate(BaseModel):
 
 class TagTricksRequest(BaseModel):
     """Body for POST /clips/{id}/tricks. Plain names for now — get-or-create
-    against `tricks`, no fuzzy/alias matching yet (see docs/ARCHITECTURE.md
-    §5's design notes)."""
+    against `tricks`, no fuzzy/alias matching yet (see docs/components/
+    data-model.md's design notes)."""
 
     tricks: list[str] = Field(min_length=1, max_length=5)
 

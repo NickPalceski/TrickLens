@@ -18,8 +18,8 @@ locals {
     COGNITO_CLIENT_ID      = aws_cognito_user_pool_client.web.id
     DATABASE_URL_SSM_PARAM = aws_ssm_parameter.database_url.name
     # AWS_ENDPOINT_URL / AWS_PUBLIC_ENDPOINT_URL / AWS_ACCESS_KEY_ID /
-    # AWS_SECRET_ACCESS_KEY are deliberately absent — see docs/ARCHITECTURE.md
-    # §9 and app/config.py's Settings defaults.
+    # AWS_SECRET_ACCESS_KEY are deliberately absent — see docs/components/services.md
+    # and app/config.py's Settings defaults.
   }
 }
 

@@ -13,7 +13,7 @@ jobs:
     # fork's pull_request run gets no repo secrets by default, which is the
     # correct behavior here: no plan role ARN, no DATABASE_URL, so there's
     # nothing this job could safely do anyway. See infra/iam.tf's
-    # tricklens-gha-plan role and docs/ARCHITECTURE.md's Decisions.
+    # tricklens-gha-plan role and docs/components/infrastructure.md.
     if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
     needs: test
     runs-on: ubuntu-latest

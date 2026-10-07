@@ -6,7 +6,7 @@
 # only runs when a person runs it on purpose.
 #
 # Prereqs: an AWS account, an IAM user with Cognito permissions, and
-# `aws configure` already pointing the CLI at it. See README's setup section.
+# `aws configure` already pointing the CLI at it. See docs/development.md, Auth setup.
 #
 # Usage: ./scripts/cognito-bootstrap.sh
 # Then paste the printed IDs into .env.

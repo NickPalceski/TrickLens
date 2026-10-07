@@ -26,7 +26,7 @@ from app.models.user import User
 TEAM_MAX_MEMBERS = 20
 
 # A team isn't founded until the owner plus at least this many invited
-# co-founders have all accepted (docs/ARCHITECTURE.md §6). The creator can
+# co-founders have all accepted (docs/components/data-model.md). The creator can
 # invite more than this up front if they want; this is only the floor.
 TEAM_MIN_FOUNDING_INVITES = 2
 

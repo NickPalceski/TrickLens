@@ -3,7 +3,7 @@ teams whose score is climbing fastest.
 
 Both read from what app/rankings.py last wrote — `make rankings` locally,
 an EventBridge-triggered Lambda in production (step 5) — never compute a
-ranking live. See docs/ARCHITECTURE.md §7 for why.
+ranking live. See docs/components/api.md for why.
 """
 
 from datetime import UTC, datetime

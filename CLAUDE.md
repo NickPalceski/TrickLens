@@ -10,13 +10,30 @@ supplied by the user**, not predicted — see Decisions below.
 
 ### Documentation (always)
 
-After **any** change to code, database schema, or infrastructure, update both:
+After **any** change to code, database schema, or infrastructure, update
+the docs that cover what changed, as part of the same change:
 
-- `README.md` — setup, how to run, current state of the build
-- `docs/ARCHITECTURE.md` — component overview, data flow, and the *why*
-  behind decisions
+- **The component doc** in `docs/components/` for the part you touched
+  (`api.md`, `analyzer.md`, `data-model.md`, `services.md`,
+  `infrastructure.md`), **including its Mermaid diagram** if the change
+  alters the structure it shows (a new module, table, route group,
+  resource, or flow step).
+- **`docs/ARCHITECTURE.md`** when the change is cross-cutting: the overview
+  diagram, a key flow (upload → publish, clip lifecycle, auth), the
+  environments table, a cross-cutting decision, cost, or the build order.
+- **`docs/development.md` / `docs/deployment.md`** when setup, commands,
+  tests, walkthroughs, deploy steps or troubleshooting change.
+- **`README.md`** only for what it holds: what the app is, the status
+  line, the stack, and the quick-start/deploy pointers. Keep it short;
+  depth belongs in `docs/`.
 
-Treat these as part of the change, not as follow-up work. A change that
+Diagrams are Mermaid in the Markdown (GitHub renders them). Check new or
+changed diagrams render (e.g. with the `minlag/mermaid-cli` Docker image)
+and that relative links/anchors still resolve. Code comments point at docs
+by file and heading (`docs/components/api.md, Feed and Discover`), never by
+section number, so restructuring a doc doesn't silently break them.
+
+Treat this as part of the change, not as follow-up work. A change that
 alters behaviour but leaves the docs stale is incomplete.
 
 ### Conventions
@@ -33,13 +50,13 @@ alters behaviour but leaves the docs stale is incomplete.
   SSM Parameter Store in production, and has to read `os.environ` directly
   (not via `get_settings()`) because it runs *before* `Settings()` can be
   constructed — see its docstring and `app/config.py`'s. See
-  ARCHITECTURE.md §10.
+  docs/components/services.md.
 - **Prod migrations must be backward-compatible within a single deploy**
   (step 5, `.github/workflows/deploy.yml`): `alembic upgrade head` runs
   before the new Lambda image goes live, so the still-live *old* code briefly
   runs against the *new* schema — never the other way around. New columns
   must be nullable-first (or have a server default); never drop or rename a
-  column the still-deploying old code reads. See ARCHITECTURE.md §12.
+  column the still-deploying old code reads. See docs/components/infrastructure.md.
 - **Serialization**: never return ORM objects from a route. Always go
   through a Pydantic schema in `app/schemas/`.
 - **Media**: store S3 *keys* in the database, never full URLs. URLs are
@@ -68,7 +85,7 @@ key. Postgres/LocalStack state is throwaway container state either way;
   `scripts/localstack-init.sh` needs.
 - Docker Desktop with the WSL2 backend, integration enabled for Ubuntu.
 - `make` may not be installed (`sudo apt install make`). Every target is a
-  thin wrapper; raw `docker compose` equivalents are in the README.
+  thin wrapper; raw `docker compose` equivalents are in `docs/development.md`.
 
 ### Native Linux (Omarchy / Arch)
 
@@ -340,7 +357,7 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 - LocalStack self-provisions the `tricklens-media` bucket (CORS + 7-day
   `raw/` lifecycle rule) and the `tricklens-analysis` queue with a DLQ.
 - A real Cognito dev pool (`scripts/cognito-bootstrap.sh`) backs auth — see
-  README's Auth setup. JWT verification, JIT registration (`POST /users`),
+  `docs/development.md` (Auth setup). JWT verification, JIT registration (`POST /users`),
   and `/users/me`, `/users/me/profile`, `/users/{username}` are live and
   verified end-to-end (sign-up → confirm → login → register → read).
 - `/clips` endpoints (create → complete → worker → tag → publish) and
@@ -421,7 +438,7 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   team — `make rankings` runs it on demand locally; nothing schedules it
   automatically until step 5's EventBridge rule exists.
   `GET /discover/clips?sort=score|engagement` reads the snapshot
-  (offset-paginated, not keyset — see docs/ARCHITECTURE.md §7 for why that's
+  (offset-paginated, not keyset — see docs/components/api.md for why that's
   fine here); `sort=score` filters to `score_included`, `sort=engagement`
   doesn't (`view_count*1 + like_count*5 + comment_count*10`, tunable
   constants in `app/rankings.py`). `GET /discover/teams` stays a live query
@@ -438,7 +455,7 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 - **Step 5 (Terraform + GitHub Actions) is live in AWS and verified.** The
   one-time bootstrap is done: prod Neon DB, Terraform state bucket/lock
   table, GitHub OIDC provider and roles, and the two-phase first apply (see
-  README's Deployment section). A push to `main` then ran the full
+  `docs/deployment.md`). A push to `main` then ran the full
   `deploy.yml` pipeline green end to end: test, build/push image, migrate,
   `terraform apply`, and the `/health/deep` smoke test against the real API
   Gateway URL, with all checks green and the postgres check reporting
@@ -487,7 +504,7 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   - `app/analyzer/media.py`: probe, transcode, thumbnail;
   - worker changes: it claims a clip with one atomic `UPDATE` plus a 360s
     lease (`ANALYZING_LEASE`), so duplicate deliveries can't double-process
-    and a crashed run's clip gets reclaimed (ARCHITECTURE.md §10);
+    and a crashed run's clip gets reclaimed (docs/components/analyzer.md, Worker);
     `test_clips.py` captures its enqueue instead of sending it (see the
     gotcha below);
   - `thumb_url` on `ClipOut`;
@@ -502,7 +519,7 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   ffprobe-corrected duration/fps, CDN `processed/` and `thumbs/` URLs, and
   upright playback with sound. Worker `REPORT`: ~1.7s init on a cold start,
   6.5s for the 2.7s clip, ~400MB used. The first run of a newly deployed
-  image hits the 10s init timeout once (see ARCHITECTURE.md §10). Local dev
+  image hits the 10s init timeout once (see docs/components/analyzer.md, Worker). Local dev
   test users don't exist in prod (separate Cognito pool and Neon DB), so a
   prod user was signed up via the collection.
 
@@ -528,7 +545,7 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   - `make analyze-clip FILE=...` with a debug video;
   - `supervision` dropped.
 
-  Design changes from the plan, all in ARCHITECTURE.md §4/§10:
+  Design changes from the plan, all in docs/components/analyzer.md:
   - zoomed board pass around the feet;
   - board *centre* + feet, min of the two;
   - local rolling ground instead of camera-motion cancelling;
@@ -586,6 +603,23 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   - `mesa-libEGL` + `libglvnd-gles` in the worker image;
   - `board_near`/`board_crop` made public in localize.
 
+- **Docs restructured (2026-10-07).** The README is trimmed to what the
+  app is, the sneak peek, a small "how it works" diagram, status, stack and
+  quick-start/deploy pointers. Depth moved into `docs/`:
+  - `ARCHITECTURE.md`: the whole-system overview diagram, the key flows
+    (upload → publish sequence, clip lifecycle state diagram, auth
+    sequence), environments, cross-cutting decisions, cost, build order;
+  - `components/{api,analyzer,data-model,services,infrastructure}.md`:
+    each with its own internal diagram(s) and that component's decisions;
+  - `development.md`: local setup, commands, tests, every walkthrough,
+    local troubleshooting;
+  - `deployment.md`: deploys, the prod check, CloudWatch, the one-time
+    bootstrap, prod troubleshooting.
+
+  15 Mermaid diagrams, all rendered and checked; every relative link and
+  anchor verified. Code comments now cite docs by file and heading instead
+  of `§` numbers. The documentation rule above was updated to match.
+
 **Not done yet:** no frontend code in this repo (a visual prototype exists as
 a separate Artifact canvas, outside the repo — now covers auth/profile/
 upload/clip-status *and* the 4c team flows above, added in the same session).
@@ -628,7 +662,7 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
 Steps are sequential. Do not start a step before the previous one's
 acceptance criteria pass.
 
-## Decisions (short form — full reasoning in docs/ARCHITECTURE.md)
+## Decisions (short form — full reasoning in docs/ARCHITECTURE.md and the component docs)
 
 - **Neon, not RDS.** Reaching RDS from Lambda requires a VPC, which costs a
   NAT gateway (~$32/mo) to restore S3/SQS access. Neon is reachable over

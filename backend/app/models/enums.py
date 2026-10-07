@@ -22,8 +22,8 @@ class SkateStyle(StrEnum):
 
 class TeamLevel(StrEnum):
     """A team's self-declared skateboarding level, set by its owner at
-    creation and editable afterward in team settings (docs/ARCHITECTURE.md
-    §6). Purely descriptive — nothing enforces a member's own skill matches
+    creation and editable afterward in team settings (docs/components/
+    data-model.md). Purely descriptive — nothing enforces a member's own skill matches
     it."""
 
     BEGINNER = "beginner"
@@ -61,7 +61,7 @@ class TeamRole(StrEnum):
 
 class JoinRequestKind(StrEnum):
     """Which direction a pending `TeamJoinRequest` row runs, since one table
-    serves both (docs/ARCHITECTURE.md §6):
+    serves both (docs/components/data-model.md):
 
     REQUEST: the user asked to join; an owner/admin must accept it.
     INVITE: an owner/admin (or, during team founding, the creator) asked the

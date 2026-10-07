@@ -2,7 +2,7 @@
 
 YOLOX (Megvii, Apache-2.0) is trained on COCO, which already has `person`
 and `skateboard` classes, so it's used as-is with no training. Not
-Ultralytics YOLOv8: that's AGPL-3.0 (docs/ARCHITECTURE.md §10).
+Ultralytics YOLOv8: that's AGPL-3.0 (docs/ARCHITECTURE.md, Decisions).
 
 The pre/post-processing here is what the Ultralytics package would
 otherwise do for us. It matches YOLOX's own ONNX demo for the 0.1.1rc0
@@ -87,7 +87,7 @@ class Detector:
 def get_detector(model_path: str) -> Detector:
     """One ONNX Runtime session per model, per Lambda container. Built on
     first use, not at import, so cold-start init stays cheap
-    (docs/ARCHITECTURE.md §10)."""
+    (docs/components/analyzer.md, Worker)."""
     return Detector(model_path)
 
 

@@ -4,7 +4,7 @@ Nothing outside this module reads os.environ, with one narrow exception:
 app.services.secrets.resolve_database_url() (step 5) reads
 DATABASE_URL_SSM_PARAM and writes DATABASE_URL into os.environ, because in
 production DATABASE_URL lives in SSM Parameter Store as a SecureString, not
-a plain Lambda env var (see docs/ARCHITECTURE.md's Decisions) — it has to
+a plain Lambda env var (see docs/components/services.md) — it has to
 run *before* Settings() below can be constructed at all, so it can't go
 through Settings the normal way. Everywhere else, this module is still the
 only thing that reads an env var.

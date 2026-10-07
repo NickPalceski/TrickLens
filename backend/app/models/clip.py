@@ -1,7 +1,7 @@
 """Clip, analysis, and trick models.
 
 A clip moves through ClipStatus (see enums.py) from draft to published.
-Trick identity is never predicted — see docs/ARCHITECTURE.md §4 — so
+Trick identity is never predicted — see docs/components/analyzer.md — so
 clip_tricks is always user-supplied, never analyzer output.
 """
 
@@ -113,7 +113,7 @@ class Analysis(Base, UUIDPrimaryKey):
     confidence: Mapped[Decimal] = mapped_column(Numeric(3, 2), nullable=False)
 
     # Null exactly when the confidence gate rejected the clip — see the
-    # "fail safe" decision in docs/ARCHITECTURE.md §4: a specific reason,
+    # "fail safe" decision in docs/components/analyzer.md: a specific reason,
     # never a guess.
     steeze_breakdown: Mapped[dict | None] = mapped_column(JSONB)
     failure_reason: Mapped[str | None] = mapped_column(Text)
@@ -127,7 +127,7 @@ class Analysis(Base, UUIDPrimaryKey):
 
 class Trick(Base, UUIDPrimaryKey):
     """A canonical trick name. Always user-supplied — trick identity is
-    never predicted, only scored (docs/ARCHITECTURE.md §4)."""
+    never predicted, only scored (docs/components/analyzer.md)."""
 
     __tablename__ = "tricks"
 

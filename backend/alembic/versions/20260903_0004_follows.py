@@ -1,7 +1,7 @@
 """follows
 
 Step 4a. Polymorphic follow target as two nullable FKs + a check constraint
-(see docs/ARCHITECTURE.md §6). followee_team_id's FK to `teams` is deferred
+(see docs/components/data-model.md). followee_team_id's FK to `teams` is deferred
 to 0006 (4c) — that table doesn't exist yet.
 
 Revision ID: 0004

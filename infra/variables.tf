@@ -36,7 +36,7 @@ variable "image_tag" {
     the worker image (`ecr_worker_repo_name`, step 6a) for the worker. CI
     pushes both under the same SHA. Defaults to "bootstrap" only so the very first
     `terraform apply -target=aws_ecr_repository.main` (before any real image
-    has ever been pushed, see README's Deployment section) doesn't require
+    has ever been pushed, see docs/deployment.md) doesn't require
     -var — every real deploy passes this explicitly.
   EOT
   type        = string
@@ -46,7 +46,7 @@ variable "image_tag" {
 # --- Secrets (never written to a committed .tfvars) --------------------------
 
 variable "database_url" {
-  description = "asyncpg-flavored Neon connection string. Stored in SSM, not a plain Lambda env var — see docs/ARCHITECTURE.md's Decisions."
+  description = "asyncpg-flavored Neon connection string. Stored in SSM, not a plain Lambda env var — see docs/components/services.md."
   type        = string
   sensitive   = true
 }

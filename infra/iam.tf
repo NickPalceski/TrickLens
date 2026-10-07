@@ -1,11 +1,10 @@
 # =============================================================================
 # Lambda execution roles — one per function, least privilege matching only
 # what each actually calls today (confirmed against app/services/storage.py,
-# queue.py, auth.py). See docs/ARCHITECTURE.md's Decisions for why the
-# worker role has no S3 permissions yet: the stub worker never touches S3,
-# and step 6 must add s3:GetObject/PutObject when the real analyzer starts
-# reading raw/ and writing processed/thumbs/ — permissions aren't
-# front-loaded for code that doesn't exist yet.
+# queue.py, auth.py, and the worker's media step). The worker role's S3
+# access arrived with 6a, scoped per prefix: read raw/, write processed/ and
+# thumbs/ — permissions aren't front-loaded for code that doesn't exist yet.
+# See docs/components/infrastructure.md.
 # =============================================================================
 
 data "aws_iam_policy_document" "lambda_assume" {
@@ -128,7 +127,7 @@ resource "aws_iam_role_policy" "rankings_lambda" {
 # =============================================================================
 # GitHub Actions OIDC — no static AWS keys stored in GitHub. Two roles:
 # a broad deploy role (main branch only) and a narrow read-only plan role
-# (PRs, including forks). See docs/ARCHITECTURE.md's Decisions for why the
+# (PRs, including forks). See docs/components/infrastructure.md for why the
 # deploy role's breadth is accepted rather than avoided: Terraform apply IS
 # the thing creating/mutating this infra, and the actual safety net is the
 # $5 AWS Budget alarm (budget.tf), not IAM scoping.

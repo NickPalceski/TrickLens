@@ -1,20 +1,30 @@
 # TrickLens — Architecture
 
-Conceptual overview of the system: what each component is, what it does, and
-how it connects to the others. Kept current as the build progresses.
+How the whole system fits together. Start with the overview diagram, then
+open a component's own doc for its internals:
 
-**Current state: step 5 done — the social app is live in AWS. 4a (follows + home feed), 4b
-(likes + comments), 4c (teams), and 4d (Discover) all built and verified.
-Step 5 (Terraform + GitHub Actions) is live in AWS, deployed by the
-`deploy.yml` pipeline on push to `main`.** Sections marked *(planned)* are
-designed but not yet built.
+| Component | Doc |
+|---|---|
+| API (FastAPI): routes, auth, feed, Discover, engagement | [components/api.md](components/api.md) |
+| Worker + analyzer: media, Stage A, Stage B, scoring | [components/analyzer.md](components/analyzer.md) |
+| Data model: tables, relations, migrations | [components/data-model.md](components/data-model.md) |
+| Services: the AWS seam, config, logging | [components/services.md](components/services.md) |
+| Infrastructure + CI/CD: AWS resources, Terraform, pipelines | [components/infrastructure.md](components/infrastructure.md) |
+
+Setup and day-to-day commands are in the
+[development guide](development.md); deploying is in the
+[deployment guide](deployment.md).
+
+**Current state:** steps 1–5 are done and live in AWS. Step 6 (the real
+analyzer) is in progress: 6a and 6b are live, 6c-1 is built. See the
+[build order](#build-order).
 
 ---
 
-## 1. What the system does
+## What the system does
 
 1. A skater uploads a clip (≤30s).
-2. The clip is analyzed asynchronously for **execution quality** — not trick
+2. The clip is analyzed asynchronously for **execution quality**, not trick
    identity.
 3. The skater **tags the trick themselves**, reviews the score, and publishes.
 4. Published clips appear in followers' feeds and compete on Discover.
@@ -22,73 +32,88 @@ designed but not yet built.
 
 ---
 
-## 2. Component map
+## Overview
 
+```mermaid
+flowchart LR
+    client(["Client<br/>web app (planned) · Postman · curl"])
+    cognito["Cognito<br/>sign up · log in"]
+
+    subgraph aws ["AWS"]
+        api["API<br/>FastAPI on Lambda<br/>behind API Gateway"]
+        s3[("S3<br/>raw/ · processed/ · thumbs/")]
+        cdn["CloudFront"]
+        sqs[["SQS<br/>analysis queue + DLQ"]]
+        worker["Worker + analyzer<br/>Lambda (own image)<br/>ffmpeg · YOLOX · MediaPipe"]
+        rank["Rankings<br/>Lambda, every 30 min"]
+    end
+
+    db[("Postgres<br/>Neon in prod")]
+    gha["GitHub Actions<br/>test → build → migrate →<br/>terraform apply → smoke test"]
+
+    client -- "id token" --> cognito
+    client -- "HTTPS + bearer token" --> api
+    client -- "upload (presigned PUT)" --> s3
+    client -- "watch" --> cdn --> s3
+    api -- "verify token (JWKS)" --> cognito
+    api -- "presign" --> s3
+    api -- "enqueue clip" --> sqs --> worker
+    worker -- "read raw, write processed + thumb" --> s3
+    api --> db
+    worker -- "analysis, status" --> db
+    rank -- "Discover snapshots" --> db
+    gha -. "deploys" .-> aws
+    gha -. "migrates" .-> db
 ```
-                    ┌──────────────────┐
-                    │  Next.js (Vercel)│
-                    └────────┬─────────┘
-                             │ HTTPS
-                             ▼
-   ┌─────────────────────────────────────────────┐
-   │  API — FastAPI on Lambda (container image)   │
-   └──┬──────────────┬──────────────┬─────────────┘
-      │              │              │
-      │ presign      │ enqueue      │ SQL
-      ▼              ▼              ▼
-   ┌──────┐      ┌───────┐    ┌──────────┐
-   │  S3  │      │  SQS  │    │ Postgres │
-   └──┬───┘      └───┬───┘    └────▲─────┘
-      │              │ triggers    │
-      │              ▼             │
-      │      ┌───────────────┐     │
-      └─────►│  ML Worker    ├─────┘
-    read/    │  (Lambda,     │  writes analysis
-    write    │   fat image)  │
-             └───────────────┘
-      │
-      ▼
- ┌────────────┐
- │ CloudFront │──► video delivery
- └────────────┘
 
- EventBridge ──(every 15 min)──► Rankings Lambda ──► Postgres
-```
-
-### What each piece is for
-
-| Component | Role | Why it is here |
-|---|---|---|
-| **Next.js** | UI | Deploys free on Vercel; shadcn/ui gives a good-looking baseline without deep frontend work |
-| **API Lambda** | HTTP, auth, CRUD, presigning | Scales to zero — no idle cost |
-| **Worker Lambda** | Video analysis | Its own image (ffmpeg + CV stack, ~2.5× the API image) and separate scaling from the API, since step 6a (see §10) |
-| **Postgres** | All relational state | The domain is deeply relational: follows, teams, likes, comments |
-| **S3** | Video and image bytes | Never in the database — the DB stores keys only |
-| **CloudFront** | Media delivery | Speed, *and* the 1TB/mo always-free egress tier. Without it, bandwidth would be the largest bill |
-| **SQS** | Upload → analysis buffer | Structural: analysis takes 30–90s, API Gateway caps at 29s |
-| **Cognito** | Identity | Never store passwords; email verification and reset come free |
-| **EventBridge** | Scheduler | Rebuilds Discover rankings and snapshots team scores |
-| **Terraform** | Infrastructure as code | Reproducible, reviewable, and the emergency "stop all billing" button |
+| Component | Role | Why it is here | Details |
+|---|---|---|---|
+| **API Lambda** | HTTP, auth, CRUD, presigning | Scales to zero, so no idle cost | [api.md](components/api.md) |
+| **Worker Lambda** | Verifies, transcodes and analyzes each clip | Its own image (ffmpeg + CV stack, ~2.7× the API image) and its own scaling | [analyzer.md](components/analyzer.md) |
+| **Rankings Lambda** | Rebuilds Discover's snapshots on a schedule | Ranking live on every page load would sort the whole clips table | [api.md](components/api.md#feed-and-discover) |
+| **Postgres** | All relational state | The domain is deeply relational: follows, teams, likes, comments | [data-model.md](components/data-model.md) |
+| **S3** | Video and image bytes | Never in the database; the database stores keys only | [services.md](components/services.md) |
+| **CloudFront** | Media delivery | Speed, *and* the 1TB/mo always-free egress tier. Without it, bandwidth would be the largest bill | [infrastructure.md](components/infrastructure.md) |
+| **SQS** | Upload → analysis buffer | Structural: analysis takes far longer than API Gateway's 29s cap | [services.md](components/services.md) |
+| **Cognito** | Identity | Never store passwords; email verification and reset come free | [Auth flow](#auth-flow) |
+| **EventBridge** | Scheduler | Triggers the rankings rebuild | [infrastructure.md](components/infrastructure.md) |
+| **Terraform + GitHub Actions** | Infrastructure as code, CI/CD | Reproducible, reviewable, and the emergency "stop all billing" button | [infrastructure.md](components/infrastructure.md) |
+| **Web app** | UI | *Not built yet.* Planned: Next.js on Vercel. A visual prototype exists outside the repo | — |
 
 ---
 
-## 3. The upload → publish flow
+## Key flows
 
-```
-1. POST /clips                → row created (status=draft), presigned S3 URL returned
-2. PUT <presigned url>        → browser uploads DIRECTLY to S3 under raw/
-3. POST /clips/{id}/complete  → API verifies the object exists, status=queued,
-                                message onto SQS
-4. SQS triggers worker        → status=analyzing
-                                (6a, live) ffprobe verify → ffmpeg 720p
-                                transcode → processed/ + thumbs/
-                                (stub, until 6c) fabricates a scored breakdown
-                                (6b/6c) localize tricks → score
-                                status=analyzed (or unanalyzable + reason)
-5. GET /clips/{id}            → client polls until terminal status
-6. POST /clips/{id}/tricks    → user tags trick(s), reviews score
-7. POST /clips/{id}/publish   → requires ≥1 tagged trick, status=published
-                                (does not yet "enter feeds" — that's step 4)
+### Upload → publish
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as Skater (client)
+    participant API
+    participant S3
+    participant SQS
+    participant W as Worker
+    participant DB as Postgres
+
+    U->>API: POST /clips {content_type, duration, fps}
+    API->>DB: insert clip (draft)
+    API-->>U: clip + presigned upload URL
+    U->>S3: PUT video to raw/ (direct, not via the API)
+    U->>API: POST /clips/{id}/complete
+    API->>S3: head: did the upload land?
+    API->>DB: status = queued (commit first)
+    API->>SQS: enqueue {clip_id}
+    SQS->>W: deliver message
+    W->>DB: claim: status = analyzing
+    W->>S3: download raw/, upload processed/ + thumbs/
+    W->>DB: analyses row, status = analyzed (or unanalyzable + reason)
+    loop until terminal status
+        U->>API: GET /clips/{id}
+    end
+    U->>API: POST /clips/{id}/tricks (tag)
+    U->>API: POST /clips/{id}/publish
+    API->>DB: status = published
 ```
 
 **Why the browser uploads directly to S3:** routing a 30s video through the
@@ -98,286 +123,49 @@ relay. The API issues a short-lived signed URL and steps out of the way.
 **Why a clip stays a draft until published:** a failed analysis must never
 reach a feed, and the user gets to correct the trick tag first.
 
-**Two step-3 scoping calls, both resolved in 6a:**
+What the worker does in step 10–12 is in the
+[analyzer doc](components/analyzer.md#what-the-worker-does-with-one-clip).
 
-- **`duration_ms`/`source_fps` were client-reported only.** The browser
-  still sends them in `POST /clips` (so a draft has *something* to show),
-  but the worker now overwrites both with ffprobe's values before anything
-  downstream reads them.
-- **Clips used to play from the raw upload.** That was a real bug in
-  production: `raw/` expires after 7 days, so every published clip's video
-  died a week after upload. The worker now writes a 720p transcode to
-  `processed/` (never expired) and a poster frame to `thumbs/`, and
-  `video_url`/`thumb_url` are CDN URLs for those. Only a clip with no
-  transcode yet (queued, analyzing, stub-analyzed, or from before 6a) still
-  gets a presigned raw URL. Pre-6a published clips were not backfilled, and
-  their raw objects may already be gone.
+### Clip lifecycle
 
-**What 6a's media step does, exactly** (`app/analyzer/media.py`):
-
-| Decision | Why |
-|---|---|
-| Short side scaled to 720, never upscaled | 720p is enough for phone playback and for 6b/6c's detectors. Short side rather than height, so portrait clips aren't squashed to 405 wide |
-| Phone rotation applied (ffmpeg auto-rotate), output has no rotation metadata | Phones store portrait video as landscape pixels plus a rotation flag. Baking the rotation in means every consumer (players, 6b's detector) sees upright frames |
-| Constant frame rate at the source rate, capped at 60 | Phone footage is usually variable-frame-rate. 6b/6c turn frame indices into milliseconds, which needs evenly spaced frames. The cap keeps 120/240fps slow-mo files a sane size; `source_fps` still records the real rate |
-| Capped at 30s | Clips are 30s max; this enforces it on the actual file, not just the client's claim |
-| Unreadable file / no video stream / under 0.5s → `unanalyzable` with that reason | Same fail-safe rule as the scorer: the user gets a specific reason, never a guess |
-| Poster frame at the apex of the biggest pop (6b), else the middle of the clip | The most representative frame of a skate clip is the trick in the air |
-
----
-
-## 4. The steeze score *(step 6 — 6a and 6b live, 6c in progress, 6d planned)*
-
-### What it is not
-
-The system does **not** identify tricks. Trick classification from video is a
-research-grade problem — there is no large public labeled dataset, and the
-published work is mostly IMU/accelerometer-based, which does not transfer to
-phone footage. It was cut deliberately.
-
-### What it is
-
-An **explainable heuristic** over pretrained models. No training data, no
-GPUs, fully deterministic.
-
-**Pipeline:**
-
-1. **ffmpeg** *(6a, done)*: verify, normalize to 720p at a constant frame
-   rate, cap at 30s. See §3.
-2. **Detect and track** *(6b, done)*: YOLOX-Tiny on ONNX Runtime finds
-   people and skateboards. It's COCO-trained, which already has both
-   classes, so no training is needed. Not Ultralytics YOLOv8, for licensing
-   reasons (§10). A small IoU tracker (`app/analyzer/track.py`) follows each
-   person, and the **skater** is the big, frequently-present person with a
-   board at their feet, which beats a bystander nearer the camera.
-3. **Localize — Stage A** *(6b, done)*: at 15fps over the whole clip, find
-   the **pops**, then cut a ~1.2s window around each. Details below.
-4. **Score — Stage B** *(6c)*: only inside those windows, at native fps,
-   using MediaPipe pose.
-
-> Two-stage localization is what makes 30s clips affordable: full-cost
-> processing runs on roughly 5% of frames, and multi-trick lines come free.
-
-### Stage A, as built (6b)
-
-Two decode passes over the processed 720p clip, at `SAMPLE_FPS = 15`:
-
-1. **Full frame:** people and boards in every sample, then track people and
-   pick the skater.
-2. **Zoomed board pass:** crop a square of 1.4 skater-heights around the
-   skater's feet and detect boards in it, merging with the full-frame boards
-   (IoU dedupe). On the tripod kickflip, where the skater is ~13% of the
-   frame height, full-frame-only found the board in 30/59 frames, and full
-   frame + crop found it in 56/59, including mid-flip with the board
-   upside-down. That matches YOLOX-S at about a quarter of the cost
-   (~23ms/frame for both passes vs ~90ms). The full-frame pass still
-   matters: when the board shoots away in a bail, only it sees the board.
-
-Then, per sample, three numbers: the skater's **feet** (bottom of their
-box, i.e. the lowest foot), the **board's centre**, and the skater's
-**height**. From those (`app/analyzer/localize.py`):
-
-- **Ground is estimated locally**: a rolling 80th percentile of each
-  signal's own y over 1.5s (image y grows downward, so high y is the
-  ground). The plan was to cancel camera motion instead, but measuring the
-  follow-cam bail showed that motion estimated from background features
-  (distant trees) made the ground drift *worse*: 40px over 1.4s, against
-  23px uncorrected. The background isn't the surface the skater rolls on,
-  and the skater also moves toward the camera. The local estimate absorbs
-  slow camera drift and approach/recede without modelling the camera.
-- **Elevation = (ground − y) ÷ standing height**, so it's in skater heights
-  and camera-distance invariant. Standing height is a rolling median, not
-  per frame, because the box grows mid-trick (arms up: 194 → 242px).
-- **Airborne = min(feet elevation, board elevation).** On the ground the
-  board box jitters by ~0.1 of the skater's height, as much as a small pop,
-  while the feet are steadier. Requiring both means noise in one can't fake
-  a pop, a carried board can't (feet down), and a hop off the board can't
-  (board down). Where the board is missed for a few samples (edge-on
-  mid-flip), the feet stand in, but each pop still needs the board itself
-  to rise ≥ 0.06 somewhere.
-- **The board's centre, not its bottom edge.** On a low pop the tail stays
-  near the ground while the nose lifts: the bail's board bottom rose for one
-  sample, while its centre rose a steady ~0.12 over four.
-- **Pops** are peaks of the airborne signal ≥ `MIN_POP = 0.08`, with
-  pop/landing where it crosses 30% of the peak, 130–1500ms of airtime, and
-  ≥ 0.6s apart. Each becomes a window of [pop − 0.4s, max(pop + 0.8s,
-  landing + 0.4s)].
-
-**On the real clips**, also checked by eye in the debug video:
-
-| Clip | Pop | Apex | Landing | Peak | Notes |
-|---|---|---|---|---|---|
-| Tripod kickflip | 1.23s | 1.47s | 1.57s | 0.32 | board caught mid-flip |
-| Follow-cam bail | 1.10s | 1.13s | 1.30s | 0.093 | lands *without* the board at 1.33s, which is the evidence 6c's landed check will use |
-
-Both run in about 0.45s of detection per second of clip locally (4.7s clip:
-2.1s). **In prod** (worker Lambda, 3008MB ≈ 1.7 vCPU), the kickflip found
-the identical window `(1233, 1467, 1567)`, with the same coverage and
-skater size, but detection took **10.7s** (5.86s full frame + 4.84s
-zoomed pass), about 5× local, or **~2.3s per second of clip**. A 30s clip
-therefore costs ~70s of Stage A. That fits the 300s timeout, but it's the
-budget 6c's pose work has to share. Whole job: 31.6s, 568MB, 8.2s init.
-That was the first run after a deploy, so a warm run may be somewhat
-faster. If 6c needs headroom, the cheapest levers are `SAMPLE_FPS` 15 → 10
-and skipping the zoomed pass when the skater is already large in frame. The worker uses the biggest pop's apex as the clip's thumbnail.
-Until 6c, Stage A is **advisory**: its windows are only logged, nothing new
-is stored, and a Stage A failure is logged without failing the clip.
-
-**Known limits, for 6c/6d:**
-- **The bail's peak (0.093) is just over `MIN_POP` (0.08).** A lower pop
-  would be missed. The threshold can't safely drop without clips that show
-  what false alarms look like.
-- **Terrain changes aren't modelled.** The rolling ground adopts any level
-  held longer than ~0.75s. An ollie up onto a ledge or manual pad registers
-  as one pop (reasonable), but on a drop or stair set the pop is found
-  while the landing time and peak aren't trustworthy, because the skater
-  lands lower than they took off. `MAX_AIRTIME_MS` is only a backstop.
-- **A shaky handheld clip** may need real camera-shake cancelling. Neither
-  test clip has it.
-
-`make analyze-clip FILE=tests/fixtures/clips/<clip>` runs exactly the
-worker's path on a local file. It prints the windows and timings and
-writes a debug video (boxes, elevation curves, windows) under
-`tests/fixtures/clips/_debug/`. That video is the real check on Stage A
-until calibration.
-
-### Stage B, as built so far (6c-1)
-
-For each Stage A window, `app/analyzer/stage_b.py` decodes **just that
-window** at the clip's native rate (60fps for phone footage), and in one
-pass:
-- runs **pose** on every frame (`pose.py`): MediaPipe's BlazePose GHUM
-  "full" model in VIDEO mode, on the full frame;
-- runs the **board** detector on every other frame from 0.2s before the
-  pop to 0.7s after the landing, with Stage A's full-frame + zoomed-crop
-  merge. That covers the air and the landing check;
-- **refines take-off and touch-down** from the lowest foot point's height
-  above its own resting level. The level before the pop is the deck; the
-  level after landing is the deck or the ground (a bail), joined by a
-  line. Take-off and touch-down are where the feet cross 0.04 skater-heights.
-
-Choices made by measuring the real clips:
-- **"full" pose model:** of lite / full / heavy, heavy cost 3× (~37ms vs
-  ~11ms per frame locally) for no visible gain, and full was more
-  confident on the feet than lite.
-- **Full frame, not a crop:** MediaPipe runs its own person detector and
-  then tracks frame to frame. Cropping around the skater changed nothing.
-- **Visual check:** skeletons drawn on the key frames land on the real
-  joints and feet, for both the small tripod skater and the follow-cam one.
-
-| Clip | Stage A pop / land | Stage B take-off / touch-down | Pose / feet / board found |
-|---|---|---|---|
-| Tripod kickflip | 1.23s / 1.57s | **1.25s / 1.65s**, matching the frames (feet reach the board ~1.62–1.65s) | 92% / 0.92 / 93% |
-| Follow-cam bail | 1.10s / 1.30s | **1.08s / 1.33s**, down without the board | 100% / 0.95 / 100% |
-
-Stage B costs ~2.3–2.6s per trick locally (decode + pose ~1.7s, board
-~0.9s), so expect **~12s per trick on Lambda**. A 30s line with five tricks
-would then be ~70s of Stage A + ~60s of Stage B, inside the 300s timeout.
-6c-1 deploys **advisory**: the worker logs `stage B trick N: takeoff …
-touchdown … | pose …%, feet vis …, board …%` and stores nothing, until 6c-3
-scores from it. `make analyze-clip` also writes a per-trick debug video
-(`<clip>.trick<N>.debug.mp4`): the window at full rate, played at 1/3
-speed, with the skeleton, feet, board and take-off/touch-down marked.
-
-### Decisions for the rest of 6c
-
-- **Landed** = for 0.1–0.6s after touch-down, both feet over the board and
-  near its top, with the board moving along. "Board near the feet" isn't
-  enough: in the bail the flipped board lies *between* the feet at 1.45s.
-- **Subscores that can't apply are left out** of the average and shown as
-  n/a: catch when the feet never left the board (an ollie), and stomp when
-  the board is seen end-on, so its length can't be measured.
-- **New failure reason "body not clearly visible"**, for when pose can't
-  follow the skater. It's more honest than reusing "no clean airtime found".
-- **An analyzer crash marks the clip `unanalyzable` ("analysis failed")**
-  and logs the traceback. A code bug fails the same way on every retry,
-  so retrying would only park the clip in the DLQ, stuck at `analyzing`.
-  Infrastructure errors (S3, database) still raise and get SQS retries.
-- **Milestones:**
-  - 6c-1: pose + refined contacts, deployed advisory to prove MediaPipe on
-    Lambda;
-  - 6c-2: landed check + confidence gate;
-  - 6c-3: measurements, `calibration.py`, averaging, migration `0009`
-    (`analyses.details`), API, stub off;
-  - then the prod check.
-
-**Subscores**, ranked by how reliably they compute from phone footage:
-
-| Subscore | Signal | Robustness |
-|---|---|---|
-| Pop | Board apex height, normalized by skater pixel-height | High |
-| Landing stability | Knee/hip oscillation, torso recovery time post-impact | High |
-| Roll-away | Horizontal velocity maintained, no foot down | High |
-| Stomp | Feet over bolts at impact vs. tail/nose | Medium |
-| Compactness | Limb extension vs. torso during air (flail penalty) | Medium |
-| Catch | Airtime between feet-off and feet-back-on | Medium |
-
-Normalizing by skater pixel-height is what makes scores camera-distance
-invariant.
-
-**Scoring a clip with several tricks** *(decided, built in 6c)*: each
-subscore is averaged across the clip's **landed** tricks, and
-`steeze_score` is the mean of those averages. Bails are excluded, not
-averaged in as zeros, so one bail in a line doesn't sink the clip, but a
-weak landed trick does pull it down. Per-trick detail is stored alongside
-the breakdown for the UI.
-
-**Calibration comes after the pipeline** *(decided)*. No public dataset
-rates execution quality, so turning a raw measurement (pop height ÷ skater
-height, airtime in ms, ...) into a 0–100 subscore needs constants tuned
-against real, hand-judged clips. Those clips don't exist yet. So:
-- 6c ships with reasonable guesses, all in one module (`calibration.py`),
-  and stamps its analyses `model_version = "steeze-v0-uncalibrated"`.
-- It stores each trick's **raw measurements**, not just the resulting
-  scores.
-- 6d tunes the constants once the clips exist, bumps the version, and
-  recalculates existing analyses from those stored measurements. That
-  needs no video re-run, and works even for clips whose raw upload has
-  expired.
-
-**The breakdown is always shown.** A bare number reads as a bug; a visible
-breakdown reads as an opinion the user can argue with.
-
-### The confidence gate
-
-Low confidence returns `unanalyzable` with a **specific** reason, never a
-guess: *skater too far from camera*, *trick left the frame*, *too dark*, *no
-clean airtime found*, *no landed trick detected*. 6a added the file-level
-reasons that come before any scoring: *unreadable video file*, *no video
-stream found*, *clip too short*.
-
-Bails are handled by scoring only landed tricks. A clip with zero landed
-tricks is rejected — rather than rejecting any clip that *contains* a bail,
-which would false-positive on scuffed-but-landed tricks with no user recourse.
-
-### Known limits
-
-- Steeze has no ground truth, and different tricks are not really on one
-  scale — a tre flip has more ways to go wrong than an ollie. Because tricks
-  are user-tagged, a later version can normalize within trick type.
-- Board flips complete in ~100ms. At 30fps that is ~3 frames. Clips should be
-  shot at **60fps**; source fps is stored and confidence is reduced for 30fps
-  footage.
-
-### The flywheel
-
-Every published clip carries a human-supplied trick label from the person who
-did the trick. Stored alongside the analysis, these accumulate into exactly
-the labeled dataset a future classifier would need. Trick recognition is
-deferred, not abandoned.
-
----
-
-## 5. Auth flow
-
+```mermaid
+stateDiagram-v2
+    [*] --> draft: POST /clips
+    draft --> queued: POST /complete (upload verified)
+    queued --> analyzing: worker claims it
+    analyzing --> analyzing: lease expired, reclaimed on redelivery
+    analyzing --> analyzed: scored
+    analyzing --> unanalyzable: bad file or failed gate (specific reason)
+    analyzed --> analyzed: tag tricks / team / score inclusion
+    analyzed --> published: POST /publish (≥1 trick tagged)
+    published --> published: like, comment, view, score inclusion
+    unanalyzable --> [*]
 ```
-1. Client → Cognito directly: SignUp, ConfirmSignUp (email verification),
-   InitiateAuth (USER_PASSWORD_AUTH)     → IdToken, AccessToken, RefreshToken
-2. POST /users  Authorization: Bearer <IdToken>  {username}
-                                        → verifies token, no row yet for this
-                                          sub → creates it → 201 UserMe
-3. Every later request: Authorization: Bearer <IdToken>
-                                        → verifies token, row exists → 200
+
+`draft`, `queued`, `analyzing` and `unanalyzable` clips are visible only to
+their owner (anyone else gets a 404). Team tagging is only allowed while
+`analyzed`, and locks at publish. Whether the score counts toward averages
+(`score_included`) stays editable forever.
+
+### Auth flow
+
+```mermaid
+sequenceDiagram
+    actor U as Client
+    participant C as Cognito
+    participant API
+    participant DB as Postgres
+
+    U->>C: SignUp, ConfirmSignUp (email code)
+    U->>C: InitiateAuth (USER_PASSWORD_AUTH)
+    C-->>U: IdToken, AccessToken, RefreshToken
+    U->>API: POST /users {username}<br/>Authorization: Bearer IdToken
+    API->>C: fetch JWKS (public, cached)
+    API->>API: verify signature, issuer, audience, token_use = id
+    API->>DB: no row for this sub → create user
+    API-->>U: 201 UserMe
+    U->>API: any later request + Bearer IdToken
+    API->>DB: load user by cognito_sub
 ```
 
 **Why the client talks to Cognito directly, not through this API.** The app
@@ -403,316 +191,45 @@ id-token-for-client.
 
 ---
 
-## 6. Data model
-
-**Built (steps 1–4d):**
-
-```
-users     id, cognito_sub (not null, unique), username, display_name, bio,
-          avatar_key, timestamps
-profiles  user_id → users, stance, style, board, board_size, wheels,
-          wheel_size, trucks, bearings
-clips     id, user_id, status, s3_key, processed_key?, thumb_key?, duration_ms?, source_fps?,
-          steeze_score?, published_at?, team_id?, score_included, timestamps
-          (team_id, score_included: 4c — see below; processed_key: 6a —
-          the transcode, see §3)
-analyses  id, clip_id, model_version, confidence,
-          steeze_breakdown jsonb?, failure_reason?, created_at
-tricks    id, canonical_name (unique), aliases[]
-clip_tricks  clip_id, trick_id, position   (pk: clip_id+position; source: user_tagged)
-follows   id, follower_id → users,
-          followee_user_id → users?, followee_team_id → teams?,   (4a; FK completed in 4c)
-          CHECK exactly one followee set
-likes     user_id → users, clip_id → clips   (pk: user_id+clip_id; 4b)
-comments  id, clip_id → clips, user_id → users, body,
-          parent_id → comments?, created_at   (4b; one level of replies — see below)
-teams              id, name, slug (unique), description, level, join_policy,
-                   owner_id → users, founded_at?, timestamps   (4c — see below)
-team_members       team_id, user_id, role, joined_at   (pk: team_id+user_id; 4c)
-team_join_requests team_id, user_id, kind, created_at  (pk: team_id+user_id; 4c)
-clip_views         id, clip_id, user_id?, viewed_at   (4d — see below)
-clip_rankings      clip_id, steeze_score?, score_included, like_count,
-                   comment_count, view_count, engagement_score, captured_at
-                   (pk: clip_id; 4d — materialized, rebuilt by app/rankings.py)
-team_score_history id, team_id, score?, captured_at   (4d — append-only)
-```
-
-### Design notes
-
-- **UUID primary keys** — IDs appear in public URLs; sequential integers leak
-  counts and allow enumeration.
-- **`profiles` is a separate table** — every field is optional and rarely
-  read, and `users` is joined on nearly every query.
-- **`avatar_key`, not `avatar_url`** — storing URLs breaks every row the day
-  a CDN is introduced.
-- **`email` is never stored in `users`** — Cognito is the system of record
-  for identity attributes. The API reads it off the verified id token per
-  request instead of duplicating it and risking drift.
-- **`cognito_sub` is non-nullable as of step 2.** Step 1 left it nullable on
-  purpose, before auth existed to populate it; every row now comes through
-  JIT registration with a sub already in hand.
-- **`clips.team_id` (4c)** is nullable and `ON DELETE SET NULL`, unlike
-  `user_id`'s `CASCADE` — a team disbanding should detach the credit from a
-  clip, not delete the clip. It's set via `PATCH /clips/{id}/team`, which
-  only accepts a team the caller is currently a member of, and only while
-  `status == ANALYZED` — a one-time, pre-publish decision, locked after
-  that (a team tag is credit for a specific roster at a point in time, not
-  something that makes sense to reassign later).
-- **`tricks.canonical_name` is a plain unique column, not a functional
-  `lower()` index like `users.username`.** The API pre-normalizes it before
-  insert, and — unlike a username — there's no display casing worth
-  preserving for a trick name.
-- **`clip_tricks`' primary key is `(clip_id, position)`, not `(clip_id,
-  trick_id)`.** Position is what actually needs to be unique per clip (one
-  trick per slot in a line); a trick could in principle repeat.
-- **`follows` targets a user *or* a team, as two nullable FKs + a check
-  constraint** — not the untyped `(followee_type, followee_id)` pair earlier
-  drafts of this doc sketched. The home feed pulls clips from followed users
-  *and* teams, so the target genuinely is polymorphic; two real FK columns
-  keep Postgres enforcing referential integrity and cascade-deletes on both
-  sides, which a bare `followee_id` couldn't. The column and check landed in
-  4a's migration before `teams` existed; 4c's migration adds the deferred FK
-  constraint now that it does.
-- **`likes` has no surrogate id** — `(user_id, clip_id)` is the primary key
-  directly, same reasoning as `clip_tricks`: a like has no identity beyond
-  "this user liked this clip", so a separate UUID plus a unique constraint
-  would just be a redundant second index.
-- **`comments.parent_id` threads exactly one level deep** — a reply's
-  `parent_id` must reference a top-level comment, never another reply. That
-  rule is a cross-row condition (the referenced row's own `parent_id` must
-  be null), which a plain `CHECK` constraint can't express without a
-  trigger; this codebase has no procedural DB logic anywhere else (the
-  closest precedent is `app/models/enums.py` pushing enum-value mapping into
-  Python rather than the database), so it's enforced in `routes/clips.py`
-  instead. `parent_id`'s `ondelete="CASCADE"` means deleting a top-level
-  comment deletes its replies too.
-- **A team isn't "real" until `founded_at` is set** — null from creation
-  until every founding invite is accepted, same idiom as `Clip.published_at`
-  marking a not-yet-live row rather than a separate status enum. `POST
-  /teams` requires at least 2 founding invitees (a floor, not a cap) in
-  addition to the owner; while `founded_at IS NULL` the team is invisible to
-  everyone but the owner and those invitees (same 404-not-403 rule as clip
-  drafts), and can't be joined, followed, or tagged onto a clip. Accepting
-  the last outstanding founding invite stamps `founded_at`; rejecting *any*
-  founding invite — or the owner cancelling, which is the same
-  `DELETE /teams/{slug}` call whether the team is pending or live — deletes
-  the whole `Team` row via `ON DELETE CASCADE`, undoing the attempt entirely
-  rather than leaving a partially-formed team behind. The name/slug are free
-  again immediately, so it can be redone from scratch.
-- **`team_join_requests` serves two directions through one table**, not two
-  near-identical ones: `kind = request` is a user asking to join (an
-  owner/admin resolves it), `kind = invite` is an owner/admin asking a user
-  to join — including the founding invites above — which only that user can
-  accept or reject. There's no `status` column: a row's existence means
-  pending, and resolution either deletes it (reject) or deletes it while
-  inserting a `team_members` row (accept) — the same hard-delete idiom
-  `follows`/`likes` already use, no history kept.
-- **`team_members.role` is `owner`/`admin`/`member`.** Exactly one row per
-  team holds `owner`, mirroring `teams.owner_id`. An admin can approve/reject
-  join requests and remove a plain member, but not another admin or the
-  owner; only the owner changes roles, sends founding-adjacent settings
-  changes, or deletes the team. There's no ownership-transfer flow yet — an
-  owner can't leave, only delete the team outright.
-- **A hard cap of 20 `team_members` rows per team**, enforced in the route
-  layer at every membership-creating call (open join, invite-accept,
-  request-accept) — not expressible as a `CHECK` constraint, since it's a
-  count over a related table, not a property of one row.
-- **`clips.score_included` (4c)**, unlike `team_id`, stays editable forever
-  — including indefinitely after publishing, as an edit to the post, via
-  `PATCH /clips/{id}/score-inclusion`. It never touches `analyses`; the
-  existing scoring pass is reused as-is either way. This exists because
-  skate clips are often shot from angles the analyzer scores unreliably, and
-  the app doesn't want users choosing between a visually great clip and
-  their average — a clip can publish and be watched regardless of this
-  flag, it just won't count toward a personal or team average.
-- **`team_score_history` exists because Discover ranks teams by score
-  *increase*.** A delta is uncomputable without history, and this is painful
-  to retrofit.
-- **Team score = average of the team's top 10 clips.** Summing everything
-  would mean the largest team always wins and scores could never fall. A
-  user's own `average_score` (4d) has no analogous fairness problem, so it's
-  an uncapped average across every published, score-included clip. Both live
-  in `app/scoring.py`, shared by `api/serializers.py` (live display on
-  `UserPublic`/`TeamOut`) and `app/rankings.py` (the `team_score_history`
-  snapshot) — one definition, so the two can't quietly drift apart.
-- **`clip_views` (4d) is a plain append-only event log, not deduped like
-  `Like`.** A rewatch counts again — `view_count` is a raw play-count, same
-  as most platforms show, not a unique-viewer count. The clip owner's own
-  views are never inserted at all: unlike a like, capped at +1/user by
-  construction, a raw view endpoint has no such limit, so self-view spam
-  would otherwise be a trivial way to inflate the Discover engagement
-  ranking below.
-- **`clip_rankings` (4d) is fully truncated and reinserted on every
-  `app/rankings.py` run**, one row per clip published in the last 7 days —
-  the same "no surrogate id" reasoning as `likes`, since the table's only
-  meaning is "this week's snapshot." It carries its own copies of
-  `steeze_score`/`score_included` and the three engagement counts rather
-  than joining back to `clips`, so a rebuild is one clean pass with nothing
-  to reconcile. Reading it back (`routes/discover.py`) re-fetches the live
-  `Clip` rows it names, in the order it says — display data is always
-  current even though the *ordering* is only as fresh as the last rebuild.
-- **Discover's engagement ranking blends three signals with different
-  weights** — `view_count×1 + like_count×5 + comment_count×10`
-  (`app/rankings.py`'s `ENGAGEMENT_WEIGHTS`) — rather than exposing three
-  separate sort orders. Comments weighted highest and views lowest: a view
-  costs a viewer nothing, a like takes one tap, a comment takes real effort.
-  The numbers are a starting heuristic, not derived from data; they're
-  centralized as named constants specifically so they're a one-line change,
-  not a redesign, once real usage suggests better ones. This ranking has no
-  relation to the `score` ranking's `score_included` filter — engagement is
-  a deliberately separate signal from the steeze score, for skaters who'd
-  rather browse what looks good than what scored well.
-
----
-
-## 7. Feed and ranking strategy
-
-**Home feed — fan-out-on-read.** `GET /feed` queries `clips` directly,
-filters to `published`, orders by `(published_at, id)` descending,
-keyset-paginated: the response carries a `next_cursor` (`"<published_at>|<id>"`)
-that the client passes back as `?cursor=`, becoming `WHERE (published_at, id)
-< (?, ?)`. Keyset rather than `OFFSET` because offset pagination degrades
-linearly and skips rows when new clips arrive mid-scroll. One extra row is
-fetched per page (`LIMIT n+1`) purely to know whether `next_cursor` should be
-set. A clip embeds its `author` (a `UserBrief`) so the feed needs no
-follow-up lookup per row.
-
-**Team follows (4c)** are folded in as `Clip.user_id.in_(followed users)
-OR Clip.team_id.in_(followed teams)` — two `IN` subqueries against `follows`,
-not a `JOIN` on that OR condition. A join would emit a clip twice when both
-its author *and* its tagged team are followed; de-duping a joined result
-afterward is more awkward than just not producing the duplicate in the first
-place.
-
-Fan-out-on-*write* (precomputed per-user timelines) is the standard answer at
-large scale, but it costs a write per follower per post and needs backfill
-logic. At this scale it is unjustified complexity.
-
-**Discover — precomputed (4d).** `app/rankings.py`'s `run()` rebuilds
-`clip_rankings` (this week's clips, ranked) and appends one `team_score_history`
-row per founded team, in a single pass. Discover is a hot page and ranking
-live — sorting the whole `clips` table on every load — would be an expensive
-query; reading a small pre-sorted snapshot instead is cheap regardless of how
-many clips exist.
-
-`GET /discover/clips?sort=score|engagement` reads `clip_rankings` directly,
-plain offset-paginated rather than keyset: unlike the home feed, this reads a
-snapshot that's frozen between rebuilds, so keyset's usual justification
-(rows shifting under a paginating client) doesn't apply, and jumping to an
-arbitrary page of a ranked list is a reasonable thing to want.
-`GET /discover/teams` is the one live-computed exception — ranked by score
-*increase* (latest `team_score_history` snapshot minus the one closest to 7
-days earlier, per team), computed at request time because the number of
-teams is small enough that this is cheap, unlike sorting every clip. A team
-with no snapshot from that far back (brand new) is excluded rather than
-credited a fake increase-from-zero, which would otherwise let any
-freshly-founded team trivially top the list.
-
-**Same dev/prod trigger split as `app/worker.py`**: locally, `make rankings`
-runs the rebuild on demand (`app/rankings.py`'s `lambda_handler` entrypoint
-is unused until then); in production (step 5) an EventBridge rule invokes it
-on a schedule instead. Nothing runs this automatically in dev — there's no
-scheduler in docker-compose to do it.
-
----
-
-## 8. Engagement counts
-
-Likes and comments (step 4b) add three fields to `ClipOut`: `like_count`,
-`comment_count`, `liked_by_me`. `view_count` (4d, backed by `clip_views` and
-`POST /clips/{id}/view`) joined them as a fourth. All four are computed in
-`api/serializers.py`'s `clip_out()`, which takes `db` and an optional
-`viewer`, plus optional precomputed values for each.
-
-**Single-clip routes** (everything in `routes/clips.py`) let `clip_out`
-query directly — one `COUNT` per metric, one lookup for `liked_by_me` — the
-same per-call cost `user_public()` already pays for
-`follower_count`/`following_count`/`followed_by_me`.
-
-**The feed and Discover are different**: both call `clip_out` in a loop over
-up to 50 clips per page, so paying a query per clip per metric there would
-mean hundreds of queries per page load. `clip_engagement()` batches all four
-into one grouped query per metric for the whole page — `GROUP BY clip_id`
-for the three counts, one `IN (...)` lookup for the viewer's likes — and
-`feed.py`/`routes/discover.py` pass the results into `clip_out` as
-precomputed values, skipping its default per-clip queries entirely.
-
-Comment listing (`GET /clips/{id}/comments`) doesn't need the same
-treatment: it returns *comments*, not clips, and a comment's replies load via
-`.options(selectinload(Comment.replies))` on the query — SQLAlchemy's own
-batched-eager-load strategy, so a page of top-level comments plus every reply
-on it is two queries total, not N+1, with no hand-written batching needed.
-Note this has to be requested explicitly in the query, unlike
-`Clip.analyses`/`Clip.clip_tricks`: SQLAlchemy never auto-applies a
-relationship's default `lazy=` strategy when it's self-referential, the way
-`Comment.replies` is — see the gotcha in `CLAUDE.md` and the comment on
-`Comment.replies` in `app/models/social.py`.
-
----
-
-## 9. Environments
-
-The seam between local and cloud is **`AWS_ENDPOINT_URL`** — for S3, SQS, and
-Postgres. Cognito is the one exception: it's always the real service, dev
-included (see §5 and the decision below), so dev and prod differ only in
-*which pool* `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` point at.
+## Environments
 
 | | Local | Production |
 |---|---|---|
-| Database | Postgres container | Neon (`DATABASE_URL` in SSM, not a plain Lambda env var — see below) |
-| S3 / SQS | LocalStack | Real AWS (`tricklens-media-<account_id>` bucket behind CloudFront+OAC; `tricklens-analysis` queue + DLQ) |
-| Cognito | Real AWS, `tricklens-dev` pool | Real AWS, `tricklens-prod` pool (`infra/cognito.tf`, step 5) |
+| Database | Postgres container | Neon (`DATABASE_URL` from SSM) |
+| S3 / SQS | LocalStack | Real AWS: S3 behind CloudFront, SQS + DLQ |
+| Cognito | Real AWS, `tricklens-dev` pool | Real AWS, `tricklens-prod` pool |
 | `AWS_ENDPOINT_URL` | `http://localstack:4566` | *(empty)* |
-| API process | uvicorn `--reload` | Lambda (`app.lambda_handler.handler`) behind an API Gateway HTTP API |
-| Worker process | SQS poll loop | Lambda (`app.worker.lambda_handler`), one SQS event-source-mapping, `batch_size=1`, 3008MB / 300s / 2GB `/tmp` |
-| Rankings | `make rankings` on demand | Lambda (`app.rankings.lambda_handler`) on an EventBridge schedule (`rate(30 minutes)` default) |
-| Image | `backend/Dockerfile` (api, migrate), `backend/Dockerfile.worker` (worker) | **the same two images**: the API image in ECR `tricklens` backs the api and rankings Lambdas via `image_config.command` overrides; the worker image in ECR `tricklens-worker` backs the worker. See the Decisions below |
+| API | uvicorn `--reload` | Lambda (`app.lambda_handler.handler`) behind API Gateway |
+| Worker | SQS poll loop (`python -m app.worker`) | Lambda (`app.worker.lambda_handler`), SQS event-source mapping |
+| Rankings | `make rankings` on demand | Lambda on an EventBridge schedule |
+| Images | `backend/Dockerfile`, `backend/Dockerfile.worker` | The same two images, from ECR |
 
-No application code branches on environment. `app/services/storage.py`,
-`app/services/queue.py`, `app/services/auth.py`, and (step 5)
-`app/services/secrets.py` are the only modules aware AWS exists; everything
-else goes through them.
-
-AWS Lambda injects reserved runtime variables such as `AWS_REGION` itself.
-The Terraform Lambda environment therefore supplies only application
-configuration and excludes those reserved names; the application still reads
-the injected region through its normal settings path.
-
-One wrinkle in `storage.py`: presigned URLs are *signed* against
-`AWS_ENDPOINT_URL` (LocalStack's Docker-network hostname, needed for the
-signature to be valid) but are handed to callers *outside* that network —
-curl, Postman, a browser. `AWS_PUBLIC_ENDPOINT_URL` (`http://localhost:4566`
-in dev, empty in prod) is a second, narrower env var used only to rewrite
-the host on the way out. Production doesn't need it: the real S3 endpoint is
-already externally reachable, so there's nothing to rewrite.
-
-The worker (`app/worker.py`) has its own small seam, orthogonal to the
-above: locally it long-polls SQS in a loop; in production (from step 5) an
-SQS event-source-mapping invokes `app.worker.lambda_handler` once per
-message instead. Same processing function either way — only the trigger
-differs. `app/rankings.py` has the identical shape: `make rankings` on
-demand locally, an EventBridge schedule invoking `lambda_handler` in prod.
-
-**`DATABASE_URL` in production is an SSM SecureString, not a plain Lambda
-env var.** Every other prod env var (`S3_BUCKET`, `COGNITO_USER_POOL_ID`,
-etc.) is set directly on the Lambda functions — none of those are secrets.
-A full Postgres connection string is different: a plain Lambda env var is
-visible in plaintext to anyone with read-only IAM access to the account
-(the Lambda console, or `lambda:GetFunctionConfiguration`), which is a real
-exposure surface even in a single-account hobby project. SSM Parameter
-Store's `SecureString` type is free at this volume and IAM-gated
-separately. The one code-side cost: `app/services/secrets.py`'s
-`resolve_database_url()` has to read `os.environ` directly and run
-*before* `app.config.Settings()` can be constructed, since it exists to
-produce the value `Settings()` needs — see that module's docstring for why
-this is a deliberate, narrow exception to "only `app.config` reads env
-vars," not a rule violation. Locally, `DATABASE_URL_SSM_PARAM` is never
-set, so this is a no-op and `.env`'s `DATABASE_URL` is used exactly as
-before.
+No application code branches on the environment: `AWS_ENDPOINT_URL` is the
+whole local↔cloud seam for S3 and SQS, and Compose runs the exact images
+Lambda runs. See [services](components/services.md) for the seam, and the
+[development guide](development.md) for the local stack.
 
 ---
 
-## 10. Decisions
+## Decisions
+
+Cross-cutting decisions are below. Component-specific ones live with their
+component:
+
+- **API:** fan-out-on-read feed, precomputed Discover, batched engagement
+  counts → [api.md](components/api.md#feed-and-discover)
+- **Data model:** follows as two nullable FKs, one-level comment threads,
+  team founding, top-10 team score, … →
+  [data-model.md](components/data-model.md#design-notes)
+- **Worker + analyzer:** claim and lease, local ground instead of camera
+  motion, board centre + feet, in-house tracker, model weights and libEGL in
+  the image, the 6c scoring decisions →
+  [analyzer.md](components/analyzer.md)
+- **Services:** `DATABASE_URL` in SSM, presigned URL rewriting, two
+  settings classes → [services.md](components/services.md)
+- **Infrastructure:** broad deploy role, migrations before deploy, no
+  canary, two ECR repos, SQS timings, Terraform state bootstrap →
+  [infrastructure.md](components/infrastructure.md#infrastructure-decisions)
 
 ### Neon instead of RDS
 
@@ -724,7 +241,8 @@ of everything else combined.
 
 Neon is reachable over public TLS, so Lambda stays out of the VPC entirely —
 no NAT, no endpoints, no VPC cold-start penalty. It also scales to zero and
-supports per-branch databases for CI.
+supports per-branch databases for CI. The same public reachability is what
+lets the deploy pipeline run migrations straight from the GitHub runner.
 
 Since the stack is SQLAlchemy + Alembic, Postgres is Postgres; moving to RDS
 later is a connection-string change.
@@ -736,12 +254,19 @@ later is a connection-string change.
 - **Fargate** — the most production-shaped answer and the natural upgrade
   path, but ~$15–30/month with zero traffic.
 - **Lambda containers** — genuinely free at this scale, scales to zero, and
-  supports 10GB images (the ML worker needs ~2GB, far past the 250MB zip
-  limit). Cold starts (~1–2s API, ~15s worker) are acceptable because
-  analysis is already asynchronous.
+  supports 10GB images (the worker image is ~2.7GB, far past the 250MB zip
+  limit). Cold starts are acceptable because analysis is already
+  asynchronous.
 
 Fargate is the documented migration path if sustained traffic ever makes cold
 starts or per-invocation billing the wrong trade.
+
+### Queue, not inline analysis
+
+Analysis takes tens of seconds to minutes per clip, and API Gateway caps a
+request at 29s. Doing the work inline isn't slow, it's impossible. SQS is
+structural, not an optimization, and it also buys retries, a dead-letter
+queue for poison clips, and backpressure when uploads spike.
 
 ### Cognito is real everywhere, not LocalStack
 
@@ -754,90 +279,41 @@ tier (50k MAU, no 12-month expiry unlike S3's) removes any cost motive to
 emulate it: there is nothing to save by faking a free service.
 
 So dev and prod both use real Cognito — two different pools, created
-directly (`scripts/cognito-bootstrap.sh` for dev, Terraform for prod in step
-5) rather than through the `AWS_ENDPOINT_URL` seam every other AWS service
+directly (`scripts/cognito-bootstrap.sh` for dev, Terraform for prod)
+rather than through the `AWS_ENDPOINT_URL` seam every other AWS service
 uses.
 
-**Trade-off:** local dev now needs a real AWS account and network access for
+**Trade-off:** local dev needs a real AWS account and network access for
 auth specifically, breaking the "fresh clone, zero AWS account" property
 LocalStack gives every other service. Accepted, since Cognito is the one
 service here where faithful local emulation isn't actually available for
 free.
 
-### The worker has its own image since step 6a
+### The same images in dev and production
 
-Through step 5 the worker shared the API's image: a stub needs no ffmpeg or
-CV libraries, so splitting early would have been premature. 6a is where the
-split became necessary. `backend/Dockerfile.worker` is the same Lambda base
-image plus a static ffmpeg/ffprobe (copied from the pinned
-`mwader/static-ffmpeg` image, so no package manager is involved) and the CV
-stack in `requirements-worker.txt` (ONNX Runtime, MediaPipe, headless
-OpenCV, NumPy, SciPy), plus the YOLOX-Tiny weights (6b), downloaded at
-build time and pinned by checksum. That's 2.5GB locally against the API's 1GB.
-It still reuses `app.db`, `app.models` and `app.services` exactly like the
-API does, because it's built from the same `backend/app/` source.
+`backend/Dockerfile` builds on `public.ecr.aws/lambda/python:3.12`. Locally,
+Compose overrides the entrypoint to run uvicorn with hot-reload; in
+production the Lambda runtime invokes `app.lambda_handler.handler`. Identical
+layers and digest in both places, so environment drift cannot be a source of
+bugs. The same holds for the worker since 6a: Compose's `worker` service
+builds `backend/Dockerfile.worker`, the exact image the worker Lambda runs,
+and only swaps the Lambda entrypoint for the poll loop.
 
-In production, `infra/lambda.tf` has three `aws_lambda_function`s. API and
-rankings share the API image from the `tricklens` ECR repo, distinguished
-only by an `image_config.command` override
-(`app.lambda_handler.handler` / `app.rankings.lambda_handler`). The worker
-points at the worker image in its own `tricklens-worker` repo. It's a
-separate repo, not a tag prefix in one repo, so each keeps its own last-5
-lifecycle history for rollback. CI builds and pushes both under the same
-git-SHA tag, and one `terraform apply` moves all three functions at once
-(see the Rollout decision below). CI disables BuildKit provenance and
-targets `linux/amd64` so ECR receives a single image manifest that Lambda
-accepts, rather than an OCI image index.
+### Trick classification deferred
 
-A few smaller decisions that come with it:
+Users tag their own tricks; the analyzer scores execution only. Trick
+classification from video is research-grade, with no large public labeled
+dataset. This removes the project's only research-grade risk while still
+accumulating the dataset that would make classification possible later
+(see [the flywheel](components/analyzer.md#the-flywheel)).
 
-- **`ANALYZER=real` is set by the image, not by Terraform or `.env`.** The
-  worker image is the one with ffmpeg, so it's the one that opts in. The API
-  image defaults to `stub`, which is why `make test` (API image) still
-  exercises the full clip flow without ffmpeg, while `make test-worker`
-  runs the media tests in the worker image.
-- **The worker Lambda got 3008MB, 300s and 2GB of `/tmp`.** Memory is really
-  the CPU knob (Lambda allocates ~1 vCPU per 1769MB), and 3008MB is the cap
-  new AWS accounts start with. The SQS visibility timeout went from 90s to
-  1800s, AWS's recommended 6× the function timeout.
-- **mediapipe's OpenCV is swapped for the headless build.** mediapipe
-  depends on `opencv-contrib-python`, which needs `libGL`, and the Lambda
-  base image doesn't have it. The Dockerfile uninstalls it, force-reinstalls
-  `opencv-contrib-python-headless`, and then imports every CV library as a
-  build step, so a broken swap fails the build, not the first invocation.
-- **Measured in prod (6a, two real 60fps phone clips).**
-  - A routine cold start takes ~1.7s to initialize. The 2.7s clip then took
-    6.5s end to end (download, ffprobe, transcode, two uploads, Neon), using
-    ~400MB of the 3008MB.
-  - The **first** invocation of a newly deployed image hit Lambda's 10s
-    init limit (`INIT_REPORT ... Status: timeout`). Lambda re-runs init
-    inside the invocation, so that first clip still succeeded, just ~38s
-    later. Lambda loads container images lazily, so the first run reads
-    every imported file from an empty cache. It happens once per deploy,
-    not per cold start.
-  - The rule for 6b/6c: keep the heavy CV imports (cv2, onnxruntime,
-    mediapipe) inside the handler path, never at module level, or every
-    cold start pays for them during init.
-- **The worker claims a clip atomically, with a lease.** One `UPDATE ...
-  WHERE status = 'queued' OR (status = 'analyzing' AND updated_at < now()
-  - 360s) RETURNING id` decides ownership, so two consumers can never
-  process the same clip at once (SQS is at-least-once). The lease is what
-  recovers a crashed run. A Lambda timeout mid-transcode leaves the clip
-  `analyzing`, and SQS redelivers after its visibility timeout. The stub
-  worker skipped anything not `queued`, which would strand it forever; now
-  a clip still `analyzing` past the lease is reclaimed, since it outlived
-  the 300s Lambda timeout. Every output key is deterministic per clip, so
-  reprocessing just overwrites them. The ordering matters: 300s Lambda
-  timeout < 360s lease < SQS visibility timeout (1800s prod, 600s local).
-  A redelivery that arrived *inside* the lease would be skipped and
-  deleted.
+### Heuristic, explainable steeze
 
-The worker role (`infra/iam.tf`) got S3 access in 6a, scoped per prefix:
-`GetObject` on `raw/*` only, `PutObject` on `processed/*` and `thumbs/*`
-only. Each function still has its own least-privilege IAM execution role.
-The worker still reserves no concurrency: at the initial account quota,
-AWS requires at least 10 executions to stay unreserved. A reservation can
-be added after requesting a higher account concurrency quota.
+The score is a set of explainable subscores (pop, landing stability,
+roll-away, stomp, compactness, catch) over pretrained models, always shown
+broken down, and never a guess: low confidence returns `unanalyzable` with
+a specific reason. A bare number reads as a bug; a breakdown reads as an
+opinion. Details in the [analyzer doc](components/analyzer.md#the-steeze-score).
 
 ### YOLOX on ONNX Runtime, not Ultralytics YOLOv8 — licensing
 
@@ -866,6 +342,7 @@ anything installed via `pip install ultralytics` is AGPL, even models whose
 original release wasn't. ffmpeg's static build is GPL (x264), which is
 fine here: it runs as a separate process inside a private image that is
 never distributed, and the ordinary GPL is only triggered by distribution.
+The MediaPipe pose model is Apache-2.0 per its model card.
 
 ### Logging is configured for Lambda, not just locally
 
@@ -879,221 +356,29 @@ CloudWatch:
 - the root stays at Python's default `WARNING`.
 
 So `stage A: …`, `clip … -> analyzed` and every other `log.info()` were
-dropped, while warnings and errors (including `log.exception` from a
-failed Stage A) still came through. That's why it went unnoticed. The fix
-sets `INFO` on our own `tricklens` logger, so its records propagate to
-whichever root handler exists: Lambda's in prod, `basicConfig`'s locally.
-`tests/test_logs.py` reproduces the Lambda setup in a subprocess, including
-a control case that drops the line exactly as prod did.
+dropped, while warnings and errors still came through. That's why it went
+unnoticed. The fix sets `INFO` on our own `tricklens` logger, so its
+records propagate to whichever root handler exists: Lambda's in prod,
+`basicConfig`'s locally. See [services](components/services.md#logging-logspy).
 
 Known harmless noise in the worker's CloudWatch logs: `sh: line 1: blkid:
 command not found`, `... hostname: ...` and an onnxruntime "Failed to
 persist telemetry device ID" warning. All come from onnxruntime's start-up
-code (disabling its telemetry doesn't stop them). The minimal Lambda image
-lacks those tools, and its filesystem is read-only outside `/tmp`.
-
-### A small in-house IoU tracker, not ByteTrack (6b)
-
-The plan named `supervision`'s ByteTrack. While building 6b it turned out
-supervision deprecated ByteTrack in 0.28 and removes it in 0.31. Its
-successor, Roboflow's `trackers` package (Apache-2.0), depends on the
-non-headless `opencv-python`, which is the same libGL problem
-`Dockerfile.worker` already works around for mediapipe, plus `rich`,
-`requests` and more. ByteTrack's strengths (recovering low-score
-detections, many objects crossing in a crowd) also aren't what this needs.
-The job is following one skater at 15fps, usually alone or with a few
-bystanders, with the board matched per frame rather than tracked.
-
-`app/analyzer/track.py` is a greedy IoU tracker (~60 lines) that survives
-an 8-sample (~0.5s) miss. `supervision` was dropped from
-`requirements-worker.txt`. If crowded skatepark footage ever breaks it, the
-tracker is one module to swap.
-
-### The YOLOX weights are built into the image, and permissions matter
-
-`Dockerfile.worker` downloads Megvii's official `yolox_tiny.onnx`
-(0.1.1rc0) with `ADD --checksum`, so a changed upstream file fails the
-build instead of silently changing detections. Lambda runs the function as
-a **non-root** user, and the first attempt broke exactly there:
-- `ADD` from a URL writes the file `600`, root-owned;
-- `--chmod=644` also applies to any directory `ADD` creates, so `models/`
-  became untraversable.
-
-Loading the model as a non-root user failed with errno 13, which is exactly
-what the worker Lambda would have hit. The directory is now created `755`
-first, and the build itself reads the model as uid 65534, so a regression
-fails the build. The weights load on first use per container
-(`get_detector()` is cached), not at import, which keeps cold-start init
-cheap (see the measurements above).
-
-### MediaPipe needs libEGL, and the build proves the models load (6c)
-
-MediaPipe 1.0's native Tasks library links against `libEGL`/`libGLESv2`
-even when it only runs on the CPU, and the Lambda base image has neither.
-6a's build check only *imported* mediapipe, which loads that library
-lazily, so the first real pose call would have failed in prod with
-`OSError: libEGL.so.1`. Found during 6c planning, before anything shipped.
-
-`Dockerfile.worker` now:
-- installs `mesa-libEGL` + `libglvnd-gles` (with the image's `microdnf`,
-  which has no `-q` flag);
-- adds the pose model the same way as YOLOX (`ADD --checksum`, Apache-2.0
-  per the BlazePose GHUM model card);
-- runs `backend/scripts/check_models.py` **as uid 65534**, which opens the
-  YOLOX session *and creates a pose landmarker*.
-
-That check exercises every native library and file the worker Lambda
-touches, as the kind of user Lambda runs as, so this class of bug now fails
-the build.
-
-### Trick classification deferred
-
-Covered in §4. Users tag their own tricks; the analyzer scores execution
-only. This removes the project's only research-grade risk while still
-accumulating the dataset that would make classification possible later.
-
-### The same images in dev and production
-
-`backend/Dockerfile` builds on `public.ecr.aws/lambda/python:3.12`. Locally,
-Compose overrides the entrypoint to run uvicorn with hot-reload; in
-production the Lambda runtime invokes `app.lambda_handler.handler`. Identical
-layers and digest in both places, so environment drift cannot be a source of
-bugs. Since 6a the same holds for the worker: Compose's `worker` service
-builds `backend/Dockerfile.worker`, the exact image the worker Lambda runs,
-and only swaps the Lambda entrypoint for the poll loop.
-
-### GitHub Actions' deploy role is broad by design, not by oversight
-
-`infra/iam.tf` defines two IAM roles GitHub Actions assumes via OIDC (no
-static AWS keys stored in GitHub, ever): `tricklens-gha-plan` (PR-triggered
-`terraform plan` only, read-only, no `iam:PassRole`) and
-`tricklens-gha-deploy` (push-to-`main` only, close to `PowerUserAccess`
-scoped by resource name/ARN prefix wherever the AWS API supports it). The
-deploy role's breadth is a deliberate trade-off, not an oversight: `terraform
-apply` is the thing creating/mutating every resource in `infra/`, so a role
-narrow enough to avoid "broad" would also be too narrow to actually deploy.
-The alternative — a human runs `terraform apply` locally instead of CI —
-reintroduces exactly the problem this project already structures itself
-around avoiding (three independent machine clones per CLAUDE.md's
-Environment section, easy to let drift), and breaks "auto-deploy on push to
-`main`, no manual approval gate," chosen deliberately for a solo-dev hobby
-project. The actual safety net here is the $5 AWS Budget alarm
-(`infra/budget.tf`), not IAM scoping — plus an explicit `Deny` on the
-handful of actions (`iam:CreateUser`, `iam:CreateAccessKey`, …) that would
-let the role mint a persistent credential if it were ever misused.
-
-Both trust policies pin the OIDC `sub` claim to GitHub's **immutable subject**
-format, `repo:<owner>@<owner_id>/<repo>@<repo_id>:...`
-(`var.github_oidc_sub_prefix`), not the name-only `repo:<owner>/<repo>:...`.
-This repo has immutable subjects enabled, so GitHub never sends the
-name-only form. The first live deploy failed on exactly this mismatch, and
-AWS reported it only as a bare `Not authorized to perform
-sts:AssumeRoleWithWebIdentity`. The numeric IDs are also the safer form:
-if the repo is renamed or deleted and its name re-registered by someone
-else, that repo's tokens carry different IDs and can't satisfy the trust
-policy.
-
-Both roles also get `dynamodb:GetItem`/`PutItem`/`DeleteItem` on the state
-lock table, scoped to that one table's ARN. The table lives outside this
-config (see `infra/backend.tf`), so nothing in `infra/` referenced it, and
-the first CI apply failed on "Error acquiring the state lock" before it
-read any state. Any role that runs `terraform plan`/`apply` against this
-backend needs those three actions.
-
-### No Lambda aliases / canary rollout — `terraform apply` is the rollback path
-
-Lambda supports versioned aliases and weighted traffic-shifting for gradual
-rollout with automated alarm-triggered rollback (often paired with
-CodeDeploy). Skipped here: that machinery earns its cost protecting against
-concurrent-old-and-new-code-serving-real-traffic during a rollout, which
-doesn't really exist yet at "$0.60/mo, solo user, infrequent deploys" scale.
-Instead: the ECR lifecycle policy keeps the last 5 image tags
-(`infra/ecr.tf`), and Terraform state records exactly which `image_tag` (the
-deploying git SHA) was live at every apply, so a manual rollback is
-`terraform apply -var image_tag=<previous_sha>` — one command, not a
-runbook. Revisit if deploy frequency or real traffic grows enough that a
-bad deploy's blast radius during rollout starts to matter — same "not yet
-justified" treatment already given to the Fargate migration path above.
-
-### Migrations run before the new image goes live, never after
-
-`.github/workflows/deploy.yml` runs `alembic upgrade head` against Neon
-directly from the GitHub Actions runner (no Lambda/ECS detour needed — this
-is exactly why Neon's public TLS reachability mattered when it was chosen
-over RDS, see above) as a job that must complete before `terraform apply`
-updates the three Lambdas' `image_tag`. This ordering is deliberate: between
-those two jobs, the *old*, still-live code runs briefly against the *new*
-schema — the safe direction, since old code encountering a column it
-doesn't know about is a no-op, while new code encountering a column that
-doesn't exist yet is a hard crash. The cost of this ordering is a standing
-rule (also in CLAUDE.md's Conventions): every migration that ships in the
-same deploy as code that depends on it must be additive/backward-compatible
-on its own — new columns nullable-first or defaulted, no dropping/renaming
-a column the still-deploying old code reads. A genuinely breaking schema
-change needs two separate deploys (add the new shape, migrate code to use
-it, then drop the old shape in a later deploy), not one.
-
-Two properties keep that ordering real rather than nominal:
-
-- **Alembic needs only the database URL.** `alembic/env.py` reads
-  `app.config.get_migration_settings()`, a DB-only subset of `Settings`, not
-  `get_settings()`. The runner has only `ALEMBIC_DATABASE_URL`. The full
-  `Settings` also requires `S3_BUCKET`/`SQS_ANALYSIS_QUEUE_URL`/`CDN_BASE_URL`,
-  so on the first live deploy every migration attempt failed with a
-  validation error.
-- **A failed migration fails the job.** The Neon cold-start retry loop runs
-  its last attempt outside the loop, so that attempt's exit code becomes the
-  step's. The first version ended the loop on `sleep 5`, which exited 0. On
-  the first deploy, all five attempts failed, yet `migrate` showed green and
-  the pipeline moved on to `terraform apply` against an empty schema.
-- **The smoke test verifies the schema, not just connectivity.**
-  `/health/deep`'s `postgres` check compares `alembic_version` against the
-  head revision(s) in the image's own `alembic/` directory, and 503s on a
-  mismatch or a missing `alembic_version` table. `SELECT 1` alone passes on
-  an empty database, so the smoke test would not have caught the failure
-  above. This is detection, not prevention: by the time the smoke test runs,
-  the new image is already live. Its job is to turn a silent unmigrated
-  deploy into a red pipeline.
-
-### Terraform state: S3 + DynamoDB, bootstrapped by hand once, never self-managed
-
-Same idiom this repo already uses for the Cognito dev pool
-(`scripts/cognito-bootstrap.sh`): a small, idempotent, hand-run script
-(`scripts/terraform-bootstrap.sh`) creates the state bucket and DynamoDB
-lock table once, checking for existing resources first. Deliberately kept
-outside Terraform's own management forever — a backend can't safely manage
-the store it's sitting in, so bringing it under `infra/*.tf` would mean a
-`terraform destroy` could delete the very state that operation depends on.
-The bucket name includes the AWS account id (S3 bucket names are globally
-unique, unlike the dev LocalStack bucket which only has to be unique inside
-one Docker network); since all three of this project's machines share one
-AWS account, every machine's bootstrap run computes the identical name
-independently — nothing needs to be shared between them by hand.
-
-The very first deploy has one genuine Terraform chicken-and-egg: an
-`aws_lambda_function` with `package_type = "Image"` requires the referenced
-image to already exist in ECR, but Terraform can't build/push a Docker
-image itself, only reference one. Broken with a one-time two-phase apply —
-`terraform apply -target=aws_ecr_repository.main` to create just the repo,
-then a hand-run `docker build && docker push` of a real first image, then a
-normal untargeted apply now that an image exists to point at. `-target` is
-normally an anti-pattern for routine use; this is the one legitimate,
-one-time exception. See README's Deployment section for the full first-ever
-sequence.
+code (disabling its telemetry doesn't stop them).
 
 ---
 
-## 11. Cost
+## Cost
 
 | Service | Free allowance | Expected |
 |---|---|---|
-| Lambda | 1M requests + 400k GB-s/mo, always free | $0. The worker is the big consumer from 6a on: 3008MB for ~30–60s per clip is roughly 90–180 GB-s, so a couple of thousand clips a month (an estimate, not yet measured in prod) |
+| Lambda | 1M requests + 400k GB-s/mo, always free | $0. The worker is the big consumer: measured at ~40 billed seconds × 3GB for a 4.7s clip with Stage A (~120 GB-s), so roughly 3,000 clips a month free. 6c adds ~12s per trick |
 | SQS | 1M requests/mo, always free | $0 |
 | CloudFront | 1TB egress/mo, always free | $0 |
 | Cognito | 50k MAU, always free — dev and prod pools both count against this | $0 |
 | EventBridge | Free | $0 |
 | S3 | 5GB free 12mo, then ~$0.023/GB | ~$0.20 |
-| ECR | 500MB free 12mo, then $0.10/GB-mo | ~$0.40 before 6a; more once the worker image lands (estimate: its layers only change when `requirements*.txt` or the Dockerfile does, so most deploys add just the small `app/` layer) |
+| ECR | 500MB free 12mo, then $0.10/GB-mo | ~$0.40 before 6a; more with the worker image (its big layers only change when `requirements*.txt` or the Dockerfile does, so most deploys add just the small `app/` layer) |
 | Neon | Free tier | $0 |
 | SSM Parameter Store | SecureString parameters + API calls at this volume, always free | $0 |
 | DynamoDB (Terraform locks) | On-demand billing, negligible request volume | $0 |
@@ -1101,12 +386,13 @@ sequence.
 | **Total** | | **~$0.60/mo** |
 
 Controls: S3 lifecycle rule expiring `raw/` drafts after 7 days, ECR lifecycle
-policy keeping the last 5 images, CloudWatch Logs retention capped at 14 days
-per Lambda function, and an AWS Budget alarm at $5 (step 5, `infra/budget.tf`).
+policies keeping the last 5 images per repo, CloudWatch Logs retention
+capped at 14 days per Lambda function, and an AWS Budget alarm at $5
+(`infra/budget.tf`).
 
 ---
 
-## 12. Build order
+## Build order
 
 | Step | Scope | Status |
 |---|---|---|

@@ -4,8 +4,9 @@ Step 6a. The worker now writes a 720p transcode under processed/, and
 clips play from it instead of the raw upload (which raw/'s 7-day lifecycle
 rule deletes). Nullable with no backfill: clips analyzed before 6a have no
 transcode, and the serializer falls back to presigning the raw key for
-them. It also keeps the step-5 migration rule (ARCHITECTURE.md §10): the
-still-live old code never writes this column, so a null there is fine.
+them. It also keeps the step-5 migration rule (see
+docs/components/infrastructure.md): the still-live old code never writes
+this column, so a null there is fine.
 
 Revision ID: 0008
 Revises: 0007

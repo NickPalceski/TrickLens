@@ -95,7 +95,7 @@ def test_raised_ground_becomes_the_new_ground():
     rolling ground estimate adopts the new level, so nothing *later* on the
     ledge looks airborne. The step itself can register once, which is right
     for an ollie-up. Terrain changes are a known Stage A limitation: drops
-    and stair sets get the pop but not a trustworthy landing (ARCHITECTURE.md §4)."""
+    and stair sets get the pop but not a trustworthy landing (docs/components/analyzer.md)."""
     t = _t(8)
     up = np.where(t > 2000, 0.3 * H, 0.0)
     windows = find_pops(_signals(t, up, up))

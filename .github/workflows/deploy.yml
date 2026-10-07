@@ -1,11 +1,11 @@
 name: Deploy
 
 # Auto-deploy on push to main, no manual approval gate — see
-# docs/ARCHITECTURE.md's Decisions for why the tricklens-gha-deploy role's
+# docs/components/infrastructure.md for why the tricklens-gha-deploy role's
 # breadth is accepted as the trade-off for this. Jobs run strictly
 # sequentially (needs:), never in parallel — the ordering itself is a
 # safety property (migrate before the new image goes live), not just a
-# convenience. See infra/README or docs/ARCHITECTURE.md §... for the
+# convenience. See docs/components/infrastructure.md for the
 # migrate-before-apply rationale.
 
 on:
@@ -53,7 +53,7 @@ jobs:
 
       # Step 6a: the worker has its own, much bigger image (ffmpeg + CV
       # stack), same build flags, same SHA tag. Its ECR repo has to already
-      # exist (a one-time targeted apply, see README's Deployment section),
+      # exist (a one-time targeted apply, see docs/deployment.md),
       # because this job runs before terraform-apply.
       - name: build and push worker image
         env:
