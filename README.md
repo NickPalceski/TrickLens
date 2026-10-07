@@ -7,21 +7,34 @@ cleanly it was landed (pop, landing stability, roll-away, stomp, body
 compactness, catch). Follow skaters and teams, and see the week's best on
 Discover.
 
-### Sneak peek: the analyzer finding a kickflip
+### Sneak peek: the analyzer on a real kickflip
 
 <p align="center">
-  <img src="docs/media/stage-a-kickflip.gif" width="300"
-       alt="Debug view of the analyzer on a real kickflip: the skater boxed in green and the board in orange, tracked through the flip, with a live elevation curve below that peaks during the trick">
+  <img src="docs/media/stage-a-kickflip.gif" height="480"
+       alt="Stage A debug view of a real kickflip: the skater boxed in green and the board in orange, tracked through the flip, with a live elevation curve below that peaks during the trick">
+  &nbsp;&nbsp;
+  <img src="docs/media/stage-b-kickflip.gif" height="480"
+       alt="Stage B debug view of the same kickflip at full frame rate: a body-pose skeleton with the feet marked in magenta, the board box, and a header showing the time, the in-air phase and how high the feet are">
 </p>
 
-A real 60fps phone clip, played at half speed, through the analyzer's first
-stage (step 6b). It tracks the skater (green) and board (orange), even
-upside-down mid-flip. The graph underneath is how high the feet (blue), the
-board (orange), and both together (white) are off the ground, in multiples
-of the skater's height. When both clear the red threshold at once, that's a
-**pop**: here pop 1.23s, apex 1.47s, landing 1.57s. Each pop becomes a
-window that the next stage (6c) will score with body pose. Make your own
-with `make analyze-clip` (see [Clips](#clips)).
+A real 60fps phone clip through the analyzer's two stages:
+
+- **Left: Stage A, finding the trick** (step 6b, half speed). It tracks the
+  skater (green) and board (orange), even upside-down mid-flip. The graph
+  underneath is how high the feet (blue), the board (orange) and both
+  together (white) are off the ground, in multiples of the skater's height.
+  When both clear the red threshold at once, that's a **pop**: here pop
+  1.23s, apex 1.47s, landing 1.57s.
+- **Right: Stage B, looking closely at that trick** (step 6c-1, 1/3 speed).
+  Just the trick's window at full frame rate, with a body-pose skeleton
+  (feet in magenta) and the board where it was sampled (every other frame,
+  hence the flicker). The header shows how high the feet are, which pins
+  take-off to 1.25s and touch-down to 1.65s: the 15fps landing on the left
+  was 80ms early.
+
+Stage B is what the scores will be measured from in 6c: pop, catch,
+compactness, stomp, landing stability and roll-away. Make your own with
+`make analyze-clip` (see [Clips](#clips)).
 
 > **Status: steps 1–5 done — the social app is live in AWS, deployed by
 > GitHub Actions on every push to `main`. Step 6 (the real analyzer) is

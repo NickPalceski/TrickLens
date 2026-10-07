@@ -550,9 +550,13 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   300s timeout. Getting there first surfaced the CloudWatch logging gotcha
   below.
 
-  README's sneak peek, `docs/media/stage-a-kickflip.gif`, is the kickflip's
-  debug video (trimmed to the trick, half speed, 360px, ~600KB). It's the
-  user's own footage, published deliberately at their request. Every other
+  README's sneak peek is two GIFs side by side:
+  - `docs/media/stage-a-kickflip.gif`: the kickflip's Stage A debug
+    video, trimmed to the trick, half speed, 360px, ~600KB;
+  - `docs/media/stage-b-kickflip.gif` (added in 6c-1): its Stage B trick
+    video, 1/3 speed, 360px, ~750KB.
+
+  It's the user's own footage, published deliberately at their request. Every other
   clip and debug video stays in the gitignored `backend/tests/fixtures/clips/`.
   Regenerate the GIF from `make analyze-clip` output if the debug view
   changes.
