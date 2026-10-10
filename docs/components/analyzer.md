@@ -122,6 +122,33 @@ skipped and deleted.
 other exception (S3, database) propagates, so SQS retries the message (3
 receives, then the dead-letter queue).
 
+**A run that dies is given up on at the last receive.** A crash inside
+native code (a C++ `CHECK`, a segfault) kills the whole process, so no
+`except` runs and Lambda reports `Runtime.ExitError`. A Lambda timeout is
+the same from the clip's side. Either way the clip is left `analyzing` with
+no analysis row. SQS redelivers after the visibility timeout (1800s), the
+expired lease lets the redelivery reclaim the clip, and a crash usually
+repeats. The first 6c-1 prod run went this way (see
+[MediaPipe 1.0's tcmalloc aborts on Lambda](#mediapipe-10s-tcmalloc-aborts-on-lambda-6c)).
+Before this fix, the third crash sent the message to the DLQ with the clip
+stuck in `analyzing` for good.
+
+So the worker reads SQS's `ApproximateReceiveCount` (Lambda's record
+attributes, or `receive_count` from `AnalysisQueue.receive_messages`
+locally). On the delivery that reaches `MAX_RECEIVES` (3, the queue's
+`maxReceiveCount`), a clip that's still `analyzing` past its lease isn't run
+again. One atomic `UPDATE` marks it `unanalyzable` with an `"analysis failed"`
+analysis row, and the message is deleted normally. A clip still `queued` on
+its last receive has never been claimed (the earlier deliveries failed
+before reaching it, e.g. the database was down), so it's processed as
+usual. The trade-off: a run that hits a transient S3/database error twice
+also ends up `unanalyzable` on the third receive, not retried a third time.
+That's the right side to fail on, because the alternative is a clip stuck
+forever.
+
+`MAX_RECEIVES` in `app/worker.py` must match `maxReceiveCount` in
+`infra/sqs.tf` and `scripts/localstack-init.sh`.
+
 **The worker image** (`backend/Dockerfile.worker`): the API's Lambda base
 image plus
 - a static ffmpeg/ffprobe, copied from the pinned `mwader/static-ffmpeg`
@@ -309,6 +336,9 @@ would then be ~70s of Stage A + ~60s of Stage B, inside the 300s timeout.
   and logs the traceback. A code bug fails the same way on every retry,
   so retrying would only park the clip in the DLQ, stuck at `analyzing`.
   Infrastructure errors (S3, database) still raise and get SQS retries.
+  The backstop for crashes that kill the process outright (native aborts,
+  timeouts) already exists: the last-receive give-up under
+  [Worker](#worker). 6c-3 adds catching ordinary exceptions in-process.
 - **Milestones:**
   - 6c-1: pose + refined contacts, deployed advisory to prove MediaPipe on
     Lambda;
@@ -446,7 +476,7 @@ cached), not at import, which keeps cold-start init cheap.
 
 ### MediaPipe needs libEGL, and the build proves the models load (6c)
 
-MediaPipe 1.0's native Tasks library links against `libEGL`/`libGLESv2`
+MediaPipe's native Tasks library links against `libEGL`/`libGLESv2`
 even when it only runs on the CPU, and the Lambda base image has neither.
 6a's build check only *imported* mediapipe, which loads that library
 lazily, so the first real pose call would have failed in prod with
@@ -460,7 +490,34 @@ lazily, so the first real pose call would have failed in prod with
 
 That check exercises every native library and file the worker Lambda
 touches, as the kind of user Lambda runs as, so this class of bug now fails
-the build.
+the build. It can't catch problems that only exist in Lambda's sandbox,
+though. The next section is one.
+
+### MediaPipe 1.0's tcmalloc aborts on Lambda (6c)
+
+The first 6c-1 prod run died right after Stage A, the first time MediaPipe
+ran in Lambda:
+
+```
+third_party/tcmalloc/internal/sysinfo.h:76] CHECK in NumCPUs: maybe_cpus.has_value() (false)
+REPORT ... Status: error  Error Type: Runtime.ExitError
+```
+
+MediaPipe **1.0.0 onward** statically bundles Google's tcmalloc in
+`libmediapipe.so`. tcmalloc reads the CPU count from
+`/sys/devices/system/cpu`, which Lambda's sandbox doesn't expose, and
+treats a failed read as fatal. Docker always exposes `/sys`, so the
+build-time landmarker check and every local run passed. 0.10.x has no
+tcmalloc. Confirmed by searching each wheel's `libmediapipe.so`:
+`maybe_cpus` first appears in 1.0.0 and is absent from 0.10.33/0.10.35.
+
+Fix: `mediapipe==0.10.35`, which has the same `mediapipe.tasks.python` API,
+the same dependencies, and the same libEGL/libGLESv2 needs.
+`check_models.py` now also fails the build if `libmediapipe.so` contains
+`maybe_cpus`, so a future bump can't bring it back silently. The same run
+also logged matplotlib (imported by mediapipe) failing to create a config
+dir in Lambda's read-only home. The image now sets
+`MPLCONFIGDIR=/tmp/matplotlib`.
 
 ## Seeing what it saw
 

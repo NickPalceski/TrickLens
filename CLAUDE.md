@@ -237,6 +237,20 @@ can live anywhere.
   native code paths, not just imports. Also: the image's `dnf` is microdnf,
   which rejects `-q`, and the failure got silently swallowed when its
   output went to `/dev/null`.
+- **MediaPipe 1.0+ aborts the process on Lambda.** 1.0.0 started bundling
+  tcmalloc, which reads the CPU count from `/sys/devices/system/cpu` and hits
+  a fatal `CHECK in NumCPUs: maybe_cpus.has_value()` when it can't. Lambda's
+  sandbox doesn't expose that path; Docker always does. So the build check,
+  the tests and every local run passed, and the first 6c-1 prod run died
+  right after Stage A with `Runtime.ExitError`. Because it's a native abort,
+  no `except` ran and the clip was left stuck in `analyzing`, headed for the
+  DLQ. Fixed by pinning `mediapipe==0.10.35` (same Tasks API, no tcmalloc).
+  The stuck clip is fixed separately: on the last SQS receive (`MAX_RECEIVES`
+  = the queue's `maxReceiveCount`), the worker marks a clip whose runs died
+  `unanalyzable` ("analysis failed") instead of running it again (see
+  docs/components/analyzer.md, Worker). `check_models.py` now fails the build if
+  `libmediapipe.so` contains `maybe_cpus`. Local runs can't reproduce
+  Lambda-sandbox-only failures, so the advisory deploy is the real test.
 - **`ADD --chmod` also chmods the directories it creates.**
   `Dockerfile.worker`'s first version did `ADD --chmod=644 <url>
   /var/task/models/yolox_tiny.onnx`, which left `models/` as `drw-r--r--`.
@@ -332,7 +346,9 @@ can live anywhere.
 media pipeline) is done and live, verified in prod with two real clips.
 Step 6b (Stage A: finding the tricks) is done and live, verified in prod.
 6c is in progress: 6c-1 (Stage B: pose + refined contacts) is done and
-verified locally, deploying advisory to prove MediaPipe on Lambda.**
+verified locally. Its first advisory deploy crashed on Lambda (MediaPipe
+1.0's tcmalloc, see gotchas). The fix, pinning mediapipe 0.10.35, still needs a
+redeploy and a re-run of the prod check.**
 Running locally:
 
 ```bash

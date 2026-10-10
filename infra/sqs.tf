@@ -20,6 +20,8 @@ resource "aws_sqs_queue" "analysis" {
     # single bad record fails the whole invocation, see app/worker.py) —
     # a low maxReceiveCount stops one poison message from retrying forever
     # and burning invocations before it lands in the DLQ.
+    # Must match MAX_RECEIVES in app/worker.py: the last receive gives up on
+    # a clip whose runs died instead of crashing into the DLQ.
     maxReceiveCount = 3
   })
 }

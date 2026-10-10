@@ -78,6 +78,10 @@ RUN chmod 755 ${LAMBDA_TASK_ROOT}/models \
 # real media processing. The API image leaves the default, "stub" (see
 # app/config.py).
 ENV ANALYZER=real
+# mediapipe imports matplotlib, which wants a writable config dir. Lambda's
+# home directory is read-only, so without this every cold start logs a
+# warning and builds a throwaway cache dir. /tmp is the only writable path.
+ENV MPLCONFIGDIR=/tmp/matplotlib
 
 COPY pyproject.toml ${LAMBDA_TASK_ROOT}/
 COPY app/ ${LAMBDA_TASK_ROOT}/app/

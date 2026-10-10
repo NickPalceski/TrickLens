@@ -58,8 +58,10 @@ class AnalysisQueue:
 
     async def receive_messages(
         self, max_messages: int = 1, wait_time_seconds: int = 20
-    ) -> list[dict[str, str]]:
+    ) -> list[dict[str, Any]]:
         """Long-poll for messages. Returns [] on a normal empty-queue timeout.
+        Each message's `receive_count` is SQS's ApproximateReceiveCount, the
+        same number Lambda's event records carry (app/worker.py uses it).
 
         wait_time_seconds > 0 makes this a long poll: SQS holds the request
         open instead of returning immediately, which is both cheaper (far
@@ -70,9 +72,15 @@ class AnalysisQueue:
             QueueUrl=self.queue_url,
             MaxNumberOfMessages=max_messages,
             WaitTimeSeconds=wait_time_seconds,
+            MessageSystemAttributeNames=["ApproximateReceiveCount"],
         )
         return [
-            {"message_id": m["MessageId"], "receipt_handle": m["ReceiptHandle"], "body": m["Body"]}
+            {
+                "message_id": m["MessageId"],
+                "receipt_handle": m["ReceiptHandle"],
+                "body": m["Body"],
+                "receive_count": int(m.get("Attributes", {}).get("ApproximateReceiveCount", 1)),
+            }
             for m in resp.get("Messages", [])
         ]
 

@@ -54,6 +54,7 @@ DLQ_ARN=$(awslocal sqs get-queue-attributes \
 # skipped and deleted, which would strand a clip whose run had died.
 # Production uses 1800s (6x the Lambda's 300s timeout, see infra/sqs.tf).
 # That multiple only matters when Lambda is doing the invoking.
+# maxReceiveCount must match MAX_RECEIVES in app/worker.py (and infra/sqs.tf).
 echo "[init] creating SQS queue: ${QUEUE} (maxReceiveCount=3 -> DLQ)"
 awslocal sqs create-queue --queue-name "${QUEUE}" --attributes "{
   \"VisibilityTimeout\": \"600\",

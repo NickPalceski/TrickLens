@@ -53,6 +53,15 @@ MODEL_VERSION = "stub-v1"
 # so a redelivery arrives after the lease has expired, not before.
 ANALYZING_LEASE = timedelta(seconds=360)
 
+# The queue's maxReceiveCount (infra/sqs.tf, scripts/localstack-init.sh).
+# On the delivery that number lands on, a clip whose earlier runs all died
+# is given up on rather than run once more. See _give_up_on_final_receive.
+MAX_RECEIVES = 3
+
+# The failure reason when the analyzer itself broke rather than the clip.
+# See docs/components/analyzer.md (Worker).
+ANALYSIS_FAILED = "analysis failed"
+
 _SUBSCORES = ("pop", "landing_stability", "roll_away", "stomp", "compactness", "catch")
 _FAILURE_REASONS = (
     "skater too far from camera",
@@ -179,10 +188,61 @@ async def _process_media(clip: Clip) -> str | None:
     return None
 
 
-async def _process_message(body: dict[str, Any]) -> None:
+async def _give_up_on_final_receive(db, clip_id: uuid.UUID) -> bool:
+    """On the last SQS delivery, mark a clip whose earlier runs died
+    `unanalyzable` ("analysis failed") instead of running it a third time.
+
+    A run that dies mid-analysis leaves the clip `analyzing` with no
+    analysis row. That's a Lambda timeout, an uncaught exception, or a native
+    abort that no `except` can catch (MediaPipe 1.0's tcmalloc in 6c-1).
+    Retrying a crash usually crashes again, and if the last receive crashed
+    too, the message would land in the DLQ with the clip stuck at
+    `analyzing` for good. So the last receive doesn't retry at all.
+
+    Only a stale `analyzing` clip qualifies: one still `queued` on its last
+    receive has never been tried (earlier deliveries failed before claiming
+    it, e.g. the database was down), so it's processed normally. Same atomic
+    UPDATE pattern as the claim below. Returns True if it gave up.
+    """
+    gave_up = await db.scalar(
+        update(Clip)
+        .where(
+            Clip.id == clip_id,
+            Clip.status == ClipStatus.ANALYZING,
+            Clip.updated_at < func.now() - ANALYZING_LEASE,
+        )
+        .values(status=ClipStatus.UNANALYZABLE, updated_at=func.now())
+        .returning(Clip.id)
+    )
+    if gave_up is None:
+        return False
+    db.add(
+        Analysis(
+            clip_id=clip_id,
+            model_version=MODEL_VERSION,
+            confidence=Decimal("0"),
+            failure_reason=ANALYSIS_FAILED,
+        )
+    )
+    await db.commit()
+    log.warning(
+        "worker: clip %s -> unanalyzable (%s): earlier runs died, last receive (%d) not retried",
+        clip_id,
+        ANALYSIS_FAILED,
+        MAX_RECEIVES,
+    )
+    return True
+
+
+async def _process_message(body: dict[str, Any], receive_count: int = 1) -> None:
+    """Process one queue message. `receive_count` is SQS's
+    ApproximateReceiveCount for this delivery (1 on the first)."""
     clip_id = uuid.UUID(body["clip_id"])
 
     async with SessionLocal() as db:
+        if receive_count >= MAX_RECEIVES and await _give_up_on_final_receive(db, clip_id):
+            return
+
         # Claim the clip atomically: one UPDATE, so two consumers can never
         # both own it. SQS is at-least-once, so a duplicate delivery must be
         # able to lose this race cleanly.
@@ -261,7 +321,7 @@ async def _poll_forever() -> None:
     while True:
         for message in await queue.receive_messages(wait_time_seconds=20):
             try:
-                await _process_message(json.loads(message["body"]))
+                await _process_message(json.loads(message["body"]), message["receive_count"])
             except Exception:
                 log.exception(
                     "worker: failed processing message %s, leaving for redrive",
@@ -279,7 +339,9 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> None:
 
     async def _run() -> None:
         for record in event["Records"]:
-            await _process_message(json.loads(record["body"]))
+            await _process_message(
+                json.loads(record["body"]), int(record["attributes"]["ApproximateReceiveCount"])
+            )
 
     asyncio.run(_run())
 

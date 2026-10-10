@@ -8,6 +8,12 @@ root-only checks:
 - 6c: MediaPipe's native library needs libEGL, which an `import mediapipe`
   never loads.
 
+It also checks the one Lambda-only failure that no local run can hit:
+MediaPipe 1.0+ bundles tcmalloc, which aborts the process when it can't read
+the CPU count from /sys/devices/system/cpu, and Lambda's sandbox doesn't
+expose that. Docker always does, so the landmarker below loads fine here
+either way. The check looks for tcmalloc's assertion in the library instead.
+
 Any failure exits non-zero and fails the image build.
 """
 
@@ -20,8 +26,18 @@ os.setgroups([])
 os.setgid(65534)
 os.setuid(65534)
 
+from pathlib import Path  # noqa: E402
+
+import mediapipe  # noqa: E402
 import onnxruntime as ort  # noqa: E402
 from mediapipe.tasks.python import BaseOptions, vision  # noqa: E402
+
+libmediapipe = Path(mediapipe.__file__).parent / "tasks/c/libmediapipe.so"
+if b"maybe_cpus" in libmediapipe.read_bytes():
+    sys.exit(
+        f"{libmediapipe} bundles tcmalloc, which aborts on Lambda "
+        "(CHECK in NumCPUs). Pin mediapipe back to 0.10.35; see requirements-worker.txt."
+    )
 
 ort.InferenceSession(f"{models}/yolox_tiny.onnx", providers=["CPUExecutionProvider"])
 landmarker = vision.PoseLandmarker.create_from_options(

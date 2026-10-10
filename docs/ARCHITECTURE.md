@@ -136,6 +136,7 @@ stateDiagram-v2
     analyzing --> analyzing: lease expired, reclaimed on redelivery
     analyzing --> analyzed: scored
     analyzing --> unanalyzable: bad file or failed gate (specific reason)
+    analyzing --> unanalyzable: runs kept dying, last SQS receive ("analysis failed")
     analyzed --> analyzed: tag tricks / team / score inclusion
     analyzed --> published: POST /publish (≥1 trick tagged)
     published --> published: like, comment, view, score inclusion

@@ -18,7 +18,13 @@
 # IoU tracker instead. See docs/components/analyzer.md.
 
 onnxruntime==1.30.*        # runs the YOLOX ONNX model (6b), MIT
-mediapipe==1.0.*           # pose landmarks (6c), Apache-2.0
+# Pinned below 1.0 on purpose. MediaPipe 1.0 bundles tcmalloc, which aborts
+# the whole process (`CHECK in NumCPUs: maybe_cpus.has_value()`) on Lambda,
+# where /sys/devices/system/cpu isn't readable. 0.10.35 has the same Tasks
+# API and dependencies without it. scripts/check_models.py fails the build if
+# a bump brings tcmalloc back. See docs/components/analyzer.md (MediaPipe
+# 1.0's tcmalloc aborts on Lambda).
+mediapipe==0.10.35         # pose landmarks (6c), Apache-2.0
 # mediapipe depends on the *non-headless* opencv-contrib-python, which needs
 # libGL, and the Lambda base image doesn't have that. Dockerfile.worker
 # uninstalls it and force-reinstalls this headless build in its place (both
