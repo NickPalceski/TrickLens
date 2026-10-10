@@ -346,9 +346,8 @@ can live anywhere.
 media pipeline) is done and live, verified in prod with two real clips.
 Step 6b (Stage A: finding the tricks) is done and live, verified in prod.
 6c is in progress: 6c-1 (Stage B: pose + refined contacts) is done and
-verified locally. Its first advisory deploy crashed on Lambda (MediaPipe
-1.0's tcmalloc, see gotchas). The fix, pinning mediapipe 0.10.35, still needs a
-redeploy and a re-run of the prod check.**
+live (advisory), verified in prod after the MediaPipe tcmalloc fix (see
+gotchas). Next: 6c-2.**
 Running locally:
 
 ```bash
@@ -619,6 +618,18 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   - `mesa-libEGL` + `libglvnd-gles` in the worker image;
   - `board_near`/`board_crop` made public in localize.
 
+  **Verified in prod** after the tcmalloc fix (`81d19ea`: mediapipe 0.10.35,
+  plus the last-receive give-up). Results match local on both clips:
+  - kickflip: 1267 / 1650 ms (take-off one frame later), pose 92%, feet 0.95,
+    board 97%;
+  - bail: 1083 / 1333 ms exactly, pose 100%.
+
+  Lambda timing, from the bail (an ordinary cold start): Stage A 7.1s,
+  Stage B 8.9s per trick, 23.4s end to end, 763MB. The kickflip, the first
+  run after the deploy, took 67.8s, slowed down everywhere by the
+  once-per-deploy cold image cache (~12.5s just to import MediaPipe).
+  Steady state is therefore ~9–11s per trick, within the 12s estimate.
+
 - **Docs restructured (2026-10-07).** The README is trimmed to what the
   app is, the sneak peek, a small "how it works" diagram, status, stack and
   quick-start/deploy pointers. Depth moved into `docs/`:
@@ -669,7 +680,7 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
      Milestones:
      - 6c-1 ✅ Stage B: 60fps windowed decode, pose ("full" model), board
        around the trick, refined take-off/touch-down, libEGL + pose model in
-       the image, per-trick debug video *(verified locally; deploy advisory)*
+       the image, per-trick debug video *(live advisory, verified in prod)*
      - 6c-2 ⬜ landed check + confidence gate
      - 6c-3 ⬜ measurements, `calibration.py`, averaging, migration `0009`
        (`analyses.details`), API `tricks`, stub off

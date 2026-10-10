@@ -65,8 +65,8 @@ The full picture, with the key flows and design decisions, is in
 
 Steps 1–5 are done and **live in AWS**: auth, the full clip pipeline, the
 social features, and automated deploys. Step 6, the real analyzer, is in
-progress. Media processing and trick finding are live; body-pose analysis
-is built; real scores come next. Until then, scores are a placeholder.
+progress. Media processing, trick finding and body-pose analysis are
+live; real scores come next. Until then, scores are a placeholder.
 See the [build order](docs/ARCHITECTURE.md#build-order).
 
 ## Stack

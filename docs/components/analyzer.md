@@ -7,8 +7,8 @@ up, the media step (verify, transcode, thumbnail), and the steeze analyzer
 
 ← Back to the [architecture overview](../ARCHITECTURE.md).
 
-**Status:** media (6a) and Stage A (6b) are live. Stage B (6c-1) is built
-and runs in advisory mode (logged, not stored). Scores are still the stub
+**Status:** media (6a), Stage A (6b) and Stage B (6c-1) are live. Stage B
+runs in advisory mode (logged, not stored). Scores are still the stub
 until 6c-3. See the [build order](../ARCHITECTURE.md#build-order).
 
 ## What the worker does with one clip
@@ -180,6 +180,16 @@ quota, AWS requires at least 10 executions to stay unreserved.
   frame + 4.84s zoomed pass), about 5× local, or **~2.3s per second of
   clip**. Whole job 31.6s, 568MB. A 30s clip is therefore ~70s of Stage A
   within the 300s timeout.
+- 6c-1 (Stage B): the 2.7s bail took 7.1s of Stage A and **8.9s of
+  Stage B** (4.1s of it board detection), 23.4s end to end, 763MB, an
+  ordinary 1.5s cold start. The kickflip, the first clip after the
+  deploy, was much slower everywhere: 67.8s end to end, ~33s of it media
+  before Stage A, and 23.1s of Stage B, of which ~12.5s passed before
+  MediaPipe's thread pool even started (the import and landmarker
+  creation). That's the same once-per-deploy cold image cache as the 10s
+  init timeout above, not a per-container cost: the bail's run was a
+  fresh container too and showed none of it. `pose_and_board` includes
+  the MediaPipe import, because `run_pose` imports lazily.
 - The rule that follows: keep the heavy CV imports (cv2, onnxruntime,
   mediapipe) inside the handler path, never at module level, or every cold
   start pays for them during init.
@@ -319,8 +329,16 @@ Choices made by measuring the real clips:
 | Follow-cam bail | 1.10s / 1.30s | **1.08s / 1.33s**, down without the board | 100% / 0.95 / 100% |
 
 Stage B costs ~2.3–2.6s per trick locally (decode + pose ~1.7s, board
-~0.9s), so expect **~12s per trick on Lambda**. A 30s line with five tricks
-would then be ~70s of Stage A + ~60s of Stage B, inside the 300s timeout.
+~0.9s). On Lambda it measured **~9–11s per trick** (see
+[Worker](#worker), Measured in prod), within the ~12s estimate. A 30s line
+with five tricks would then be ~70s of Stage A + ~50s of Stage B, inside
+the 300s timeout.
+
+The same clips in prod (6c-1, after the tcmalloc fix) gave the same
+results: the kickflip at 1.27s / 1.65s (take-off one 60fps frame later),
+pose 92%, feet 0.95, board 97%; the bail at exactly 1.08s / 1.33s, pose
+100%, feet 0.95, board 90%. The small differences are floating-point
+differences from a different CPU.
 
 ### Decisions for the rest of 6c
 
