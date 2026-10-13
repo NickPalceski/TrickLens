@@ -17,7 +17,8 @@ import pytest
 
 pytest.importorskip("cv2")
 
-from app.analyzer import localize, media, stage_b  # noqa: E402
+from app.analyzer import gate, landed, localize, media, stage_b  # noqa: E402
+from app.analyzer.reasons import NO_LANDING  # noqa: E402
 from app.config import get_settings  # noqa: E402
 
 CLIPS = os.path.join(os.path.dirname(__file__), "fixtures", "clips")
@@ -42,10 +43,15 @@ def _stage_a(tmp_path, name: str) -> localize.StageAResult:
 
 
 def _stage_b(tmp_path, name: str) -> stage_b.TrickObservation:
+    return _gate(tmp_path, name).tricks[0].obs
+
+
+def _gate(tmp_path, name: str) -> gate.ClipAssessment:
     path, info = _processed(tmp_path, name)
     a = localize.analyze(path, info, MODEL)
     [w] = a.windows
-    return stage_b.observe(path, info, a, w, MODEL, POSE_MODEL)
+    obs = stage_b.observe(path, info, a, w, MODEL, POSE_MODEL)
+    return gate.assess_clip(a, [obs], info.duration_ms)
 
 
 def test_tripod_kickflip_one_trick(tmp_path):
@@ -91,3 +97,27 @@ def test_followcam_bail_stage_b(tmp_path):
     assert 1000 <= o.takeoff_ms <= 1150
     assert 1280 <= o.touchdown_ms <= 1400
     assert o.pose.found_frac >= 0.95
+
+
+def test_tripod_kickflip_is_landed(tmp_path):
+    """Frames: both feet on the deck from ~1.65s, rolling away (sketchy,
+    but landed). Measured: on the board 30/30 frames, stance 0.27."""
+    v = _gate(tmp_path, "kickflip_sketchy_60fps.mov")
+    [t] = v.tricks
+    c = t.landing
+    assert c.verdict == landed.Verdict.LANDED
+    assert c.on_board_frac >= 0.9 and c.judged_frac >= 0.8
+    assert c.stance <= 0.35
+    assert v.failure_reason is None and v.confidence >= 0.7
+    # The window reaches the end of the landed check's span.
+    assert t.obs.window.end_ms >= c.touchdown_ms + landed.LANDING_TO_MS
+
+
+def test_followcam_bail_is_a_bail(tmp_path):
+    """Frames: board flipped, the user stepped off it, feet apart either
+    side of it. Measured: on the board 2/20 frames, stance 0.55."""
+    v = _gate(tmp_path, "bail_60fps.mov")
+    [t] = v.tricks
+    assert t.landing.verdict == landed.Verdict.BAILED
+    assert t.landing.stance >= 0.45
+    assert v.failure_reason == NO_LANDING

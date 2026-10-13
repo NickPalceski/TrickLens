@@ -25,6 +25,7 @@ import logging
 import os
 import random
 import tempfile
+import time
 import uuid
 from datetime import timedelta
 from decimal import Decimal
@@ -100,7 +101,7 @@ async def _process_media(clip: Clip) -> str | None:
     Imported lazily: app.analyzer is worker-image-only code, and this module
     is also imported by the API image's test suite.
     """
-    from app.analyzer import localize, media, stage_b
+    from app.analyzer import gate, localize, media, stage_b
 
     storage = get_storage()
     ext = os.path.splitext(clip.s3_key)[1]
@@ -109,12 +110,24 @@ async def _process_media(clip: Clip) -> str | None:
         processed = os.path.join(tmp, "processed.mp4")
         thumb = os.path.join(tmp, "thumb.jpg")
 
+        timings: dict[str, float] = {}
+        t0 = time.perf_counter()
         await storage.download(clip.s3_key, raw)
+        timings["download"] = time.perf_counter() - t0
         try:
+            t0 = time.perf_counter()
             info = await asyncio.to_thread(media.probe, raw)
             await asyncio.to_thread(media.transcode, raw, processed, info)
+            timings["probe_transcode"] = time.perf_counter() - t0
         except media.MediaError as e:
             return e.reason
+        log.info(
+            "worker: clip %s media: %dms at %.0ffps | %s",
+            clip.id,
+            info.duration_ms,
+            info.fps,
+            {k: round(v, 2) for k, v in timings.items()},
+        )
 
         # Stage A (6b): find the tricks. Advisory until 6c, since scoring is
         # still the stub. So a failure here is logged and the clip carries
@@ -143,9 +156,11 @@ async def _process_media(clip: Clip) -> str | None:
                 # The poster frame is the highest moment of the biggest pop.
                 best = max(stage_a.windows, key=lambda w: w.peak_elevation)
                 thumb_at_ms = int(best.apex_ms)
-            # Stage B (6c-1): pose + board at native fps per trick. Same
-            # advisory rules as Stage A until 6c-3 starts scoring from it.
+            # Stage B (6c-1): pose + board at native fps per trick, then the
+            # landed check and confidence gate (6c-2). Same advisory rules as
+            # Stage A until 6c-3 scores from them: logged, nothing stored.
             settings = get_settings()
+            observations = []
             for n, window in enumerate(stage_a.windows, 1):
                 try:
                     obs = await asyncio.to_thread(
@@ -172,6 +187,13 @@ async def _process_media(clip: Clip) -> str | None:
                     100 * obs.board_found_frac,
                     {k: round(v, 2) for k, v in obs.timings_s.items()},
                 )
+                observations.append(obs)
+            try:
+                verdict = gate.assess_clip(stage_a, observations, processed_info.duration_ms)
+            except Exception:
+                log.exception("worker: clip %s gate failed", clip.id)
+            else:
+                _log_gate(clip.id, verdict)
         await asyncio.to_thread(media.thumbnail, processed, thumb, thumb_at_ms)
 
         processed_key = f"{PREFIX_PROCESSED}/{clip.id}.mp4"
@@ -186,6 +208,44 @@ async def _process_media(clip: Clip) -> str | None:
     clip.duration_ms = info.duration_ms
     clip.source_fps = round(info.fps)
     return None
+
+
+def _log_gate(clip_id: uuid.UUID, verdict: Any) -> None:
+    """Log the gate's advisory verdict (6c-2): one line per trick, then the
+    outcome the clip *would* get. `verdict` is a gate.ClipAssessment (typed
+    loosely: app.analyzer is worker-image-only)."""
+    for n, t in enumerate(verdict.tricks, 1):
+        c = t.landing
+        detail = (
+            ""
+            if c is None
+            else f" | on board {c.on_board}/{c.judged} judged of {c.sampled} sampled, "
+            f"{c.implausible_boards} implausible board(s), stance "
+            f"{'n/a' if c.stance is None else f'{c.stance:.2f}'}, board offset range "
+            f"{'n/a' if c.board_offset_range is None else f'{c.board_offset_range:.2f}'}"
+        )
+        log.info(
+            "worker: clip %s landing trick %d: %s, confidence %.2f%s",
+            clip_id,
+            n,
+            t.outcome,
+            t.confidence,
+            detail,
+        )
+    if verdict.failure_reason is None:
+        log.info(
+            "worker: clip %s gate: would score %d landed trick(s), confidence %.2f",
+            clip_id,
+            len(verdict.landed),
+            verdict.confidence,
+        )
+    else:
+        log.info(
+            "worker: clip %s gate: would fail: %s (confidence %.2f)",
+            clip_id,
+            verdict.failure_reason,
+            verdict.confidence,
+        )
 
 
 async def _give_up_on_final_receive(db, clip_id: uuid.UUID) -> bool:

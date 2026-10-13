@@ -347,7 +347,8 @@ media pipeline) is done and live, verified in prod with two real clips.
 Step 6b (Stage A: finding the tricks) is done and live, verified in prod.
 6c is in progress: 6c-1 (Stage B: pose + refined contacts) is done and
 live (advisory), verified in prod after the MediaPipe tcmalloc fix (see
-gotchas). Next: 6c-2.**
+gotchas). 6c-2 (landed check + confidence gate) is done and verified
+locally, deploying advisory.**
 Running locally:
 
 ```bash
@@ -630,6 +631,40 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   once-per-deploy cold image cache (~12.5s just to import MediaPipe).
   Steady state is therefore ~9–11s per trick, within the 12s estimate.
 
+- **Step 6c-2 (landed check + confidence gate)** done and verified locally:
+  - `make test-worker` 66/66 (19 synthetic landed/gate tests in the new
+    `test_analyzer_landed.py`, 2 new real-clip verdict tests, a window and
+    a luma test); API image 57 (21 skip); ruff clean on the changed files
+    (the 24 older errors in `alembic/` and `test_clips.py` remain).
+  - Real clips: kickflip **landed** (on the board 16/16 judged frames,
+    stance 0.26, confidence 0.92, gate would score it); bail **bailed**
+    (2/13, stance 0.54, 3 implausible board boxes, gate would fail it "no
+    landed trick detected"). Checked frame by frame in the debug videos
+    (green feet on the board, red off it), and both went through the live
+    worker container with the new log lines.
+
+  Measured first, then built: a per-frame dump of 0.1–0.6s after
+  touch-down showed both-feet-over-the-board at 100% vs 10% and stance 0.27
+  vs 0.55, plus the bail's over-wide board box (0.71 skater heights) that
+  both feet fit inside, hence the plausibility limit.
+
+  What 6c-2 added:
+  - `app/analyzer/{landed,gate,reasons}.py`;
+  - Stage A window to landing + 0.8s (was max(pop + 0.8s, land + 0.4s),
+    short of the landed span on both clips), board sampled to window end;
+  - `StageAResult.brightness` (mean luma), used only to explain a failure
+    as "too dark";
+  - new reason "clip ends too soon after the landing";
+  - worker logs `media: …` timings, `landing trick N: …`, `gate: would
+    score …` / `would fail: …`; status still from the stub;
+  - `analyze-clip` prints verdicts, debug video colours the feet.
+
+  Decided with the user: advisory until 6c-3; unclear tricks are left out
+  like bails; the clip fails only when nothing landed, with the most
+  actionable reason. Every threshold is an uncalibrated guess from two
+  side-on clips; a head-on clip is the known risk. The user is collecting
+  more clips (head-on landed trick, multi-trick line, foot-down landing).
+
 - **Docs restructured (2026-10-07).** The README is trimmed to what the
   app is, the sneak peek, a small "how it works" diagram, status, stack and
   quick-start/deploy pointers. Depth moved into `docs/`:
@@ -681,7 +716,8 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
      - 6c-1 ✅ Stage B: 60fps windowed decode, pose ("full" model), board
        around the trick, refined take-off/touch-down, libEGL + pose model in
        the image, per-trick debug video *(live advisory, verified in prod)*
-     - 6c-2 ⬜ landed check + confidence gate
+     - 6c-2 ✅ landed check + confidence gate, advisory *(verified locally;
+       deploy advisory)*
      - 6c-3 ⬜ measurements, `calibration.py`, averaging, migration `0009`
        (`analyses.details`), API `tricks`, stub off
    - 6d ⬜ calibration once the user has hand-judged clips → `steeze-v1`

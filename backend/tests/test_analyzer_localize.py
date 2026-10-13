@@ -17,9 +17,11 @@ pytest.importorskip("cv2")  # localize imports detect, which needs OpenCV + onnx
 from app.analyzer.localize import (  # noqa: E402
     MIN_POP,
     SAMPLE_FPS,
+    WINDOW_AFTER_LAND_MS,
     Signals,
     compute_elevation,
     find_pops,
+    mean_luma,
 )
 
 H = 200.0  # skater height, px
@@ -59,7 +61,9 @@ def test_single_pop_found_with_sane_timing():
     assert 1400 <= w.apex_ms <= 1600
     assert w.pop_ms < w.apex_ms < w.land_ms
     assert 150 <= w.airtime_ms <= 500
-    assert w.start_ms <= w.pop_ms - 300 and w.end_ms >= w.land_ms + 300
+    assert w.start_ms <= w.pop_ms - 300
+    # Room for the landed check (0.1-0.6s after a touch-down Stage A can see early).
+    assert w.end_ms == pytest.approx(w.land_ms + WINDOW_AFTER_LAND_MS)
     assert w.peak_elevation == pytest.approx(0.30, abs=0.05)
 
 
@@ -146,3 +150,12 @@ def test_skater_absent_at_start_is_fine():
     for arr in (sig.feet_y, sig.board_y, sig.skater_h):
         arr[missing] = np.nan
     assert len(find_pops(compute_elevation(sig))) == 1
+
+
+def test_mean_luma_spans_black_to_white():
+    img = np.zeros((40, 40, 3), np.uint8)
+    assert mean_luma(img) == 0
+    assert mean_luma(img + 255) == pytest.approx(255, abs=0.5)
+    green = img.copy()
+    green[:, :, 1] = 255  # BGR: green carries most of the luma
+    assert mean_luma(green) == pytest.approx(0.587 * 255, abs=0.5)

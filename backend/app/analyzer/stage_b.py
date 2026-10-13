@@ -11,9 +11,8 @@ and, in one pass:
   On the tripod kickflip, Stage A's landing (1.57s) is ~80ms before the
   feet actually reach the board.
 
-6c-1 stops at these observations: the worker logs them, nothing is stored
-and nothing is scored yet. 6c-2 (landed check, confidence gate) and 6c-3
-(measurements, scores) build on TrickObservation.
+6c-1 stops at these observations. landed.py and gate.py (6c-2) judge them,
+and 6c-3 (measurements, scores) builds on them too.
 """
 
 import time
@@ -28,12 +27,11 @@ from app.analyzer.localize import SAMPLE_FPS, StageAResult, TrickWindow, board_c
 from app.analyzer.media import VideoInfo
 from app.analyzer.track import iou
 
-# Board detection every BOARD_EVERY-th frame (30fps at 60fps source), over
-# [pop - BOARD_BEFORE_MS, land + BOARD_AFTER_MS]: the air and the ~0.6s
-# after landing that the landed check (6c-2) reads.
+# Board detection every BOARD_EVERY-th frame (30fps at 60fps source), from
+# BOARD_BEFORE_MS before the pop to the end of the window: the air, and
+# the 0.1-0.6s after touch-down that the landed check (landed.py) reads.
 BOARD_EVERY = 2
 BOARD_BEFORE_MS = 200
-BOARD_AFTER_MS = 700
 
 # Feet count as "off" whatever they stand on once the lowest foot point is
 # this many skater-heights above its on-board/on-ground baseline. Pose
@@ -155,7 +153,7 @@ def observe(
     ]
     skater_h = float(np.median(hs)) if hs else float("nan")
 
-    board_lo, board_hi = window.pop_ms - BOARD_BEFORE_MS, window.land_ms + BOARD_AFTER_MS
+    board_lo, board_hi = window.pop_ms - BOARD_BEFORE_MS, window.end_ms
     skater: list[Detection | None] = []
     board: dict[int, Detection | None] = {}
     t_board = 0.0

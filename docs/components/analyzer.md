@@ -7,8 +7,9 @@ up, the media step (verify, transcode, thumbnail), and the steeze analyzer
 
 ← Back to the [architecture overview](../ARCHITECTURE.md).
 
-**Status:** media (6a), Stage A (6b) and Stage B (6c-1) are live. Stage B
-runs in advisory mode (logged, not stored). Scores are still the stub
+**Status:** media (6a), Stage A (6b) and Stage B (6c-1) are live. The
+landed check and confidence gate (6c-2) are built. Stage B and the gate run
+in advisory mode (logged, not stored). Scores are still the stub
 until 6c-3. See the [build order](../ARCHITECTURE.md#build-order).
 
 ## What the worker does with one clip
@@ -25,6 +26,7 @@ flowchart TD
     tx["ffmpeg: 720p, upright,<br/>constant fps ≤ 60, ≤ 30s"]
     sa["Stage A: find the pops<br/>(15fps, YOLOX + tracker)"]
     sb["Stage B per trick: pose +<br/>board + take-off/touch-down<br/>(native fps)"]
+    gt["Landed check per trick +<br/>confidence gate<br/>(advisory: logged)"]
     thumb["Thumbnail at the biggest<br/>pop's apex (else mid-clip)"]
     up["Upload processed/ + thumbs/"]
     score["Score: stub until 6c-3"]
@@ -36,12 +38,14 @@ flowchart TD
     mode -- "stub (API image, tests)" --> score
     mode -- "real (worker image)" --> dl --> probe
     probe -- "bad file" --> bad
-    probe --> tx --> sa --> sb --> thumb --> up --> score --> write
+    probe --> tx --> sa --> sb --> gt --> thumb --> up --> score --> write
 ```
 
-Stage A and Stage B are **advisory** for now: their results are logged
-(`stage A: …`, `stage B trick N: …`), and a failure in either is logged
-without failing the clip. They become the source of the score in 6c-3.
+Stage A, Stage B and the gate are **advisory** for now: their results are
+logged (`media: …`, `stage A: …`, `stage B trick N: …`, `landing trick N:
+…`, `gate: would score …` / `gate: would fail: …`), and a failure in any of
+them is logged without failing the clip. They become the source of the
+score and the status in 6c-3.
 
 ## Inside the analyzer
 
@@ -65,8 +69,12 @@ flowchart LR
         ref["refine_contacts()<br/>take-off / touch-down"]
     end
 
-    subgraph next ["6c-2 / 6c-3 (planned)"]
-        landed["landed check +<br/>confidence gate"]
+    subgraph judge ["6c-2: judge it"]
+        landed["landed.py<br/>feet over the board after<br/>touch-down, stance width"]
+        gate["gate.py<br/>clip checks, reasons,<br/>confidence"]
+    end
+
+    subgraph next ["6c-3 (planned)"]
         meas["measurements<br/>→ calibration.py → subscores"]
     end
 
@@ -77,7 +85,9 @@ flowchart LR
     fb --> bb
     ref --> landed
     bb --> landed
-    landed --> meas
+    landed --> gate
+    pops -- "brightness, skater size" --> gate
+    gate -- "landed tricks" --> meas
 ```
 
 | Module | Job |
@@ -89,6 +99,9 @@ flowchart LR
 | `localize.py` | Stage A: two detection passes, the elevation signals, pop finding, trick windows |
 | `pose.py` | MediaPipe pose over a window: image landmarks (px + visibility) and hip-centred world landmarks (metres) |
 | `stage_b.py` | Stage B: pose + board per window, refined take-off / touch-down |
+| `landed.py` | Per trick: landed, bailed or unclear, from the feet and the board just after touch-down |
+| `gate.py` | Per clip: which tricks count, the failure reason when none do, and a confidence |
+| `reasons.py` | The user-facing failure reasons the gate can give |
 | `cli.py` | `make analyze-clip`: the worker's exact path on a local file, plus debug videos |
 
 ## Worker
@@ -288,8 +301,9 @@ box, i.e. the lowest foot), the **board's centre**, and the skater's
   sample, while its centre rose a steady ~0.12 over four.
 - **Pops** are peaks of the airborne signal ≥ `MIN_POP = 0.08`, with
   pop/landing where it crosses 30% of the peak, 130–1500ms of airtime, and
-  ≥ 0.6s apart. Each becomes a window of [pop − 0.4s, max(pop + 0.8s,
-  landing + 0.4s)].
+  ≥ 0.6s apart. Each becomes a window of [pop − 0.4s, landing + 0.8s].
+  The end was max(pop + 0.8s, landing + 0.4s) until 6c-2, which stopped
+  short of the landed check's span on both real clips.
 
 **On the real clips**, also checked by eye in the debug video:
 
@@ -307,8 +321,8 @@ clip's native rate (60fps for phone footage), and in one pass:
 - runs **pose** on every frame (`pose.py`): MediaPipe's BlazePose GHUM
   "full" model in VIDEO mode, on the full frame;
 - runs the **board** detector on every other frame from 0.2s before the
-  pop to 0.7s after the landing, with Stage A's full-frame + zoomed-crop
-  merge. That covers the air and the landing check;
+  pop to the end of the window, with Stage A's full-frame + zoomed-crop
+  merge. That covers the air and the landed check;
 - **refines take-off and touch-down** from the lowest foot point's height
   above its own resting level. The level before the pop is the deck; the
   level after landing is the deck or the ground (a bail), joined by a
@@ -329,7 +343,7 @@ Choices made by measuring the real clips:
 | Follow-cam bail | 1.10s / 1.30s | **1.08s / 1.33s**, down without the board | 100% / 0.95 / 100% |
 
 Stage B costs ~2.3–2.6s per trick locally (decode + pose ~1.7s, board
-~0.9s). On Lambda it measured **~9–11s per trick** (see
+~0.9s), ~2.7–3.3s since 6c-2 lengthened the window by up to 0.4s. On Lambda it measured **~9–11s per trick** (see
 [Worker](#worker), Measured in prod), within the ~12s estimate. A 30s line
 with five tricks would then be ~70s of Stage A + ~50s of Stage B, inside
 the 300s timeout.
@@ -340,11 +354,98 @@ pose 92%, feet 0.95, board 97%; the bail at exactly 1.08s / 1.33s, pose
 100%, feet 0.95, board 90%. The small differences are floating-point
 differences from a different CPU.
 
+### The landed check, as built (6c-2)
+
+`landed.py` judges each trick over the span **0.1–0.6s after touch-down**
+(Stage B's touch-down, or Stage A's landing when Stage B couldn't refine
+one). On every frame in that span where the board was sampled, the
+skater is *on the board* when:
+- the board box is plausible: at most **0.6 skater-heights** long. In the
+  bail the detector sometimes boxed the board together with something
+  beside it, 0.71 skater-heights wide, and both feet fit inside;
+- both feet are over it: each foot's centre (mean x of ankle, heel and toe)
+  within the board's x-span, give or take 0.05 skater-heights;
+- both feet are on it: each foot's lowest point within 0.15 skater-heights
+  of the board's top edge.
+
+Separately, the **stance** (horizontal gap between the feet) can rule a
+landing out on its own: wider than 0.45 skater-heights, the feet can't both
+be on a board.
+
+| Verdict | When |
+|---|---|
+| bailed | stance > 0.45, or on the board in ≤ 30% of the judged frames |
+| landed | on the board in ≥ 70% of the judged frames |
+| unclear | fewer than half the sampled frames could be judged, or in between. Reason "no landed trick detected" |
+| unclear | less than 0.4s of footage after touch-down. Reason "clip ends too soon after the landing" |
+
+Measured on the real clips before building it, from a per-frame dump of the
+landing span:
+
+| Clip | On the board | Stance (median / max) | Implausible board boxes |
+|---|---|---|---|
+| Tripod kickflip (landed) | **30/30** frames | 0.27 / 0.30 | 0 |
+| Follow-cam bail | **2/20** frames | 0.55 / 0.71 | 8 of 30 |
+
+As built (board sampled on every other frame), the check gives:
+
+| Clip | Verdict | On the board (judged / sampled) | Implausible boxes | Stance | Board offset range |
+|---|---|---|---|---|---|
+| Tripod kickflip | **landed**, confidence 0.92 | 16/16 of 16 | 0 | 0.26 | 0.05 |
+| Follow-cam bail | **bailed**, confidence 0.89 | 2/13 of 16 | 3 | 0.54 | 0.27 |
+
+The debug videos confirm it frame by frame: green feet on the kickflip's
+deck, red feet either side of the bail's flipped board.
+
+"Board moving along with the skater" was part of the plan. It's logged as
+`board offset range` (how far the board's centre drifts relative to the
+feet, in skater heights) but not used in the verdict. It does separate
+these two clips (0.05 vs 0.27), but two clips can't tell whether it holds
+up against camera motion, so it waits for more footage.
+
+**Known risk:** both clips are side-on. Filmed from the front or behind,
+the board looks short and the feet line up, which moves both the board
+span and the stance. A head-on clip is the next one to test against.
+
+### The confidence gate, as built (6c-2)
+
+`gate.py` decides per trick, in order: skater missing from > 30% of the
+trick (pop to touch-down + 0.6s) → *trick left the frame*; pose found in
+< 60% of frames, or feet visibility < 0.5 → *body not clearly visible*;
+otherwise the landed check. Landed tricks get scored; bailed and unclear
+tricks are left out, not zeroed.
+
+Per clip: no pops → *no clean airtime found*; skater < 0.08 of the frame
+height → *skater too far from camera* (even if a trick landed: too few
+pixels to score). If nothing landed, the clip fails with the most
+actionable reason among its tricks: *trick left the frame*, then *body not
+clearly visible*, then *clip ends too soon after the landing*, then *no
+landed trick detected* (bails included).
+
+**"Too dark" only explains, never fails.** Stage A records the mean luma of
+its samples. A dark clip whose skater still tracks and lands is scored;
+when a dark clip (mean luma < 40/255) fails anyway, "too dark" replaces the
+reason, because it's the likely cause and the thing to fix.
+
+**Confidence** summarises the same evidence in [0, 1]. Each factor maps its
+gate threshold to 0.5 and a "clearly good" level to 1.0: skater size (0.08
+→ 0.15 of the frame), frame rate (24 → 50fps), pose found (0.6 → 0.95),
+feet visibility (0.5 → 0.9), landing frames judged (0.5 → 0.9). A trick's
+confidence is its weakest factor; the clip's is the mean over its landed
+tricks. The checks decide pass/fail, the number doesn't.
+
+Every threshold is an uncalibrated guess at the top of `gate.py` and
+`landed.py`. Both real clips pass every non-landing check by a wide margin,
+so none of them has been tested against a clip near its edge.
+
+**Advisory until 6c-3.** The worker logs each trick's verdict and the
+outcome the clip *would* get. Status and score still come from the stub.
+
 ### Decisions for the rest of 6c
 
-- **Landed** = for 0.1–0.6s after touch-down, both feet over the board and
-  near its top, with the board moving along. "Board near the feet" isn't
-  enough: in the bail the flipped board lies *between* the feet at 1.45s.
+- **Landed**: see [The landed check, as built](#the-landed-check-as-built-6c-2).
+  "Board near the feet" isn't enough: in the bail the flipped board lies
+  *between* the feet at 1.45s.
 - **Subscores that can't apply are left out** of the average and shown as
   n/a: catch when the feet never left the board (an ollie), and stomp when
   the board is seen end-on, so its length can't be measured.
@@ -360,7 +461,7 @@ differences from a different CPU.
 - **Milestones:**
   - 6c-1: pose + refined contacts, deployed advisory to prove MediaPipe on
     Lambda;
-  - 6c-2: landed check + confidence gate;
+  - 6c-2: landed check + confidence gate, advisory (built);
   - 6c-3: measurements, `calibration.py`, averaging, migration `0009`
     (`analyses.details`), API, stub off;
   - then the prod check.
@@ -409,7 +510,8 @@ breakdown reads as an opinion the user can argue with.
 Low confidence returns `unanalyzable` with a **specific** reason, never a
 guess: *skater too far from camera*, *trick left the frame*, *too dark*, *no
 clean airtime found*, *no landed trick detected*, and (6c) *body not
-clearly visible*. The media step adds the file-level reasons that come
+clearly visible* and *clip ends too soon after the landing*. How each is
+decided: [The confidence gate, as built](#the-confidence-gate-as-built-6c-2). The media step adds the file-level reasons that come
 before any scoring: *unreadable video file*, *no video stream found*, *clip
 too short*.
 
@@ -540,20 +642,24 @@ dir in Lambda's read-only home. The image now sets
 ## Seeing what it saw
 
 `make analyze-clip FILE=tests/fixtures/clips/<clip>` runs exactly the
-worker's path on a local file. It prints the windows, Stage B per trick and
-timings, and writes debug videos under `tests/fixtures/clips/_debug/`:
+worker's path on a local file. It prints the windows, Stage B per trick,
+each trick's landing verdict, the gate's outcome and timings, and writes
+debug videos under `tests/fixtures/clips/_debug/`:
 
 - `<clip>.debug.mp4` (Stage A): skater and board boxes, the elevation
   curves (feet, board, both) against the pop threshold, and the trick
   windows;
 - `<clip>.trick<N>.debug.mp4` (Stage B): the window at full rate, played at
   1/3 speed, with the pose skeleton, feet, board and take-off/touch-down
-  marked.
+  marked. In the landed check's span the feet turn green (on the board) or
+  red (off it), and the bottom line shows the trick's verdict and the
+  clip's gate outcome.
 
 Those videos are the real check on the analyzer until calibration (6d).
 The README's sneak-peek GIFs are made from them.
 
-**Tests:** synthetic signal tests for Stage A and Stage B (no models, run
-in CI), detector/tracker tests with a hand-built model output, and tests on
+**Tests:** synthetic signal tests for Stage A and Stage B, and synthetic
+feet/board observations for the landed check and every gate reason (no
+models, run in CI), detector/tracker tests with a hand-built model output, and tests on
 the real clips in the gitignored `backend/tests/fixtures/clips/` (local
 only). See the [development guide](../development.md#tests).

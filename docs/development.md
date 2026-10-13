@@ -172,7 +172,7 @@ production uses. CI runs exactly these commands (see
 - **`make test`** (API image): the whole API, end to end. The API image has
   no ffmpeg or CV stack, so the worker runs its stub scorer here.
 - **`make test-worker`** (worker image): the media pipeline, detector,
-  tracker, Stage A and Stage B. Most use synthetic signals or ffmpeg's test
+  tracker, Stage A, Stage B, the landed check and the gate. Most use synthetic signals or ffmpeg's test
   video, so they run in CI. Under `make test` they all skip.
 - **Real clips:** `backend/tests/fixtures/clips/` is **gitignored**: real
   skate clips are personal footage and are never committed (the README's

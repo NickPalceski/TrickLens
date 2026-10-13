@@ -73,8 +73,12 @@ MIN_POP_SEPARATION_S = 0.6
 
 # --- Window -----------------------------------------------------------------
 WINDOW_BEFORE_MS = 400
-WINDOW_AFTER_MS = 800  # after the pop; extended to land + WINDOW_AFTER_LAND_MS if longer
-WINDOW_AFTER_LAND_MS = 400
+# Stage B's landed check (6c-2) reads 0.1-0.6s after touch-down, and Stage
+# A's 15fps landing can be ~80ms before the real one (the kickflip's: 1.57s
+# vs 1.65s), so the window runs to 0.8s after the landing. Before 6c-2 it
+# was max(pop + 0.8s, land + 0.4s), which stopped short of that span on both
+# real clips.
+WINDOW_AFTER_LAND_MS = 800
 
 
 @dataclass(frozen=True)
@@ -113,6 +117,9 @@ class StageAResult:
     others: list[list[Detection]]  # every other person, per sample
     frame_size: tuple[int, int]  # (width, height)
     timings_s: dict[str, float]
+    # Mean luma (0-255) over the samples. The gate (6c-2) uses it only to
+    # explain a failure as "too dark", never to fail a clip on its own.
+    brightness: float = float("nan")
 
     @property
     def skater_coverage(self) -> float:
@@ -222,9 +229,7 @@ def find_pops(sig: Signals, fps: float = SAMPLE_FPS) -> list[TrickWindow]:
                 apex_ms=float(t[p]),
                 land_ms=float(land_ms),
                 start_ms=float(max(0.0, pop_ms - WINDOW_BEFORE_MS)),
-                end_ms=float(
-                    min(duration_ms, max(pop_ms + WINDOW_AFTER_MS, land_ms + WINDOW_AFTER_LAND_MS))
-                ),
+                end_ms=float(min(duration_ms, land_ms + WINDOW_AFTER_LAND_MS)),
                 peak_elevation=float(air[p]),
             )
         )
@@ -232,6 +237,12 @@ def find_pops(sig: Signals, fps: float = SAMPLE_FPS) -> list[TrickWindow]:
 
 
 # --- The model-driven part ------------------------------------------------------
+
+
+def mean_luma(image: np.ndarray) -> float:
+    """Mean Rec. 601 luma (0-255) of a BGR frame, from every 4th pixel."""
+    weights = np.float32([0.114, 0.587, 0.299])  # B, G, R
+    return float((image[::4, ::4].astype(np.float32) @ weights).mean())
 
 
 def _feet(box: Detection) -> tuple[float, float]:
@@ -272,10 +283,12 @@ def analyze(path: str, info: VideoInfo, model_path: str) -> StageAResult:
     t0 = time.perf_counter()
     people: list[list[Detection]] = []
     full_boards: list[list[Detection]] = []
+    luma: list[float] = []
     for f in iter_frames(path, w, h, SAMPLE_FPS):
         dets = detector.detect(f.image)
         people.append([d for d in dets if d.cls == PERSON])
         full_boards.append([d for d in dets if d.cls == SKATEBOARD])
+        luma.append(mean_luma(f.image))
     timings["detect_full"] = time.perf_counter() - t0
 
     tracks = track_people(people)
@@ -322,4 +335,5 @@ def analyze(path: str, info: VideoInfo, model_path: str) -> StageAResult:
     compute_elevation(sig)
     windows = find_pops(sig)
     timings["localize"] = time.perf_counter() - t0
-    return StageAResult(windows, sig, skater, board, others, (w, h), timings)
+    brightness = float(np.mean(luma)) if luma else float("nan")
+    return StageAResult(windows, sig, skater, board, others, (w, h), timings, brightness)
