@@ -251,6 +251,21 @@ can live anywhere.
   docs/components/analyzer.md, Worker). `check_models.py` now fails the build if
   `libmediapipe.so` contains `maybe_cpus`. Local runs can't reproduce
   Lambda-sandbox-only failures, so the advisory deploy is the real test.
+- **A warm Lambda container broke every second worker message, from step 5
+  until 6c-2's prod check.** The worker (and rankings) handler calls
+  `asyncio.run` per invocation, a new event loop each time, but `engine` in
+  `app/db.py` is module-level, so its pooled asyncpg connection survives in
+  a warm container while its loop is closed. The next invocation's claim
+  query checked it out and died with `RuntimeError: ... attached to a
+  different loop` in ~20ms, before claiming, so the clip sat in `queued`
+  until SQS's 1800s redelivery. Never seen locally (the poll loop is one
+  `asyncio.run` for life) or in earlier prod checks (those clips mostly hit
+  fresh containers). Fixed by `app.db.run_in_fresh_loop()`, which disposes
+  the pool before the loop closes; both handlers use it, and
+  `tests/test_worker.py` calls `lambda_handler` twice in one process to
+  reproduce it. The API is unaffected: Mangum keeps one loop per
+  container. New Lambda entrypoints that use `asyncio.run` must use the
+  helper.
 - **`ADD --chmod` also chmods the directories it creates.**
   `Dockerfile.worker`'s first version did `ADD --chmod=644 <url>
   /var/task/models/yolox_tiny.onnx`, which left `models/` as `drw-r--r--`.
@@ -347,8 +362,8 @@ media pipeline) is done and live, verified in prod with two real clips.
 Step 6b (Stage A: finding the tricks) is done and live, verified in prod.
 6c is in progress: 6c-1 (Stage B: pose + refined contacts) is done and
 live (advisory), verified in prod after the MediaPipe tcmalloc fix (see
-gotchas). 6c-2 (landed check + confidence gate) is done and verified
-locally, deploying advisory.**
+gotchas). 6c-2 (landed check + confidence gate) is done and live
+(advisory), verified in prod. Next: 6c-3.**
 Running locally:
 
 ```bash
@@ -659,6 +674,22 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
     score …` / `would fail: …`; status still from the stub;
   - `analyze-clip` prints verdicts, debug video colours the feet.
 
+  **Verified in prod** (deploy of `b26e007`), same verdicts as local:
+  - kickflip: landed, on the board 16/16, stance 0.27, confidence 0.92,
+    gate would score it;
+  - bail: bailed, on the board 1/10 judged of 16, 5 implausible board
+    boxes, stance 0.54, confidence 0.66 (lower than local's 0.89 because
+    fewer landing frames could be judged), gate would fail it "no landed
+    trick detected".
+
+  Lambda timing, from the bail (cold start, 3.7s init): media 5.0s
+  (download 0.35 + probe/transcode 4.68), Stage A 10.1s, Stage B 13.0s of
+  which board detection 7.4s (up from 8.9s Stage B total before 6c-2's
+  longer window), 32.1s end to end, 762MB. The kickflip, the first run
+  after the deploy, took 103.9s (cold image cache: transcode 9.2s, Stage B
+  30.7s). The second kickflip hit the warm-container event-loop bug (see
+  gotchas), fixed in the same session.
+
   Decided with the user: advisory until 6c-3; unclear tricks are left out
   like bails; the clip fails only when nothing landed, with the most
   actionable reason. Every threshold is an uncalibrated guess from two
@@ -716,10 +747,13 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
      - 6c-1 ✅ Stage B: 60fps windowed decode, pose ("full" model), board
        around the trick, refined take-off/touch-down, libEGL + pose model in
        the image, per-trick debug video *(live advisory, verified in prod)*
-     - 6c-2 ✅ landed check + confidence gate, advisory *(verified locally;
-       deploy advisory)*
+     - 6c-2 ✅ landed check + confidence gate, advisory *(live advisory,
+       verified in prod)*
      - 6c-3 ⬜ measurements, `calibration.py`, averaging, migration `0009`
-       (`analyses.details`), API `tricks`, stub off
+       (`analyses.details`), API `tricks`, stub off; plus a periodic sweep
+       of old `queued` clips (decided 2026-10-14): a message that fails all
+       its receives *before* the claim lands in the DLQ and leaves its clip
+       `queued` forever, which the last-receive give-up doesn't cover
    - 6d ⬜ calibration once the user has hand-judged clips → `steeze-v1`
 
 Steps are sequential. Do not start a step before the previous one's

@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db import SessionLocal
+from app.db import SessionLocal, run_in_fresh_loop
 from app.logs import configure_logging
 from app.models.clip import Clip
 from app.models.discover import ClipRanking, TeamScoreHistory
@@ -132,7 +132,7 @@ async def run() -> tuple[int, int]:
 def lambda_handler(_event: dict[str, Any], _context: Any) -> dict[str, int]:
     """Production entrypoint (from step 5): one invocation per EventBridge
     schedule tick."""
-    n_clips, n_teams = asyncio.run(run())
+    n_clips, n_teams = run_in_fresh_loop(run)
     return {"clips_ranked": n_clips, "teams_snapshotted": n_teams}
 
 

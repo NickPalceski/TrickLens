@@ -8,7 +8,7 @@ up, the media step (verify, transcode, thumbnail), and the steeze analyzer
 ← Back to the [architecture overview](../ARCHITECTURE.md).
 
 **Status:** media (6a), Stage A (6b) and Stage B (6c-1) are live. The
-landed check and confidence gate (6c-2) are built. Stage B and the gate run
+landed check and confidence gate (6c-2) are live too. Stage B and the gate run
 in advisory mode (logged, not stored). Scores are still the stub
 until 6c-3. See the [build order](../ARCHITECTURE.md#build-order).
 
@@ -203,6 +203,11 @@ quota, AWS requires at least 10 executions to stay unreserved.
   init timeout above, not a per-container cost: the bail's run was a
   fresh container too and showed none of it. `pose_and_board` includes
   the MediaPipe import, because `run_pose` imports lazily.
+- 6c-2 (longer window, landed check, gate): the bail took 5.0s of media
+  (download 0.35s, probe + transcode 4.7s), 10.1s of Stage A and 13.0s of
+  Stage B (7.4s of it board detection, up from 4.1s with the shorter
+  window), 32.1s end to end, 762MB, 3.7s init. Same verdicts as local on
+  both clips.
 - The rule that follows: keep the heavy CV imports (cv2, onnxruntime,
   mediapipe) inside the handler path, never at module level, or every cold
   start pays for them during init.

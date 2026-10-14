@@ -34,7 +34,7 @@ from typing import Any
 from sqlalchemy import and_, func, or_, select, update
 
 from app.config import get_settings
-from app.db import SessionLocal
+from app.db import SessionLocal, run_in_fresh_loop
 from app.logs import configure_logging
 from app.models.clip import Analysis, Clip
 from app.models.enums import ClipStatus
@@ -403,7 +403,7 @@ def lambda_handler(event: dict[str, Any], _context: Any) -> None:
                 json.loads(record["body"]), int(record["attributes"]["ApproximateReceiveCount"])
             )
 
-    asyncio.run(_run())
+    run_in_fresh_loop(_run)
 
 
 if __name__ == "__main__":

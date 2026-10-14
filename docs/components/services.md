@@ -135,6 +135,22 @@ a commit without a lazy reload, which async SQLAlchemy can't do implicitly.
 `get_db()` gives each request one session, committed on success and rolled
 back on error.
 
+**One event loop per pooled connection.** An asyncpg connection only works
+on the event loop that opened it. The API's Lambda is fine: Mangum runs
+every invocation on the same loop for the container's life. The worker
+and rankings handlers call `asyncio.run` once per invocation, a new loop
+each time, while `engine` (module-level) survives in a warm container. So
+they go through `run_in_fresh_loop()`, which disposes the pool before the
+loop closes, and every invocation opens its own connection. Without it,
+the second message on a warm worker container checked out the previous
+loop's connection and died with *"attached to a different loop"* in its
+first query, before claiming its clip, leaving the clip `queued`. That was
+latent from step 5 and first seen in the 6c-2 prod check; local runs never
+hit it, because the poll loop runs one `asyncio.run` for its whole life.
+`tests/test_worker.py` reproduces it by calling `lambda_handler` twice in
+one process. Any new Lambda entrypoint that uses `asyncio.run` needs the
+same helper.
+
 ## Logging (`logs.py`)
 
 Every entrypoint (API, worker, rankings) calls `configure_logging()` at

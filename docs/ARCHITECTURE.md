@@ -16,7 +16,7 @@ Setup and day-to-day commands are in the
 [deployment guide](deployment.md).
 
 **Current state:** steps 1–5 are done and live in AWS. Step 6 (the real
-analyzer) is in progress: 6a, 6b and 6c-1 are live; 6c-2 is built. See the
+analyzer) is in progress: 6a, 6b, 6c-1 and 6c-2 are live. See the
 [build order](#build-order).
 
 ---
@@ -407,7 +407,7 @@ capped at 14 days per Lambda function, and an AWS Budget alarm at $5
 | 6b | YOLOX-Tiny + zoomed board pass, IoU tracker, local ground estimate, Stage A pop localization, apex thumbnail, `make analyze-clip` debug video | **done, live** |
 | 6c | MediaPipe pose, six subscores, confidence gate, averaging landed tricks, `steeze-v0-uncalibrated` | **in progress** |
 | 6c-1 | Stage B: windowed 60fps decode, pose, board around the trick, refined take-off/touch-down, libEGL + pose model in the image, per-trick debug video | **live (advisory), verified in prod** |
-| 6c-2 | Landed check + confidence gate, advisory; longer Stage B window; media timings | **done (local); deploys advisory** |
+| 6c-2 | Landed check + confidence gate, advisory; longer Stage B window; media timings | **live (advisory), verified in prod** |
 | 6c-3 | Measurements, calibration, averaging, migration `0009`, API, stub off | |
 | 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | |
 

@@ -134,3 +134,31 @@ async def test_lambda_handler_passes_the_receive_count(monkeypatch):
     record = {"body": '{"clip_id": "x"}', "attributes": {"ApproximateReceiveCount": "3"}}
     await asyncio.to_thread(worker.lambda_handler, {"Records": [record]}, None)
     assert seen == [({"clip_id": "x"}, 3)]
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_lambda_handler_survives_a_warm_container(monkeypatch):
+    """Lambda reuses a warm container: lambda_handler runs again in the same
+    process, with a new event loop (asyncio.run per invocation). Pooled
+    connections from the previous loop must not leak into the next one, or
+    the second message dies with "attached to a different loop" before it
+    claims its clip (the 6c-2 prod check's second kickflip)."""
+    from app.db import engine
+
+    async def no_media(_clip):
+        return None
+
+    monkeypatch.setattr(worker, "_process_media", no_media)
+    ids = [await _clip(ClipStatus.QUEUED) for _ in range(2)]
+    # Start like a fresh container: no pooled connections. (Creating the
+    # clips above pooled one from pytest's own loop.)
+    await engine.dispose()
+    for clip_id in ids:  # two invocations, same "container" (this process)
+        record = {
+            "body": f'{{"clip_id": "{clip_id}"}}',
+            "attributes": {"ApproximateReceiveCount": "1"},
+        }
+        await asyncio.to_thread(worker.lambda_handler, {"Records": [record]}, None)
+    for clip_id in ids:
+        clip, _ = await _load(clip_id)
+        assert clip.status in (ClipStatus.ANALYZED, ClipStatus.UNANALYZABLE)
