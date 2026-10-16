@@ -219,6 +219,20 @@ def test_the_catch_is_when_both_feet_are_back_on_the_board():
     assert m["catch_frac"] == pytest.approx(m["catch_ms"] / (TOUCHDOWN - TAKEOFF), abs=0.01)
 
 
+def test_a_partial_board_box_before_touch_down_doesnt_undo_the_catch():
+    """The 6c-3 prod check: one box around only part of the board, a
+    sample before touch-down, read as both feet off and reset the catch to
+    touch-down itself."""
+    o = _obs()
+    _set_feet(o.pose.image, _rows(o, TAKEOFF + 50, TAKEOFF + 250), (AT_BOLTS[0], 400.0))
+    clean = _m(o)
+    last = max(r for r, tt in enumerate(o.pose.t_ms) if r in o.board and tt < TOUCHDOWN)
+    o.board[last] = _board(BOARD_X[0], BOARD_X[0] + 40)  # 0.2 skater heights: a fragment
+    m = _m(o)
+    assert m["partial_boards"] == 1
+    assert m["catch_ms"] == clean["catch_ms"] > 100
+
+
 def test_a_late_catch_scores_lower_than_an_early_one():
     early, late = _obs(), _obs()
     _set_feet(early.pose.image, _rows(early, 1050, 1150), (AT_BOLTS[0], 400.0))

@@ -26,8 +26,8 @@ Per subscore, the measurements, and when they're n/a (None):
   `leg_ratio` (hip to ankle) and `arm_ratio` (hips to the farther wrist),
   per torso length. n/a with too little pose in the air.
 - **Catch**: `catch_ms` / `catch_frac`, how long before touch-down both
-  feet were back on the board. n/a when the feet never left the board
-  (an ollie).
+  feet were back on the board, skipping partial board boxes
+  (PARTIAL_BOARD). n/a when the feet never left the board (an ollie).
 
 Measured on the tripod kickflip before choosing these (docs/components/
 analyzer.md, Subscores, as built (6c-3)). Board-box geometry is only
@@ -73,6 +73,12 @@ MIN_STOMP_SAMPLES = 2
 # the stance widened by this much over the pre-pop stance (kickflip:
 # 0.29 -> 0.50).
 SEPARATION_STANCE = 0.12
+# A board box shorter than this fraction of the trick's median box is a
+# partial detection (the 6c-3 prod check: 0.23 skater heights against ~0.5,
+# one sample before touch-down), so the sample is skipped like a missing
+# board instead of reading as both feet off. A kickflip turns the board
+# about its long axis, so its length doesn't really shrink like that.
+PARTIAL_BOARD = 0.6
 
 MIN_AIR_POSE_FRAMES = 3
 
@@ -219,18 +225,27 @@ def _catch(obs: TrickObservation, t0: float, t1: float) -> dict:
     air = [stance(f) for r in _rows(obs, t0, t1) if all(f := _feet(obs, r))]
     spread = max(air) - float(np.median(pre)) if pre and air else None
 
-    judged: list[tuple[float, bool]] = []  # (t, both feet on the board)
-    left_span = False
-    m = L.FOOT_MARGIN * h
+    samples = []
     for row in _rows(obs, t0, t1):
         b = obs.board.get(row)
         left, right = _feet(obs, row)
-        if b is None or not L.plausible(b, h) or not (left and right):
-            continue
+        if b is not None and L.plausible(b, h) and left and right:
+            samples.append((float(obs.pose.t_ms[row]), b, left, right))
+    typical = float(np.median([b.width for _, b, _, _ in samples])) if samples else 0.0
+    whole = [x for x in samples if x[1].width >= PARTIAL_BOARD * typical]
+
+    judged: list[tuple[float, bool]] = []  # (t, both feet on the board)
+    left_span = False
+    m = L.FOOT_MARGIN * h
+    for t, b, left, right in whole:
         left_span |= any(not b.x1 - m <= f[0] <= b.x2 + m for f in (left, right))
-        judged.append((float(obs.pose.t_ms[row]), L.feet_on(b, left, right, h)))
+        judged.append((t, L.feet_on(b, left, right, h)))
     separated = left_span or (spread is not None and spread >= SEPARATION_STANCE)
-    out = {"separated": separated, "air_stance_spread": _r(spread)}
+    out = {
+        "separated": separated,
+        "air_stance_spread": _r(spread),
+        "partial_boards": len(samples) - len(whole),
+    }
     if not separated:
         return out | {"catch_ms": None, "catch_frac": None}
     # The last run of on-board samples before touch-down; caught at

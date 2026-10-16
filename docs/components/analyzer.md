@@ -254,8 +254,13 @@ quota, AWS requires at least 10 executions to stay unreserved.
   both clips.
 - 6c-3 (window to landing + 1.3s for roll-away): locally, Stage B went
   from ~3s to ~4.2s per trick on the kickflip; measuring and scoring take
-  under 10ms. On Lambda that's roughly +3–4s per trick. To confirm in the
-  prod check.
+  under 10ms. In the prod check (no CloudWatch access from the dev user,
+  so wall time from `complete` to a final status): the bail took 28s, the
+  kickflip 103s as the first run after the deploy (cold image cache).
+- **The same clip can score a little differently in prod and locally**,
+  because the transcodes differ (x264 output depends on the thread
+  count). After the partial-box fix, prod's kickflip file gives 79.7 and
+  the local one 77.5, with every subscore within a few points.
 - The rule that follows: keep the heavy CV imports (cv2, onnxruntime,
   mediapipe) inside the handler path, never at module level, or every cold
   start pays for them during init.
@@ -587,7 +592,7 @@ are stored for 6d anyway.
 | Roll-away | over 0.6–1.2s after touch-down: `rollaway_on_board_frac`, and `foot_down` (two judged samples in a row off the board, or a too-wide stance), which caps it at 40 | 0.5 → 20, 1.0 → 100 | under 0.3s of footage, or < 3 judged samples |
 | Stomp | over the first 0.2s: each foot's position along the board, and `stomp_error`, the worse foot's distance from its bolt line (0.28 / 0.72 of the board) | 0 → 100, 0.25 board lengths → 20 | board seen end-on (shorter than 0.3 skater heights) |
 | Compactness | in the air: `leg_ratio` (hip to ankle) and `arm_ratio` (hips to the farther wrist) | 1.0 → 100, 1.6 → 30; 1.2 → 100, 2.2 → 40 | too little pose in the air |
-| Catch | `catch_frac`: how much of the airtime both feet were back on the board before touch-down | 0 → 30, 0.7 → 100 | the feet never left the board (an ollie) |
+| Catch | `catch_frac`: how much of the airtime both feet were back on the board before touch-down, skipping partial board boxes | 0 → 30, 0.7 → 100 | the feet never left the board (an ollie) |
 
 Choices made by measuring the clips first (a frame-by-frame dump of every
 candidate signal):
@@ -597,6 +602,16 @@ candidate signal):
   the board when a foot left the box's x-span or the stance widened by
   0.12 over the pre-pop stance (the flick: 0.29 → 0.50). Caught is the
   start of the last run of on-board samples before touch-down.
+- **A partial board box is skipped, not read as feet off** (found in
+  the first 6c-3 prod check). Prod's kickflip scored catch 30, not 80:
+  one sample before touch-down, the detector boxed only part of the board
+  (0.23 skater heights against ~0.5), both feet fell outside it, and the
+  catch reset to touch-down. Running the analyzer locally on prod's own
+  processed file reproduced it exactly, so the cause is the transcode,
+  not the analyzer: x264's output depends on the thread count, and Lambda
+  has 2 vCPUs. Catch now skips a box shorter than 0.6× the trick's median
+  box (a kickflip turns the board about its long axis, so its length
+  doesn't really shrink). Prod's file then gives catch 233ms (91).
 - **Hip height above the lowest foot**, not hip position in the frame, for
   settling: it cancels camera motion and the skater rolling across.
 - **Signed torso lean in the image plane**, not unsigned lean in 3D:
