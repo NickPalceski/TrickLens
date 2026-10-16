@@ -1,5 +1,12 @@
 .DEFAULT_GOAL := help
 
+# The `web` container runs as the host user, so files it writes into
+# frontend/ (node_modules, the lockfile) aren't root-owned (docker-compose.yml).
+export HOST_UID := $(shell id -u)
+export HOST_GID := $(shell id -g)
+WEB := docker compose run --rm --no-deps web pnpm
+OPENAPI_DUMP := import json; from app.main import app; print(json.dumps(app.openapi(), indent=2, sort_keys=True))
+
 # Worker-image-only test files (need ffmpeg / the CV stack). Under `make test`
 # (API image) they all skip.
 WORKER_TESTS := tests/test_media.py tests/test_analyzer_detect.py \
@@ -9,7 +16,8 @@ WORKER_TESTS := tests/test_media.py tests/test_analyzer_detect.py \
 
 .PHONY: help init up down clean logs ps health migrate revision shell psql fmt test test-worker \
 	licenses analyze-clip rankings sweep \
-	tf-init tf-plan tf-apply
+	tf-init tf-plan tf-apply \
+	web web-install web-test web-check web-fmt web-types
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -24,6 +32,7 @@ up: ## Build and start everything
 	@chmod +x scripts/localstack-init.sh
 	docker compose up -d --build
 	@echo ""
+	@echo "  Web app:   http://localhost:3000"
 	@echo "  API docs:  http://localhost:8000/docs"
 	@echo "  Health:    make health"
 
@@ -91,3 +100,26 @@ tf-plan: ## terraform plan against prod (needs TF_VAR_database_url and TF_VAR_bu
 
 tf-apply: ## terraform apply against prod — real AWS resources, real cost
 	terraform -chdir=infra apply
+
+web: ## Start just the web app on http://localhost:3000 (mock API by default)
+	docker compose up -d web
+	@echo "  Web app:   http://localhost:3000   (logs: docker compose logs -f web)"
+
+web-install: ## Install or refresh frontend dependencies (writes frontend/pnpm-lock.yaml)
+	$(WEB) install
+
+web-test: ## Run the frontend unit tests
+	$(WEB) install --frozen-lockfile
+	$(WEB) test
+
+web-check: ## Everything CI checks on the frontend: lint, API-type drift, typecheck, tests, build
+	$(WEB) install --frozen-lockfile
+	$(WEB) check
+
+web-fmt: ## Format and lint-fix the frontend (Biome)
+	$(WEB) fmt
+
+web-types: ## Regenerate the frontend's API types from the backend's OpenAPI spec
+	docker compose run --rm --no-deps -T api python -c "$(OPENAPI_DUMP)" > frontend/packages/api/openapi.json
+	$(WEB) install --frozen-lockfile
+	$(WEB) types

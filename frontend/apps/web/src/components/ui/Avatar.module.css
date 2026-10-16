@@ -1,0 +1,17 @@
+.avatar {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--sel);
+  color: var(--on-sel);
+  font-family: var(--font-display);
+  font-weight: 700;
+  object-fit: cover;
+}
+
+.highlight {
+  background: var(--yellow);
+  color: var(--brown);
+}

@@ -1,0 +1,173 @@
+/* Phone layout first; the desktop layout takes over at 900px, which is
+   `breakpoints.desktop` in @tricklens/tokens (CSS can't read it, so keep the
+   two in sync). */
+
+.shell {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  height: calc(3.5rem + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) max(1rem, env(safe-area-inset-right, 0px)) 0
+    max(1rem, env(safe-area-inset-left, 0px));
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  text-decoration: none;
+  display: inline-flex;
+}
+
+.nav {
+  display: none;
+}
+
+.navItem {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 0.875rem;
+  border-radius: var(--radius-pill);
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  text-decoration: none;
+}
+
+.navItem:hover {
+  color: var(--ink);
+}
+
+.navItem.active {
+  background: var(--sel);
+  color: var(--on-sel);
+}
+
+.account {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.me {
+  display: none;
+  align-items: center;
+  gap: 0.625rem;
+  text-decoration: none;
+}
+
+.mePlaceholder {
+  display: none;
+}
+
+.handle {
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+}
+
+.main {
+  flex: 1;
+  width: 100%;
+  /* Clear the fixed tab bar (4.375rem) plus the phone's home indicator. */
+  padding-bottom: calc(4.375rem + env(safe-area-inset-bottom, 0px));
+}
+
+/* Bottom tab bar (phones). */
+.tabs {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  height: calc(4.375rem + env(safe-area-inset-bottom, 0px));
+  padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+
+.tab,
+.uploadTab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding-top: 0.5rem;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.tabIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.25rem;
+  height: 1.875rem;
+  border-radius: var(--radius-pill);
+}
+
+.tab.active {
+  color: var(--ink);
+}
+
+.tab.active .tabIcon {
+  background: var(--sel);
+  color: var(--on-sel);
+}
+
+.uploadButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 2.5rem;
+  border-radius: 12px;
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+@media (min-width: 900px) {
+  .header {
+    height: 4.5rem;
+    padding: 0 3rem;
+  }
+
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+  }
+
+  .me,
+  .mePlaceholder {
+    display: inline-flex;
+  }
+
+  .mePlaceholder {
+    width: 2.125rem;
+    height: 2.125rem;
+    border-radius: 50%;
+    background: var(--panel);
+  }
+
+  .main {
+    padding-bottom: 0;
+  }
+
+  .tabs {
+    display: none;
+  }
+}

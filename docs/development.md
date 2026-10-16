@@ -1,7 +1,8 @@
 # Development guide
 
 Running TrickLens locally, the commands you'll use, the tests, and
-step-by-step walkthroughs of every API area.
+step-by-step walkthroughs of every API area. The web app's internals are in
+[components/frontend.md](components/frontend.md).
 
 ← Back to the [README](../README.md) · [Architecture](ARCHITECTURE.md)
 
@@ -17,11 +18,13 @@ flowchart LR
         migrate["migrate<br/>one-shot: alembic upgrade head"]
         pg[("postgres :5432")]
         ls["localstack :4566<br/>S3 tricklens-media<br/>SQS tricklens-analysis + DLQ"]
+        web["web :3000<br/>React app, Vite dev server<br/>(node:24-alpine, mock API)"]
     end
 
     cognito["Cognito dev pool<br/>(real AWS)"]
 
     host --> api
+    host -- "browser" --> web
     host -- "presigned upload,<br/>media URLs" --> ls
     migrate --> pg
     api --> pg
@@ -39,6 +42,7 @@ flowchart LR
 | `localstack` | 4566 | Emulated S3 + SQS. `scripts/localstack-init.sh` creates the bucket (CORS, 7-day `raw/` expiry) and both queues on startup |
 | `migrate` | — | One-shot `alembic upgrade head`; the API waits for it |
 | `worker` | — | Long-polls SQS and runs the real media pipeline and analyzer (`docker compose logs -f worker` to watch) |
+| `web` | 3000 | The web app (`frontend/`), Vite with hot reload. Answers API calls from a mock by default, so it needs none of the services above |
 
 `docker compose up` is self-provisioning. A fresh clone needs no manual
 setup *except* Cognito, which touches a real AWS account (see
@@ -57,6 +61,8 @@ MacBook), each an independent clone with its own `.env`.
   [Commands](#commands) table.
 - **The AWS CLI and an AWS account, for Cognito only.** Postgres, S3 and SQS
   all run locally.
+- **No Node.js.** The frontend's tooling (pnpm, Vite, tests) runs in the
+  `web` container, pinned by `frontend/package.json`.
 - **Windows:** the repo must live **inside WSL2** (`~/git-repos/TrickLens`),
   never on `/mnt/c`. Bind mounts across the Windows↔Linux boundary make file
   watching slow and can't set the executable bit `scripts/localstack-init.sh`
@@ -72,8 +78,9 @@ make up      # build + start everything
 make health  # verify every dependency is reachable
 ```
 
-Then open <http://localhost:8000/docs> for the interactive API docs. A
-healthy `make health` looks like:
+Then open <http://localhost:3000> for the web app and
+<http://localhost:8000/docs> for the interactive API docs. A healthy
+`make health` looks like:
 
 ```json
 {
@@ -112,7 +119,7 @@ on the host (not in Docker):
 On another machine, copying those two lines into its `.env` is enough; the
 pool is shared.
 
-**Creating a test user** (there's no frontend yet):
+**Creating a test user** (the web app's sign-in is still mocked):
 
 ```bash
 aws cognito-idp sign-up --client-id "$COGNITO_CLIENT_ID" \
@@ -158,10 +165,16 @@ The **id token**, not the access token, is the bearer credential, so
 | `make rankings` | Rebuild Discover rankings + team score snapshots | `docker compose run --rm api python -m app.rankings` |
 | `make sweep` | Fail clips stuck `queued`/`analyzing` for over 2h ("analysis failed"); prod runs it on every rankings tick | `docker compose run --rm api python -m app.sweep` |
 | `make tf-init` / `tf-plan` / `tf-apply` | Terraform against prod (see the [deployment guide](deployment.md)) | `terraform -chdir=infra ...` |
+| `make web` | Start just the web app on :3000 | `docker compose up -d web` |
+| `make web-install` | Install or update frontend dependencies (after editing a `package.json`) | `docker compose run --rm --no-deps web pnpm install` |
+| `make web-test` | Frontend unit tests | `docker compose run --rm --no-deps web pnpm test` |
+| `make web-check` | What CI runs on the frontend: lint, API-type drift, typecheck, tests, build | `docker compose run --rm --no-deps web pnpm check` |
+| `make web-fmt` | Format and lint-fix the frontend (Biome) | `docker compose run --rm --no-deps web pnpm fmt` |
+| `make web-types` | Regenerate the frontend's API types after an API change | see the `web-types` target in the `Makefile` |
 
 Containers run as root, so anything a container writes into the
-bind-mounted repo comes out root-owned. `make analyze-clip` already runs as
-your user; pass `--user "$(id -u):$(id -g)"` to any ad-hoc
+bind-mounted repo comes out root-owned. `make analyze-clip` and the `web`
+service already run as your user (the Makefile exports `HOST_UID`/`HOST_GID`); pass `--user "$(id -u):$(id -g)"` to any ad-hoc
 `docker compose run` that writes files (e.g. `ruff format`).
 
 ## Tests
@@ -185,6 +198,9 @@ production uses. CI runs exactly these commands (see
   `test_analyzer_real_clips.py` checks the analyzer against timings read
   off their frames; without them (and in CI) those tests skip. Notes on each
   clip are in `test_video_details.md` there.
+- **`make web-test`** (web container): the frontend packages and the web
+  app, against the same mock API handlers the browser uses. Needs no
+  backend services. See [frontend tests](components/frontend.md#tests).
 - **The dev database is shared, persistent state** across test runs and
   manual testing. A test of anything global (Discover rankings) must assert
   presence and relative order of the rows it created, never an exact list.
@@ -406,4 +422,8 @@ rankings depend on `make rankings`. How it works:
 | `unanalyzable` with another reason and `model_version: stub-v1` | The stub scorer's deliberate ~10% fake failure (API image, and every clip from before 6c-3). Not a bug. |
 | `unanalyzable` with "analysis failed" | The analyzer crashed (traceback in `docker compose logs worker`, after `analysis crashed`), a run kept dying, or the clip sat stuck for 2h and was swept (`model_version: sweep`). "analysis failed for this trick" in `analysis.tricks` is one trick's crash; the rest were still scored. |
 | `OSError: libEGL.so.1` from MediaPipe | The worker image lacks `mesa-libEGL`/`libglvnd-gles`. Rebuild it: `docker compose build worker`. |
+| `make web` / `web-test` fails with `ERR_PNPM_OUTDATED_LOCKFILE` | A `package.json` changed without updating the lockfile. Run `make web-install` and commit `frontend/pnpm-lock.yaml`. |
+| pnpm refuses a version: "does not meet the minimumReleaseAge" | Deliberate: versions younger than 14 days aren't installed (`frontend/pnpm-workspace.yaml`). Pick an older version or wait. |
+| The web app shows no data, console says the mock API failed to start | `apps/web/public/mockServiceWorker.js` is missing or stale after an `msw` upgrade. Regenerate it: `docker compose run --rm --no-deps web sh -c "cd apps/web && pnpm exec msw init public"`. |
+| CI: "frontend API types match the API" fails | The API's OpenAPI spec changed. Run `make web-types` and commit `frontend/packages/api/`. |
 | Root-owned files appear in the repo | A container wrote them. Delete via a container, and run future writes with `--user "$(id -u):$(id -g)"`. |

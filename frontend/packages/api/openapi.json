@@ -1,0 +1,3650 @@
+{
+  "components": {
+    "schemas": {
+      "AnalysisOut": {
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "model_version": {
+            "title": "Model Version",
+            "type": "string"
+          },
+          "steeze_breakdown": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steeze Breakdown"
+          },
+          "tricks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AnalyzedTrickOut"
+            },
+            "title": "Tricks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "model_version",
+          "confidence",
+          "created_at"
+        ],
+        "title": "AnalysisOut",
+        "type": "object"
+      },
+      "AnalyzedTrickOut": {
+        "description": "One trick the analyzer found in the clip (6c-3), in clip order. Not\nthe user's trick tags (`ClipOut.tricks`): the analyzer never names a\ntrick, and nothing matches the two up.",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "outcome": {
+            "title": "Outcome",
+            "type": "string"
+          },
+          "subscores": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscores"
+          },
+          "takeoff_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Takeoff Ms"
+          },
+          "touchdown_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Touchdown Ms"
+          }
+        },
+        "required": [
+          "outcome",
+          "confidence"
+        ],
+        "title": "AnalyzedTrickOut",
+        "type": "object"
+      },
+      "ClipCreate": {
+        "description": "Body for POST /clips. duration_ms/source_fps are read off the\nbrowser's <video> element, so a draft has something to show. The worker\noverwrites both with ffprobe's values (6a).",
+        "properties": {
+          "content_type": {
+            "title": "Content Type",
+            "type": "string"
+          },
+          "duration_ms": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 30000.0,
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "source_fps": {
+            "exclusiveMinimum": 0.0,
+            "maximum": 240.0,
+            "title": "Source Fps",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "content_type",
+          "duration_ms",
+          "source_fps"
+        ],
+        "title": "ClipCreate",
+        "type": "object"
+      },
+      "ClipCreateOut": {
+        "description": "POST /clips returns the row plus the one-time presigned upload URL,\ntogether, so the client doesn't need a second round trip.",
+        "properties": {
+          "clip": {
+            "$ref": "#/components/schemas/ClipOut"
+          },
+          "upload_url": {
+            "title": "Upload Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "clip",
+          "upload_url"
+        ],
+        "title": "ClipCreateOut",
+        "type": "object"
+      },
+      "ClipOut": {
+        "properties": {
+          "analysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "author": {
+            "$ref": "#/components/schemas/UserBrief"
+          },
+          "comment_count": {
+            "default": 0,
+            "title": "Comment Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Ms"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "like_count": {
+            "default": 0,
+            "title": "Like Count",
+            "type": "integer"
+          },
+          "liked_by_me": {
+            "default": false,
+            "title": "Liked By Me",
+            "type": "boolean"
+          },
+          "published_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Published At"
+          },
+          "score_included": {
+            "default": true,
+            "title": "Score Included",
+            "type": "boolean"
+          },
+          "source_fps": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Fps"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ClipStatus"
+          },
+          "steeze_score": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Steeze Score"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamBrief"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "thumb_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thumb Url"
+          },
+          "tricks": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/TrickOut"
+            },
+            "title": "Tricks",
+            "type": "array"
+          },
+          "video_url": {
+            "title": "Video Url",
+            "type": "string"
+          },
+          "view_count": {
+            "default": 0,
+            "title": "View Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "author",
+          "video_url",
+          "created_at"
+        ],
+        "title": "ClipOut",
+        "type": "object"
+      },
+      "ClipScoreInclusionUpdate": {
+        "description": "Body for PATCH /clips/{id}/score-inclusion.",
+        "properties": {
+          "included": {
+            "title": "Included",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "included"
+        ],
+        "title": "ClipScoreInclusionUpdate",
+        "type": "object"
+      },
+      "ClipStatus": {
+        "description": "Lifecycle of a clip.\n\nDefined now, used from step 3. The important property is that a clip is a\n*draft* until the user explicitly publishes it \u2014 so a failed analysis\nnever reaches anyone's feed, and the user gets to tag and review first.",
+        "enum": [
+          "draft",
+          "queued",
+          "analyzing",
+          "analyzed",
+          "unanalyzable",
+          "published"
+        ],
+        "title": "ClipStatus",
+        "type": "string"
+      },
+      "ClipTeamUpdate": {
+        "description": "Body for PATCH /clips/{id}/team. `team_id: null` clears it.",
+        "properties": {
+          "team_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Team Id"
+          }
+        },
+        "title": "ClipTeamUpdate",
+        "type": "object"
+      },
+      "CommentCreate": {
+        "description": "Body for POST /clips/{clip_id}/comments. Omitting `parent_id` makes a\ntop-level comment; setting it makes a reply \u2014 but only to a top-level\ncomment, never to another reply (see app/models/social.py).",
+        "properties": {
+          "body": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Body",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "title": "CommentCreate",
+        "type": "object"
+      },
+      "CommentOut": {
+        "properties": {
+          "author": {
+            "$ref": "#/components/schemas/UserBrief"
+          },
+          "body": {
+            "title": "Body",
+            "type": "string"
+          },
+          "clip_id": {
+            "format": "uuid",
+            "title": "Clip Id",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "parent_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Id"
+          },
+          "replies": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CommentOut"
+            },
+            "title": "Replies",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "clip_id",
+          "author",
+          "body",
+          "created_at"
+        ],
+        "title": "CommentOut",
+        "type": "object"
+      },
+      "CommentPage": {
+        "description": "One page of top-level comments, keyset-paginated same as FeedPage.\nReplies ride along inline on each item, not paginated separately.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CommentOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CommentPage",
+        "type": "object"
+      },
+      "DiscoverClipPage": {
+        "description": "One page of ranked clips. Offset, not keyset, pagination \u2014 unlike the\nhome feed this reads from a snapshot (`clip_rankings`) that's frozen\nbetween rebuilds, so the usual keyset justification (rows shifting under\na paginating client) doesn't apply, and jumping to an arbitrary page is\na reasonable thing to want on a ranked list.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ClipOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "DiscoverClipPage",
+        "type": "object"
+      },
+      "DiscoverTeamPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TeamRankingOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_offset": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Offset"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "DiscoverTeamPage",
+        "type": "object"
+      },
+      "FeedPage": {
+        "description": "One page of the home feed. `next_cursor` is null at the end \u2014 pass it\nback as `?cursor=` to get the following page (keyset, not offset).",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ClipOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "FeedPage",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "JoinPolicy": {
+        "description": "How a user other than an invitee ends up on a team's roster.\n\nOPEN: POST /teams/{slug}/join makes them a member immediately.\nREQUEST: that same call creates a pending `TeamJoinRequest` instead,\nwhich an owner/admin must accept.\nINVITE_ONLY: there is no self-serve join at all \u2014 only an owner/admin\nsending an invite (also a `TeamJoinRequest`, the other `kind`) can add\nsomeone.",
+        "enum": [
+          "open",
+          "request",
+          "invite_only"
+        ],
+        "title": "JoinPolicy",
+        "type": "string"
+      },
+      "ProfileOut": {
+        "properties": {
+          "bearings": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bearings"
+          },
+          "board": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board"
+          },
+          "board_size": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board Size"
+          },
+          "stance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Stance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "style": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkateStyle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trucks": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trucks"
+          },
+          "wheel_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wheel Size"
+          },
+          "wheels": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wheels"
+          }
+        },
+        "title": "ProfileOut",
+        "type": "object"
+      },
+      "ProfileUpdate": {
+        "description": "All fields optional \u2014 this is a PATCH, not a replace.",
+        "properties": {
+          "bearings": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bearings"
+          },
+          "board": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board"
+          },
+          "board_size": {
+            "anyOf": [
+              {
+                "maximum": 12.0,
+                "minimum": 6.0,
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Board Size"
+          },
+          "stance": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Stance"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "style": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SkateStyle"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "trucks": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trucks"
+          },
+          "wheel_size": {
+            "anyOf": [
+              {
+                "maximum": 80.0,
+                "minimum": 40.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wheel Size"
+          },
+          "wheels": {
+            "anyOf": [
+              {
+                "maxLength": 80,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wheels"
+          }
+        },
+        "title": "ProfileUpdate",
+        "type": "object"
+      },
+      "SkateStyle": {
+        "enum": [
+          "vert",
+          "street",
+          "mix"
+        ],
+        "title": "SkateStyle",
+        "type": "string"
+      },
+      "Stance": {
+        "enum": [
+          "regular",
+          "goofy"
+        ],
+        "title": "Stance",
+        "type": "string"
+      },
+      "TagTricksRequest": {
+        "description": "Body for POST /clips/{id}/tricks. Plain names for now \u2014 get-or-create\nagainst `tricks`, no fuzzy/alias matching yet (see docs/components/\ndata-model.md's design notes).",
+        "properties": {
+          "tricks": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 5,
+            "minItems": 1,
+            "title": "Tricks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "tricks"
+        ],
+        "title": "TagTricksRequest",
+        "type": "object"
+      },
+      "TeamBrief": {
+        "description": "Minimal team card, for embedding elsewhere \u2014 a tagged clip's team,\nsame idea as UserBrief.",
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug"
+        ],
+        "title": "TeamBrief",
+        "type": "object"
+      },
+      "TeamCreate": {
+        "description": "Body for POST /teams. Founding a team isn't instant \u2014 see\napp/models/team.py \u2014 so this also carries the required founding\ninvitees; the team stays invisible to everyone else until they all\naccept.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "invitee_usernames": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 2,
+            "title": "Invitee Usernames",
+            "type": "array"
+          },
+          "join_policy": {
+            "$ref": "#/components/schemas/JoinPolicy",
+            "default": "open"
+          },
+          "level": {
+            "$ref": "#/components/schemas/TeamLevel"
+          },
+          "name": {
+            "maxLength": 60,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 30,
+            "minLength": 3,
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "slug",
+          "level",
+          "invitee_usernames"
+        ],
+        "title": "TeamCreate",
+        "type": "object"
+      },
+      "TeamInviteCreate": {
+        "description": "Body for POST /teams/{slug}/invites \u2014 a post-founding invite sent by\nan owner/admin.",
+        "properties": {
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "title": "TeamInviteCreate",
+        "type": "object"
+      },
+      "TeamInviteOut": {
+        "description": "One pending invite \u2014 founding or not \u2014 as shown to the invited user\non GET /teams/invites/mine.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "team": {
+            "$ref": "#/components/schemas/TeamBrief"
+          }
+        },
+        "required": [
+          "team",
+          "created_at"
+        ],
+        "title": "TeamInviteOut",
+        "type": "object"
+      },
+      "TeamJoinRequestOut": {
+        "description": "One pending self-service join request, as shown to a team's\nowner/admin on GET /teams/{slug}/join-requests (kind=request only \u2014\ninvites aren't the team's to act on, see JoinRequestKind).",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserBrief"
+          }
+        },
+        "required": [
+          "user",
+          "created_at"
+        ],
+        "title": "TeamJoinRequestOut",
+        "type": "object"
+      },
+      "TeamLevel": {
+        "description": "A team's self-declared skateboarding level, set by its owner at\ncreation and editable afterward in team settings (docs/components/\ndata-model.md). Purely descriptive \u2014 nothing enforces a member's own skill matches\nit.",
+        "enum": [
+          "beginner",
+          "intermediate",
+          "advanced"
+        ],
+        "title": "TeamLevel",
+        "type": "string"
+      },
+      "TeamMemberOut": {
+        "properties": {
+          "joined_at": {
+            "format": "date-time",
+            "title": "Joined At",
+            "type": "string"
+          },
+          "role": {
+            "$ref": "#/components/schemas/TeamRole"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserBrief"
+          }
+        },
+        "required": [
+          "user",
+          "role",
+          "joined_at"
+        ],
+        "title": "TeamMemberOut",
+        "type": "object"
+      },
+      "TeamOut": {
+        "properties": {
+          "average_score": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Score"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "followed_by_me": {
+            "default": false,
+            "title": "Followed By Me",
+            "type": "boolean"
+          },
+          "follower_count": {
+            "default": 0,
+            "title": "Follower Count",
+            "type": "integer"
+          },
+          "founded": {
+            "default": true,
+            "title": "Founded",
+            "type": "boolean"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "join_policy": {
+            "$ref": "#/components/schemas/JoinPolicy"
+          },
+          "level": {
+            "$ref": "#/components/schemas/TeamLevel"
+          },
+          "member_count": {
+            "default": 0,
+            "title": "Member Count",
+            "type": "integer"
+          },
+          "my_role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamRole"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "owner": {
+            "$ref": "#/components/schemas/UserBrief"
+          },
+          "pending_founders": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/UserBrief"
+            },
+            "title": "Pending Founders",
+            "type": "array"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "level",
+          "join_policy",
+          "owner",
+          "created_at"
+        ],
+        "title": "TeamOut",
+        "type": "object"
+      },
+      "TeamRankingOut": {
+        "properties": {
+          "score": {
+            "title": "Score",
+            "type": "string"
+          },
+          "score_delta": {
+            "title": "Score Delta",
+            "type": "string"
+          },
+          "team": {
+            "$ref": "#/components/schemas/TeamBrief"
+          }
+        },
+        "required": [
+          "team",
+          "score",
+          "score_delta"
+        ],
+        "title": "TeamRankingOut",
+        "type": "object"
+      },
+      "TeamRole": {
+        "description": "A team member's permission level. Exactly one member per team holds\nOWNER (mirrors `Team.owner_id`); ADMIN can approve/reject join requests\nand kick a MEMBER, but not another ADMIN or the OWNER \u2014 only the owner\nchanges roles or deletes the team. No ownership-transfer flow exists\nyet.",
+        "enum": [
+          "owner",
+          "admin",
+          "member"
+        ],
+        "title": "TeamRole",
+        "type": "string"
+      },
+      "TeamRoleUpdate": {
+        "description": "Body for PATCH /teams/{slug}/members/{username} \u2014 owner-only.\nOwnership itself can't be transferred this way; the owner must delete\nthe team instead.",
+        "properties": {
+          "role": {
+            "$ref": "#/components/schemas/TeamRole"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "title": "TeamRoleUpdate",
+        "type": "object"
+      },
+      "TeamUpdate": {
+        "description": "All fields optional \u2014 this is a PATCH, not a replace. `slug` is\nimmutable, same as `username`.",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "join_policy": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/JoinPolicy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "level": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamLevel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "TeamUpdate",
+        "type": "object"
+      },
+      "TrickOut": {
+        "properties": {
+          "canonical_name": {
+            "title": "Canonical Name",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "canonical_name"
+        ],
+        "title": "TrickOut",
+        "type": "object"
+      },
+      "UserBrief": {
+        "description": "Minimal user card, for embedding in other payloads \u2014 a clip's author,\na comment's author, a team member. Built by app.api.serializers, not\nfrom_attributes: avatar_url has to be derived from avatar_key.",
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "UserBrief",
+        "type": "object"
+      },
+      "UserCreate": {
+        "description": "Body for POST /users \u2014 JIT registration on first login.",
+        "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "username": {
+            "maxLength": 30,
+            "minLength": 3,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username"
+        ],
+        "title": "UserCreate",
+        "type": "object"
+      },
+      "UserMe": {
+        "description": "The authenticated user's own view.\n\n`email` comes from the verified id token, not the database \u2014 Cognito\nstays the source of truth for identity attributes so there is nothing to\nkeep in sync.",
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "average_score": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Score"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "followed_by_me": {
+            "default": false,
+            "title": "Followed By Me",
+            "type": "boolean"
+          },
+          "follower_count": {
+            "default": 0,
+            "title": "Follower Count",
+            "type": "integer"
+          },
+          "following_count": {
+            "default": 0,
+            "title": "Following Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "created_at",
+          "email"
+        ],
+        "title": "UserMe",
+        "type": "object"
+      },
+      "UserPublic": {
+        "description": "Safe to show anyone.",
+        "properties": {
+          "avatar_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avatar Url"
+          },
+          "average_score": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Average Score"
+          },
+          "bio": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "followed_by_me": {
+            "default": false,
+            "title": "Followed By Me",
+            "type": "boolean"
+          },
+          "follower_count": {
+            "default": 0,
+            "title": "Follower Count",
+            "type": "integer"
+          },
+          "following_count": {
+            "default": 0,
+            "title": "Following Count",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "profile": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ProfileOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "username",
+          "created_at"
+        ],
+        "title": "UserPublic",
+        "type": "object"
+      },
+      "UserUpdate": {
+        "description": "All fields optional \u2014 this is a PATCH, not a replace.",
+        "properties": {
+          "bio": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bio"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 60,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          }
+        },
+        "title": "UserUpdate",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "HTTPBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Skate clip sharing with automated execution scoring.",
+    "title": "TrickLens API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/clips": {
+      "post": {
+        "operationId": "create_clip_clips_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClipCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipCreateOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Clip",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}": {
+      "get": {
+        "description": "Owner-only pre-publish; visible to any authenticated user once\npublished. There's no public/unauthenticated route yet \u2014 nothing links\nto clips outside their owner until the feed exists (step 4).",
+        "operationId": "read_clip_clips__clip_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Clip",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}/comments": {
+      "get": {
+        "description": "Top-level comments only, newest first, keyset-paginated exactly like\nGET /feed. Each item's replies ride along via an explicit selectinload()\n\u2014 one extra query for the whole page, not one per comment. (Comment.replies\nis self-referential, so its mapper-level lazy=\"selectin\" default never\nauto-applies \u2014 see the comment in add_comment above.)",
+        "operationId": "list_comments_clips__clip_id__comments_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Comments",
+        "tags": [
+          "clips"
+        ]
+      },
+      "post": {
+        "operationId": "add_comment_clips__clip_id__comments_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommentOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Add Comment",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}/comments/{comment_id}": {
+      "delete": {
+        "description": "Deletable by its author or the clip's owner (basic moderation) \u2014 not\njust the author, unlike everything else deleted so far in this API.\n204, not 200 + a body: unlike unfollow/unlike, which report the target's\nnew state, a deleted-by-id comment has no \"current state\" left to\nreport.",
+        "operationId": "delete_comment_clips__clip_id__comments__comment_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "comment_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Comment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Comment",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}/complete": {
+      "post": {
+        "operationId": "complete_clip_clips__clip_id__complete_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Complete Clip",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}/like": {
+      "delete": {
+        "operationId": "unlike_clip_clips__clip_id__like_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unlike Clip",
+        "tags": [
+          "clips"
+        ]
+      },
+      "post": {
+        "description": "No self-like restriction \u2014 unlike following yourself, which is\nstructurally nonsensical, liking your own clip is normal and harmless.",
+        "operationId": "like_clip_clips__clip_id__like_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Like Clip",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}/publish": {
+      "post": {
+        "operationId": "publish_clip_clips__clip_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Publish Clip",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}/score-inclusion": {
+      "patch": {
+        "description": "Unlike team tagging, this stays editable forever, even after\npublishing \u2014 an edit to the post, not a one-time pre-publish call. Never\ntouches Analysis; the existing scoring pass is reused as-is either way,\nsee app/models/clip.py.",
+        "operationId": "set_score_inclusion_clips__clip_id__score_inclusion_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClipScoreInclusionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Score Inclusion",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}/team": {
+      "patch": {
+        "description": "One-time, pre-publish decision (4c) \u2014 `team_id: null` clears it.\nLocked once published, unlike score-inclusion below: a team tag is\ncredit for a specific team roster at a point in time, not something that\nmakes sense to reassign after the fact.",
+        "operationId": "set_clip_team_clips__clip_id__team_patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClipTeamUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Set Clip Team",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}/tricks": {
+      "post": {
+        "operationId": "tag_tricks_clips__clip_id__tricks_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TagTricksRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Tag Tricks",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}/view": {
+      "post": {
+        "description": "Records one playback (4d) \u2014 an append-only event, not deduped like a\nlike, so a rewatch counts again. The clip's own owner viewing it is a\nno-op: unlike a like, which naturally caps at +1/user, a raw view has no\nsuch limit, so counting self-views would make self-view-spam a trivial\nway to game the Discover engagement ranking.",
+        "operationId": "view_clip_clips__clip_id__view_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "View Clip",
+        "tags": [
+          "clips"
+        ]
+      }
+    },
+    "/discover/clips": {
+      "get": {
+        "description": "`sort=score` filters to score_included clips \u2014 if the owner said a\nclip's score isn't fair, it shouldn't rank on that score either, even\nthough it stays fully visible everywhere else, engagement ranking\nincluded. `sort=engagement` has no such filter; it's a deliberately\nseparate signal from the steeze score (app/rankings.py's\nENGAGEMENT_WEIGHTS).",
+        "operationId": "top_clips_discover_clips_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "score",
+              "enum": [
+                "score",
+                "engagement"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverClipPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Top Clips",
+        "tags": [
+          "discover"
+        ]
+      }
+    },
+    "/discover/teams": {
+      "get": {
+        "description": "Ranked by score increase (latest team_score_history snapshot minus\nthe one closest to WINDOW earlier), computed live rather than\nmaterialized \u2014 the number of teams is small enough that this is cheap,\nunlike sorting the whole clips table for /clips above. A team with no\nsnapshot from that far back (brand new) is excluded rather than\ncredited a fake increase-from-zero, which would otherwise let any\nfreshly-founded team trivially top this list.",
+        "operationId": "top_teams_discover_teams_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DiscoverTeamPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Top Teams",
+        "tags": [
+          "discover"
+        ]
+      }
+    },
+    "/feed": {
+      "get": {
+        "operationId": "home_feed_feed_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Home Feed",
+        "tags": [
+          "feed"
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Health Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/health/deep": {
+      "get": {
+        "description": "Verify Postgres, S3 and SQS are all genuinely reachable.",
+        "operationId": "health_deep_health_deep_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "title": "Response Health Deep Health Deep Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health Deep",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/teams": {
+      "post": {
+        "description": "Doesn't make the team live \u2014 see module docstring. Only the owner\nmembership exists until every founding invitee accepts.",
+        "operationId": "create_team_teams_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Team",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/invites/mine": {
+      "get": {
+        "description": "Every pending invite \u2014 founding or not \u2014 sent to the caller, across\nall teams. Needed because, unlike everything else in this module, the\ncaller doesn't already know a slug to scope the lookup to.",
+        "operationId": "list_my_invites_teams_invites_mine_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TeamInviteOut"
+                  },
+                  "title": "Response List My Invites Teams Invites Mine Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List My Invites",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}": {
+      "delete": {
+        "description": "Owner-only. Doubles as \"cancel\" while the team is still forming \u2014 the\nexact same operation either way. `ON DELETE CASCADE` on team_members and\nteam_join_requests, `SET NULL` on clips.team_id, handle cleanup at the\nDB level; a bulk `delete()` is used (not `db.delete(team)`) so nothing\nneeds an ORM relationship loaded first \u2014 same reasoning as\nroutes/clips.py's delete_comment.",
+        "operationId": "delete_team_teams__slug__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Team",
+        "tags": [
+          "teams"
+        ]
+      },
+      "get": {
+        "operationId": "read_team_teams__slug__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Team",
+        "tags": [
+          "teams"
+        ]
+      },
+      "patch": {
+        "operationId": "update_team_teams__slug__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Team",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/follow": {
+      "delete": {
+        "operationId": "unfollow_team_teams__slug__follow_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unfollow Team",
+        "tags": [
+          "teams"
+        ]
+      },
+      "post": {
+        "operationId": "follow_team_teams__slug__follow_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Follow Team",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/invites": {
+      "post": {
+        "description": "Post-founding invite from an owner/admin. Founding invites are only\never created by create_team \u2014 there's no path back into \"still\nforming\" once founded_at is set.",
+        "operationId": "invite_member_teams__slug__invites_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamInviteCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Invite Member",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/invites/mine/accept": {
+      "post": {
+        "operationId": "accept_invite_teams__slug__invites_mine_accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Accept Invite",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/invites/mine/reject": {
+      "post": {
+        "description": "Rejecting a *founding* invite (team.founded_at is still null) kills\nthe whole team-creation attempt, not just this one invite \u2014 see the\nmodule docstring. Rejecting a post-founding invite just removes it.",
+        "operationId": "reject_invite_teams__slug__invites_mine_reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reject Invite",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/join": {
+      "delete": {
+        "description": "Idempotent: withdrawing a request you never made is a no-op 200,\nsame as unfollow/unlike.",
+        "operationId": "withdraw_join_request_teams__slug__join_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Withdraw Join Request",
+        "tags": [
+          "teams"
+        ]
+      },
+      "post": {
+        "operationId": "join_team_teams__slug__join_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Join Team",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/join-requests": {
+      "get": {
+        "operationId": "list_join_requests_teams__slug__join_requests_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TeamJoinRequestOut"
+                  },
+                  "title": "Response List Join Requests Teams  Slug  Join Requests Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Join Requests",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/join-requests/{username}/accept": {
+      "post": {
+        "operationId": "accept_join_request_teams__slug__join_requests__username__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "title": "Username",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMemberOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Accept Join Request",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/join-requests/{username}/reject": {
+      "post": {
+        "operationId": "reject_join_request_teams__slug__join_requests__username__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "title": "Username",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reject Join Request",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/members": {
+      "get": {
+        "operationId": "list_members_teams__slug__members_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TeamMemberOut"
+                  },
+                  "title": "Response List Members Teams  Slug  Members Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Members",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/members/{username}": {
+      "delete": {
+        "description": "Serves both \"leave\" (self) and \"kick\" \u2014 an owner can remove anyone\nbut themselves, an admin only a plain MEMBER, same shape as comment\ndelete's author-or-clip-owner rule.",
+        "operationId": "remove_member_teams__slug__members__username__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "title": "Username",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove Member",
+        "tags": [
+          "teams"
+        ]
+      },
+      "patch": {
+        "operationId": "update_member_role_teams__slug__members__username__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "title": "Username",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TeamRoleUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TeamMemberOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Member Role",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/users": {
+      "post": {
+        "description": "JIT registration: the first call any newly-signed-up Cognito user\nmakes, to pick their public username and create the app-side row.",
+        "operationId": "register_users_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserMe"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Register",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/me": {
+      "get": {
+        "operationId": "read_me_users_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserMe"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Me",
+        "tags": [
+          "users"
+        ]
+      },
+      "patch": {
+        "operationId": "update_me_users_me_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserMe"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Me",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/me/profile": {
+      "patch": {
+        "operationId": "update_profile_users_me_profile_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProfileOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Profile",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/{username}": {
+      "get": {
+        "operationId": "read_public_users__username__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "title": "Username",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read Public",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/{username}/follow": {
+      "delete": {
+        "operationId": "unfollow_user_users__username__follow_delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "title": "Username",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Unfollow User",
+        "tags": [
+          "users"
+        ]
+      },
+      "post": {
+        "operationId": "follow_user_users__username__follow_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "title": "Username",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserPublic"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Follow User",
+        "tags": [
+          "users"
+        ]
+      }
+    }
+  }
+}

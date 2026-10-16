@@ -1,0 +1,31 @@
+.wrap {
+  min-height: calc(100dvh - 2rem);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card {
+  width: 100%;
+  max-width: 25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.125rem;
+  padding: 1.75rem;
+  border-radius: var(--radius-sheet);
+  background: var(--hero-bg);
+  color: var(--hero-ink);
+}
+
+.card :global(.muted) {
+  color: var(--hero-2);
+}
+
+.title {
+  font-size: 2rem;
+}
+
+.alt {
+  text-align: center;
+  font-size: 0.9375rem;
+}

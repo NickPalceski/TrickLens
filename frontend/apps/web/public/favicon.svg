@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30" fill="none">
+  <title>TrickLens</title>
+  <rect width="30" height="30" rx="8" fill="#FEF0B6"/>
+  <rect x="4" y="12" width="22" height="5" rx="2.5" fill="#472F26"/>
+  <circle cx="9" cy="21.5" r="2.8" fill="#BBD3E0" stroke="#472F26" stroke-width="1.5"/>
+  <circle cx="21" cy="21.5" r="2.8" fill="#BBD3E0" stroke="#472F26" stroke-width="1.5"/>
+  <path d="M7 12 Q8 8 11 7.5 M23 12 Q22 8 19 7.5" stroke="#472F26" stroke-width="2" stroke-linecap="round"/>
+</svg>
