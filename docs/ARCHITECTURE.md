@@ -420,7 +420,7 @@ on the worker; see [subscriptions.md](subscriptions.md).
 | 6c-1 | Stage B: windowed 60fps decode, pose, board around the trick, refined take-off/touch-down, libEGL + pose model in the image, per-trick debug video | **live (advisory), verified in prod** |
 | 6c-2 | Landed check + confidence gate, advisory; longer Stage B window; media timings | **live (advisory), verified in prod** |
 | 6c-3 | Measurements, calibration, averaging, migration `0009`, API `analysis.tricks`, stub off, stuck-clip sweep | **live, verified in prod** |
-| 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | |
+| 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses; the push rule (an early push costs roll-away instead of failing the landing) | |
 | 7 | Weekly analysis quota + paid subscriptions (Stripe), profile customization later — [subscriptions.md](subscriptions.md) | planned |
 
 Step 3 deliberately stubs the analyzer so that a complete, deployed, working

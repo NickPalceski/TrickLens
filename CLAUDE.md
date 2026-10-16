@@ -812,7 +812,15 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
        its receives *before* the claim lands in the DLQ and leaves its clip
        `queued` forever, which the last-receive give-up doesn't cover
        *(live, verified in prod)*
-   - 6d ⬜ calibration once the user has hand-judged clips → `steeze-v1`
+   - 6d ⬜ calibration once the user has hand-judged clips → `steeze-v1`.
+     Also build the **push rule** then (asked for 2026-10-15): a foot put
+     down to push too soon after landing should lower roll-away, not turn
+     a landed trick into "no landed trick detected" or a bail, which is
+     what a push inside the landed check's 0.1–0.6s span does today. Key
+     on the *same* foot staying on the board with the board riding along
+     (the bail had neither foot on in 9/16 frames, but read "both on" for
+     its first 100ms). Needs a real early-push clip to build and test
+     against; see docs/components/analyzer.md, Known limits.
 7. ⬜ Weekly analysis quota + paid subscriptions (Free 5/wk, Plus $3.99
    25/wk, Pro $7.99 75/wk; Stripe), profile customization later — planned
    in `docs/subscriptions.md` (2026-10-15). Separately and sooner: a
