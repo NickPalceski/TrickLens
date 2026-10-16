@@ -30,7 +30,7 @@
             "deep"
           ]
         },
-        "description": "No auth. All four checks should be ok, and the postgres check's detail.revision should be \"0008\" \u2014 proof that 6a's migration reached Neon.",
+        "description": "No auth. All four checks should be ok, and the postgres check's detail.revision should be \"0009\" \u2014 proof that 6c-3's migration reached Neon.",
         "auth": {
           "type": "noauth"
         }
@@ -44,7 +44,7 @@
               "const d = pm.response.json();",
               "pm.test('200 OK', () => pm.response.to.have.status(200));",
               "const pg = (d.checks || []).find(c => c.name === 'postgres');",
-              "pm.test('schema at revision 0008', () => pm.expect(pg && pg.detail && pg.detail.revision).to.eql('0008'));"
+              "pm.test('schema at revision 0009', () => pm.expect(pg && pg.detail && pg.detail.revision).to.eql('0009'));"
             ]
           }
         }
@@ -358,7 +358,7 @@
             "{{prod_clip_id}}"
           ]
         },
-        "description": "Re-send every few seconds until status is no longer queued/analyzing. The very first run can take ~10\u201330s longer than locally (Lambda cold-starts the big worker image). Once it's analyzed, the Test Results tab shows the 6a checks, and video_url/thumb_url are saved for steps 9\u201310. Until 6c the score is still the stub, which marks ~10% of clips unanalyzable with a fake reason decided by the clip id; that's expected, and the tests treat it as a pass as long as the media checks pass."
+        "description": "Re-send every few seconds until status is no longer queued/analyzing. The very first run can take ~10\u201330s longer than locally (Lambda cold-starts the big worker image). Once it's analyzed, the Test Results tab shows the 6a checks, and video_url/thumb_url are saved for steps 9\u201310. Since 6c-3 the score is the real analyzer's (model_version steeze-v0-uncalibrated): the kickflip should come back analyzed with a six-subscore breakdown, and the bail unanalyzable with \"no landed trick detected\". Both pass; the console shows each trick's outcome and subscores."
       },
       "event": [
         {
@@ -372,16 +372,27 @@
               "  pm.test('still ' + d.status + ' \u2014 re-send in a few seconds', () => true);",
               "  return;",
               "}",
-              "// 6a's own failures (the file itself is bad). Any other unanalyzable reason",
-              "// on a stub-v1 analysis is the stub scorer's deliberate ~10% fake-failure roll,",
-              "// which is decided by the clip id and says nothing about the media pipeline.",
+              "// 6a's own failures (the file itself is bad). Since 6c-3 any other",
+              "// unanalyzable reason is the real gate's verdict (a bail is 'no landed trick",
+              "// detected'), so both outcomes pass as long as the analysis is the real one.",
               "const MEDIA_FAILURES = ['unreadable video file', 'no video stream found', 'clip too short'];",
-              "const reason = d.analysis && d.analysis.failure_reason;",
+              "const a = d.analysis || {};",
+              "const reason = a.failure_reason;",
               "pm.test('6a media pipeline accepted the file', () => pm.expect(MEDIA_FAILURES).to.not.include(reason));",
-              "if (d.status === 'unanalyzable' && d.analysis.model_version === 'stub-v1') {",
-              "  console.log('stub scorer rolled its ~10% fake failure (' + reason + ') \u2014 expected, not a 6a problem');",
+              "pm.test('scored by the real analyzer, not the stub', () => pm.expect(a.model_version).to.eql('steeze-v0-uncalibrated'));",
+              "pm.test('analysis.tricks lists what it found', () => pm.expect(a.tricks).to.be.an('array').that.is.not.empty);",
+              "(a.tricks || []).forEach((t, i) => console.log('trick ' + (i + 1) + ': ' + t.outcome + ' (' + t.takeoff_ms + '-' + t.touchdown_ms + 'ms, confidence ' + t.confidence + ')', t.subscores || ''));",
+              "if (d.status === 'analyzed') {",
+              "  const SUBSCORES = ['pop', 'landing_stability', 'roll_away', 'stomp', 'compactness', 'catch'];",
+              "  pm.test('breakdown has all six subscores, in order', () => pm.expect(Object.keys(a.steeze_breakdown)).to.eql(SUBSCORES));",
+              "  const present = Object.values(a.steeze_breakdown).filter(v => v !== null);",
+              "  const mean = Math.round(10 * present.reduce((x, y) => x + y, 0) / present.length) / 10;",
+              "  pm.test('steeze_score is the mean of the non-null subscores', () => pm.expect(Number(d.steeze_score)).to.be.closeTo(mean, 0.11));",
+              "  pm.test('at least one trick landed', () => pm.expect(a.tricks.some(t => t.outcome === 'landed')).to.be.true);",
+              "  console.log('steeze', d.steeze_score, a.steeze_breakdown);",
               "} else {",
-              "  pm.test('scored (analyzed)', () => pm.expect(d.status).to.eql('analyzed'));",
+              "  pm.test('unanalyzable with a specific reason', () => pm.expect(d.status === 'unanalyzable' && !!reason).to.be.true);",
+              "  console.log('unanalyzable: ' + reason);",
               "}",
               "pm.test('ffprobe replaced the fake duration (9999)', () => pm.expect(d.duration_ms).to.not.eql(9999));",
               "pm.test('ffprobe replaced the fake fps (24)', () => pm.expect(d.source_fps).to.eql(60));",

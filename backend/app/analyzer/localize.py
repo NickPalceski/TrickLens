@@ -77,8 +77,9 @@ WINDOW_BEFORE_MS = 400
 # A's 15fps landing can be ~80ms before the real one (the kickflip's: 1.57s
 # vs 1.65s), so the window runs to 0.8s after the landing. Before 6c-2 it
 # was max(pop + 0.8s, land + 0.4s), which stopped short of that span on both
-# real clips.
-WINDOW_AFTER_LAND_MS = 800
+# real clips. 6c-3 extended it to 1.3s for roll-away (measure.py), which
+# reads 0.6-1.2s after touch-down.
+WINDOW_AFTER_LAND_MS = 1300
 
 
 @dataclass(frozen=True)

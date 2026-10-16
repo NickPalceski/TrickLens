@@ -16,6 +16,7 @@ from typing import Any
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import sweep
 from app.db import SessionLocal, run_in_fresh_loop
 from app.logs import configure_logging
 from app.models.clip import Clip
@@ -131,9 +132,15 @@ async def run() -> tuple[int, int]:
 
 def lambda_handler(_event: dict[str, Any], _context: Any) -> dict[str, int]:
     """Production entrypoint (from step 5): one invocation per EventBridge
-    schedule tick."""
-    n_clips, n_teams = run_in_fresh_loop(run)
-    return {"clips_ranked": n_clips, "teams_snapshotted": n_teams}
+    schedule tick. Also runs the stuck-clip sweep (app/sweep.py, 6c-3),
+    which needs a schedule and nothing else."""
+
+    async def _both() -> tuple[int, int, int]:
+        n_swept = await sweep.run()
+        return *(await run()), n_swept
+
+    n_clips, n_teams, n_swept = run_in_fresh_loop(_both)
+    return {"clips_ranked": n_clips, "teams_snapshotted": n_teams, "clips_swept": n_swept}
 
 
 if __name__ == "__main__":

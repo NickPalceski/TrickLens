@@ -13,11 +13,13 @@ open a component's own doc for its internals:
 
 Setup and day-to-day commands are in the
 [development guide](development.md); deploying is in the
-[deployment guide](deployment.md).
+[deployment guide](deployment.md). Planned weekly analysis limits and paid
+tiers are in [subscriptions.md](subscriptions.md).
 
 **Current state:** steps 1–5 are done and live in AWS. Step 6 (the real
-analyzer) is in progress: 6a, 6b, 6c-1 and 6c-2 are live. See the
-[build order](#build-order).
+analyzer) is in progress: 6a, 6b, 6c-1 and 6c-2 are live, and 6c-3 (real
+scores, the stub off) is built and verified locally, awaiting its deploy.
+See the [build order](#build-order).
 
 ---
 
@@ -70,7 +72,7 @@ flowchart LR
 |---|---|---|---|
 | **API Lambda** | HTTP, auth, CRUD, presigning | Scales to zero, so no idle cost | [api.md](components/api.md) |
 | **Worker Lambda** | Verifies, transcodes and analyzes each clip | Its own image (ffmpeg + CV stack, ~2.7× the API image) and its own scaling | [analyzer.md](components/analyzer.md) |
-| **Rankings Lambda** | Rebuilds Discover's snapshots on a schedule | Ranking live on every page load would sort the whole clips table | [api.md](components/api.md#feed-and-discover) |
+| **Rankings Lambda** | Rebuilds Discover's snapshots on a schedule, and sweeps clips stuck `queued`/`analyzing` (6c-3) | Ranking live on every page load would sort the whole clips table | [api.md](components/api.md#feed-and-discover) |
 | **Postgres** | All relational state | The domain is deeply relational: follows, teams, likes, comments | [data-model.md](components/data-model.md) |
 | **S3** | Video and image bytes | Never in the database; the database stores keys only | [services.md](components/services.md) |
 | **CloudFront** | Media delivery | Speed, *and* the 1TB/mo always-free egress tier. Without it, bandwidth would be the largest bill | [infrastructure.md](components/infrastructure.md) |
@@ -136,7 +138,8 @@ stateDiagram-v2
     analyzing --> analyzing: lease expired, reclaimed on redelivery
     analyzing --> analyzed: scored
     analyzing --> unanalyzable: bad file or failed gate (specific reason)
-    analyzing --> unanalyzable: runs kept dying, last SQS receive ("analysis failed")
+    analyzing --> unanalyzable: analyzer crashed, or runs kept dying ("analysis failed")
+    queued --> unanalyzable: stuck over 2h, swept ("analysis failed")
     analyzed --> analyzed: tag tricks / team / score inclusion
     analyzed --> published: POST /publish (≥1 trick tagged)
     published --> published: like, comment, view, score inclusion
@@ -202,7 +205,7 @@ id-token-for-client.
 | `AWS_ENDPOINT_URL` | `http://localstack:4566` | *(empty)* |
 | API | uvicorn `--reload` | Lambda (`app.lambda_handler.handler`) behind API Gateway |
 | Worker | SQS poll loop (`python -m app.worker`) | Lambda (`app.worker.lambda_handler`), SQS event-source mapping |
-| Rankings | `make rankings` on demand | Lambda on an EventBridge schedule |
+| Rankings + stuck-clip sweep | `make rankings` / `make sweep` on demand | One Lambda on an EventBridge schedule runs both |
 | Images | `backend/Dockerfile`, `backend/Dockerfile.worker` | The same two images, from ECR |
 
 No application code branches on the environment: `AWS_ENDPOINT_URL` is the
@@ -228,6 +231,9 @@ component:
   [analyzer.md](components/analyzer.md)
 - **Services:** `DATABASE_URL` in SSM, presigned URL rewriting, two
   settings classes → [services.md](components/services.md)
+- **Subscriptions (planned):** weekly scored-clip quota, Free / Plus /
+  Pro tiers and prices, only scored clips spend a credit →
+  [subscriptions.md](subscriptions.md)
 - **Infrastructure:** broad deploy role, migrations before deploy, no
   canary, two ECR repos, SQS timings, Terraform state bootstrap →
   [infrastructure.md](components/infrastructure.md#infrastructure-decisions)
@@ -373,7 +379,7 @@ code (disabling its telemetry doesn't stop them).
 
 | Service | Free allowance | Expected |
 |---|---|---|
-| Lambda | 1M requests + 400k GB-s/mo, always free | $0. The worker is the big consumer: measured at ~40 billed seconds × 3GB for a 4.7s clip with Stage A (~120 GB-s), so roughly 3,000 clips a month free. 6c adds ~12s per trick |
+| Lambda | 1M requests + 400k GB-s/mo, always free | $0. The worker is the big consumer: measured at ~40 billed seconds × 3GB for a 4.7s clip with Stage A (~120 GB-s), so roughly 3,000 clips a month free. Stage B adds ~13s per trick (6c-2, measured), plus an estimated ~3–4s since 6c-3's longer window |
 | SQS | 1M requests/mo, always free | $0 |
 | CloudFront | 1TB egress/mo, always free | $0 |
 | Cognito | 50k MAU, always free — dev and prod pools both count against this | $0 |
@@ -390,6 +396,11 @@ Controls: S3 lifecycle rule expiring `raw/` drafts after 7 days, ECR lifecycle
 policies keeping the last 5 images per repo, CloudWatch Logs retention
 capped at 14 days per Lambda function, and an AWS Budget alarm at $5
 (`infra/budget.tf`).
+
+The worker is the one cost that grows with *use*, not sign-ups: about
+$0.0016–0.0056 per analysis past the free tier. The planned answer is a
+weekly analysis quota with paid tiers, plus a reserved-concurrency ceiling
+on the worker; see [subscriptions.md](subscriptions.md).
 
 ---
 
@@ -408,8 +419,9 @@ capped at 14 days per Lambda function, and an AWS Budget alarm at $5
 | 6c | MediaPipe pose, six subscores, confidence gate, averaging landed tricks, `steeze-v0-uncalibrated` | **in progress** |
 | 6c-1 | Stage B: windowed 60fps decode, pose, board around the trick, refined take-off/touch-down, libEGL + pose model in the image, per-trick debug video | **live (advisory), verified in prod** |
 | 6c-2 | Landed check + confidence gate, advisory; longer Stage B window; media timings | **live (advisory), verified in prod** |
-| 6c-3 | Measurements, calibration, averaging, migration `0009`, API, stub off | |
+| 6c-3 | Measurements, calibration, averaging, migration `0009`, API `analysis.tricks`, stub off, stuck-clip sweep | **built, verified locally** (deploy + prod check next) |
 | 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | |
+| 7 | Weekly analysis quota + paid subscriptions (Stripe), profile customization later — [subscriptions.md](subscriptions.md) | planned |
 
 Step 3 deliberately stubs the analyzer so that a complete, deployed, working
 product exists before the hardest component is attempted.

@@ -21,7 +21,7 @@ flowchart TB
 
     subgraph web ["Lambda: API image"]
         api["tricklens-api<br/>512MB · 29s"]
-        rank["tricklens-rankings<br/>256MB · 60s"]
+        rank["tricklens-rankings<br/>256MB · 60s<br/>(+ stuck-clip sweep)"]
     end
 
     eb["EventBridge<br/>rate(30 minutes)"]
@@ -70,7 +70,7 @@ flowchart TB
 | S3 media bucket | `s3.tf` | Bucket name includes the account id. 7-day expiry on `raw/`. Public access blocked, readable only by CloudFront |
 | CloudFront | `cloudfront.tf` | Origin Access Control to S3, `GET`/`HEAD` only, `PriceClass_100` |
 | Cognito `tricklens-prod` | `cognito.tf` | Email as username, email verification, public client (no secret), `USER_PASSWORD_AUTH` |
-| EventBridge rule | `eventbridge.tf` | Invokes the rankings Lambda on `var.rankings_schedule_expression` (`rate(30 minutes)`) |
+| EventBridge rule | `eventbridge.tf` | Invokes the rankings Lambda on `var.rankings_schedule_expression` (`rate(30 minutes)`). Since 6c-3 each tick also runs the stuck-clip sweep (`app/sweep.py`), which needs only a schedule and the database |
 | SSM parameter | `secrets.tf` | `DATABASE_URL` as a SecureString (see [services](services.md#database_url-comes-from-ssm-in-production)) |
 | IAM | `iam.tf` | One least-privilege role per Lambda, plus the GitHub OIDC provider and two CI roles |
 | CloudWatch log groups | `cloudwatch.tf` | Pre-created with 14-day retention, so Lambda doesn't create never-expiring ones |

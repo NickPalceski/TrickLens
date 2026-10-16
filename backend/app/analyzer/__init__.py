@@ -3,4 +3,8 @@
 libraries. Nothing here may be imported at module level by code the API
 image also loads. app/worker.py imports it lazily, inside the "real"
 branch, for exactly that reason.
+
+Two exceptions, pure Python on purpose so the API image can import them:
+reasons.py (failure reasons) and calibration.py (measurements → scores),
+which 6d will rerun over stored measurements without the CV stack.
 """

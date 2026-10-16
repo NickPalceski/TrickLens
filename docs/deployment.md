@@ -44,8 +44,11 @@ run it top to bottom. It covers:
 - login and register;
 - create, upload a real clip, complete, and poll, with tests checking that
   ffprobe replaced the fake duration/fps and that `video_url`/`thumb_url`
-  are CDN URLs. A stub-scored `unanalyzable` result still passes, as long
-  as the media checks do;
+  are CDN URLs. Since 6c-3 it also checks that the real analyzer scored it
+  (`steeze-v0-uncalibrated`, `analysis.tricks` filled) and, for an
+  analyzed clip, the six-subscore breakdown and its mean. An
+  `unanalyzable` result with a gate reason (the bail: "no landed trick
+  detected") still passes, as long as the media checks do;
 - fetching the video and thumbnail from CloudFront.
 
 Fill these in the collection's **Variables** tab (Current Value): the three
@@ -80,8 +83,12 @@ the console or an admin profile.)
 A worker run looks like:
 
 ```
+[INFO] … worker: clip <id> media: 4718ms at 60fps | {…}
 [INFO] … worker: clip <id> stage A: 1 trick(s) [(1233, 1467, 1567)] | skater in 83% of samples, 0.14 of frame height | {…}
-[INFO] … worker: clip <id> stage B trick 1: takeoff 1250 touchdown 1650 | pose 92%, feet vis 0.92, board 93% | {…}
+[INFO] … worker: clip <id> stage B trick 1: takeoff 1250 touchdown 1650 | pose 95%, feet vis 0.93, board 96% | {…}
+[INFO] … worker: clip <id> landing trick 1: landed, confidence 0.92 | on board 16/16 judged of 16 sampled, …
+[INFO] … worker: clip <id> scores trick 1: {'pop': 77.0, 'landing_stability': 81.2, …}
+[INFO] … worker: clip <id> gate: scored 1 landed trick(s), steeze 77.5, confidence 0.92 | {…}
 [INFO] … worker: clip <id> -> analyzed
 REPORT … Duration: … Max Memory Used: … Init Duration: …
 ```
@@ -93,6 +100,12 @@ REPORT … Duration: … Max Memory Used: … Init Duration: …
   invocation and the clip still succeeds, just slower. It happens once per
   deploy, not on every cold start (see the
   [analyzer doc](components/analyzer.md#worker)).
+- A clip that fails says why on its last line, `-> unanalyzable (<reason>)`,
+  after `gate: failed: …`. An `analysis crashed` or `stage B trick N
+  crashed` line with a traceback means an analyzer bug, not a bad clip.
+- The rankings log group also shows the stuck-clip sweep: a `sweep: clip
+  <id> -> unanalyzable` warning per clip it fails, and `clips_swept` in the
+  handler's return value.
 - `sh: line 1: blkid: command not found`, `hostname: …` and an onnxruntime
   telemetry warning are harmless start-up noise.
 

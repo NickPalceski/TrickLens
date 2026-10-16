@@ -219,7 +219,8 @@ can live anywhere.
   `tests/test_logs.py` reproduces the Lambda setup. New entrypoints must
   call it at import too.
 - **`unanalyzable` from a `stub-v1` analysis is not a pipeline failure.**
-  Until 6c, the stub scorer deliberately fails ~10% of clips with a random
+  The stub scorer (since 6c-3 only under `ANALYZER=stub`: the API image,
+  CI, and every clip from before 6c-3) deliberately fails ~10% of clips with a random
   reason ("no clean airtime found", etc.), decided by the clip id
   (`random.Random(clip_id.int)`, reproducible offline). The 6a prod check
   hit it twice in a row (rolls 0.056 and 0.003) and looked like a real
@@ -363,7 +364,9 @@ Step 6b (Stage A: finding the tricks) is done and live, verified in prod.
 6c is in progress: 6c-1 (Stage B: pose + refined contacts) is done and
 live (advisory), verified in prod after the MediaPipe tcmalloc fix (see
 gotchas). 6c-2 (landed check + confidence gate) is done and live
-(advisory), verified in prod. Next: 6c-3.**
+(advisory), verified in prod. 6c-3 (measurements, calibration, real
+scores, stub off, stuck-clip sweep) is built and verified locally, not yet
+deployed. Next: deploy 6c-3 and run the prod check.**
 Running locally:
 
 ```bash
@@ -375,11 +378,11 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
 
 - `postgres`, `localstack` (S3 + SQS), `api` (FastAPI on the Lambda base
   image), a `worker` (its own image since 6a, `backend/Dockerfile.worker`:
-  SQS poll loop, ffmpeg media pipeline, stubbed scorer), and a one-shot
+  SQS poll loop, ffmpeg media pipeline, the real analyzer since 6c-3), and a one-shot
   `migrate` service, all under Compose.
-- Schema at revision `0008`: `users` + `profiles` (step 1–2); `clips`,
+- Schema at revision `0009`: `users` + `profiles` (step 1–2); `clips`,
   `analyses`, `tricks`, `clip_tricks` (step 3, `team_id`/`score_included`
-  added in 4c, `processed_key` in 6a); `follows` (step 4a — two nullable FKs + XOR check,
+  added in 4c, `processed_key` in 6a, `analyses.details` in 6c-3); `follows` (step 4a — two nullable FKs + XOR check,
   `followee_team_id`'s FK completed in 4c); `likes`, `comments` (step 4b);
   `teams`, `team_members`, `team_join_requests` (step 4c); `clip_views`,
   `clip_rankings`, `team_score_history` (step 4d — see below). Enum types
@@ -696,6 +699,46 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   side-on clips; a head-on clip is the known risk. The user is collecting
   more clips (head-on landed trick, multi-trick line, foot-down landing).
 
+- **Step 6c-3 (measurements, calibration, real scores)** built and
+  verified locally (2026-10-15), not yet deployed:
+  - API image 79 tests pass (23 skip there); `make test-worker` 90/90
+    (18 new synthetic measurement/pipeline tests, 3 gate crash tests, 2
+    real-clip pipeline tests, a worker crash test); ruff clean on the
+    changed files; migration `0009` round-tripped (down + up).
+  - Both real clips through the live worker container: kickflip
+    **analyzed, steeze 77.5** (pop 77, landing stability 81, roll-away
+    100, stomp 61, compactness 66, catch 80); bail **unanalyzable "no
+    landed trick detected"**, its measurements stored (foot down, no
+    catch). `analysis.tricks` and `details` checked in the DB and the
+    serializer.
+  - Measured first: a frame-by-frame dump of every candidate signal on
+    both clips. The sanity anchor is the kickflip, which the user calls
+    sketchy: the trick video shows the arms windmilling after landing, so
+    `arm_flail` was added to landing stability (it was 89 without it).
+  - What 6c-3 added: `app/analyzer/{measure,calibration,pipeline}.py`;
+    Stage A window to landing + 1.3s for roll-away, board every 4th
+    frame after landing + 0.8s (Stage B ~3s → ~4.2s per trick locally);
+    `landed.plausible`/`feet_on` shared; gate takes `None` for a crashed
+    trick; `analyses.details` (migration `0009`); `analysis.tricks` in
+    the API, subscores nullable and in fixed order; the stub writes the
+    same shape; `app/sweep.py` on the rankings tick (`make sweep`);
+    `ANALYSIS_FAILED`/`TRICK_FAILED` in `reasons.py`; the prod-check
+    collection expects `0009` and the real analyzer.
+  - Decided with the user (2026-10-15): roll-away window extended (not a
+    Stage A-only check); a crash in one trick fails only that trick
+    ("analysis failed for this trick"), and the clip is "analysis failed"
+    when nothing else landed; stuck clips are failed, not re-enqueued;
+    prod's stub-scored clips are left as they are; the kickflip is the
+    calibration sanity anchor, with no new clips until the analyzer ships.
+  - Known risk raised by the user (2026-10-15): a skater who puts a foot
+    down to push too early should lose roll-away points (from 0.6s after
+    touch-down that already happens: a foot down caps roll-away at 40), but
+    a push *inside* the landed check's 0.1–0.6s span currently makes a
+    landed trick unclear or a bail. Measured: the bail's first 100ms read
+    "both feet on", so the fix must key on the *same* foot staying on the
+    board (bail: neither foot on in 9/16 frames). Waits for a real
+    early-push clip; see docs/components/analyzer.md, Known limits.
+
 - **Docs restructured (2026-10-07).** The README is trimmed to what the
   app is, the sneak peek, a small "how it works" diagram, status, stack and
   quick-start/deploy pointers. Depth moved into `docs/`:
@@ -749,12 +792,17 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
        the image, per-trick debug video *(live advisory, verified in prod)*
      - 6c-2 ✅ landed check + confidence gate, advisory *(live advisory,
        verified in prod)*
-     - 6c-3 ⬜ measurements, `calibration.py`, averaging, migration `0009`
+     - 6c-3 🔶 measurements, `calibration.py`, averaging, migration `0009`
        (`analyses.details`), API `tricks`, stub off; plus a periodic sweep
        of old `queued` clips (decided 2026-10-14): a message that fails all
        its receives *before* the claim lands in the DLQ and leaves its clip
        `queued` forever, which the last-receive give-up doesn't cover
+       *(built, verified locally; deploy + prod check next)*
    - 6d ⬜ calibration once the user has hand-judged clips → `steeze-v1`
+7. ⬜ Weekly analysis quota + paid subscriptions (Free 5/wk, Plus $3.99
+   25/wk, Pro $7.99 75/wk; Stripe), profile customization later — planned
+   in `docs/subscriptions.md` (2026-10-15). Separately and sooner: a
+   `reserved_concurrent_executions` ceiling on the worker Lambda
 
 Steps are sequential. Do not start a step before the previous one's
 acceptance criteria pass.
@@ -788,9 +836,11 @@ acceptance criteria pass.
   for an ollie, stomp when the board is seen end-on), shown as n/a.
 - **"body not clearly visible"** is a new failure reason, for when pose
   can't follow the skater.
-- **An analyzer crash marks the clip `unanalyzable` ("analysis failed")**,
-  logged, instead of retrying into the DLQ. Infrastructure errors still
-  retry.
+- **An analyzer crash isn't retried**, it's logged. A crash in one trick
+  fails only that trick ("analysis failed for this trick") and the rest
+  are scored; a crash outside the per-trick work, or a crashed trick with
+  nothing else landed, marks the clip `unanalyzable` ("analysis failed").
+  Infrastructure errors still retry.
 - **Calibration after the pipeline.** 6c ships guessed constants in one
   module as `steeze-v0-uncalibrated` and stores raw per-trick
   measurements, so 6d can recalculate scores without re-running video.

@@ -13,6 +13,11 @@ was landed. Then the reason is the most actionable one among its tricks
 (TRICK_PRIORITY), so a user whose only trick left the frame hears that,
 not "no landed trick detected".
 
+A trick whose analysis crashed (6c-3) arrives as None and is left out
+like a bail, as "analysis failed for this trick". If nothing else landed,
+the clip fails as "analysis failed": the crashed trick may have been the
+landed one, so "no landed trick detected" could be wrong.
+
 Clip-level checks come first: no pops at all → "no clean airtime found";
 a skater too small in frame → "skater too far from camera". "Too dark" is
 an *explanation* only. A dark clip that still tracks fine gets scored;
@@ -35,6 +40,7 @@ import numpy as np
 from app.analyzer import landed as L
 from app.analyzer.localize import StageAResult
 from app.analyzer.reasons import (
+    ANALYSIS_FAILED,
     BODY_NOT_VISIBLE,
     CLIP_ENDS,
     LEFT_FRAME,
@@ -42,6 +48,7 @@ from app.analyzer.reasons import (
     NO_LANDING,
     TOO_DARK,
     TOO_FAR,
+    TRICK_FAILED,
 )
 from app.analyzer.stage_b import TrickObservation
 
@@ -68,7 +75,7 @@ def _factor(value: float, threshold: float, good: float) -> float:
 
 @dataclass
 class TrickAssessment:
-    obs: TrickObservation
+    obs: TrickObservation | None  # None: Stage B (or measuring it) crashed
     landing: L.LandingCheck | None  # None when an earlier check failed
     failure: str | None  # why it can't be judged; None when landed or bailed
     confidence: float
@@ -120,10 +127,10 @@ def assess_trick(obs: TrickObservation, clip_end_ms: float, size_factor: float) 
 
 
 def assess_clip(
-    stage_a: StageAResult, observations: list[TrickObservation], clip_end_ms: float
+    stage_a: StageAResult, observations: list[TrickObservation | None], clip_end_ms: float
 ) -> ClipAssessment:
     """Judge a clip from Stage A and the Stage B observation of each of its
-    windows (in order; a trick whose Stage B failed is simply absent)."""
+    windows, in order. None stands for a trick whose analysis crashed."""
     dark = stage_a.brightness < MIN_BRIGHTNESS
     too_far = stage_a.skater_height_frac < MIN_SKATER_HEIGHT
 
@@ -132,7 +139,12 @@ def assess_clip(
         return ClipAssessment([], reason, 0.0)
 
     size_factor = _factor(stage_a.skater_height_frac, MIN_SKATER_HEIGHT, GOOD_SKATER_HEIGHT)
-    tricks = [assess_trick(o, clip_end_ms, size_factor) for o in observations]
+    tricks = [
+        TrickAssessment(None, None, TRICK_FAILED, 0.0)
+        if o is None
+        else assess_trick(o, clip_end_ms, size_factor)
+        for o in observations
+    ]
     confidence = float(np.mean([t.confidence for t in tricks])) if tricks else 0.0
     if too_far:
         return ClipAssessment(tricks, TOO_DARK if dark else TOO_FAR, confidence)
@@ -141,8 +153,12 @@ def assess_clip(
     if landed:
         return ClipAssessment(tricks, None, float(np.mean([t.confidence for t in landed])))
 
-    # Nothing landed. Bails and unclear landings both read as "no landed
-    # trick detected"; any more specific reason wins over that.
+    # Nothing landed. A crashed trick might have been the landed one, so
+    # the clip can't honestly claim more than that the analysis failed.
+    if any(t.failure == TRICK_FAILED for t in tricks):
+        return ClipAssessment(tricks, ANALYSIS_FAILED, confidence)
+    # Bails and unclear landings both read as "no landed trick detected";
+    # any more specific reason wins over that.
     outcomes = {NO_LANDING if t.outcome == L.Verdict.BAILED else t.outcome for t in tricks}
     reason = next((r for r in TRICK_PRIORITY if r in outcomes), NO_LANDING)
     return ClipAssessment(tricks, TOO_DARK if dark else reason, confidence)

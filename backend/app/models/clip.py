@@ -115,8 +115,15 @@ class Analysis(Base, UUIDPrimaryKey):
     # Null exactly when the confidence gate rejected the clip — see the
     # "fail safe" decision in docs/components/analyzer.md: a specific reason,
     # never a guess.
+    # Every subscore, null where it's n/a (6c-3). See docs/components/analyzer.md.
     steeze_breakdown: Mapped[dict | None] = mapped_column(JSONB)
     failure_reason: Mapped[str | None] = mapped_column(Text)
+    # The evidence behind the result (6c-3): per trick, its times, outcome,
+    # raw measurements and subscores. Null for media failures, "analysis
+    # failed" rows and every analysis before 6c-3.
+    # Shape: app/analyzer/pipeline.py, AnalysisResult.details; documented
+    # in docs/components/data-model.md.
+    details: Mapped[dict | None] = mapped_column(JSONB)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

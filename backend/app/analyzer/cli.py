@@ -3,15 +3,17 @@
     make analyze-clip FILE=tests/fixtures/clips/kickflip_sketchy_60fps.mov
 
 Same path as the worker: probe + transcode the file exactly as media.py
-does, then Stage A on the transcode, then Stage B on each trick. It prints
-the results and timings, and writes debug videos next to the input (under
-`_debug/`).
+does, then pipeline.analyze() on the transcode, the very function the
+worker calls. It prints every stage's results, each trick's measurements
+and subscores, the clip's score and timings, and writes debug videos next
+to the input (under `_debug/`).
 
 `<clip>.trick<N>.debug.mp4` (Stage B, 6c), one per trick: the window at full
 frame rate, played at 1/3 speed, with the pose skeleton, the board box where
 it was sampled, and take-off/touch-down marked. Feet are magenta, except in
 the landed check's span (6c-2): green on the board, red off it. The bottom
-line shows the trick's verdict and the clip's gate outcome.
+lines show the trick's verdict, the clip's outcome, and the trick's
+subscores (6c-3).
 
 `<clip>.debug.mp4` (Stage A) has:
 - the skater's box (green), the board (orange), other people (grey);
@@ -34,7 +36,7 @@ import tempfile
 import cv2
 import numpy as np
 
-from app.analyzer import gate, localize, media, stage_b
+from app.analyzer import gate, localize, media, pipeline
 from app.analyzer import pose as P
 from app.analyzer.frames import iter_frames
 from app.config import get_settings
@@ -130,6 +132,10 @@ _SKELETON = [
     (30, 32), (28, 32),
 ]  # fmt: skip
 _MAGENTA = (255, 0, 255)
+_SHORT = {
+    "pop": "pop", "landing_stability": "stab", "roll_away": "roll",
+    "stomp": "stomp", "compactness": "comp", "catch": "catch",
+}  # fmt: skip
 _TRICK_SLOWDOWN = 3
 
 
@@ -137,10 +143,12 @@ def write_trick_video(
     processed: str,
     info: media.VideoInfo,
     trick: gate.TrickAssessment,
+    subscores: dict | None,
     clip_outcome: str,
     out: str,
 ) -> None:
     obs = trick.obs
+    assert obs is not None
     on_board = trick.landing.rows if trick.landing else {}
     w, h = info.width, info.height
     enc = subprocess.Popen(
@@ -150,6 +158,9 @@ def write_trick_video(
         stdin=subprocess.PIPE,
     )  # fmt: skip
     assert enc.stdin is not None
+    scores = "  ".join(
+        f"{_SHORT[k]} {'n/a' if v is None else round(v)}" for k, v in (subscores or {}).items()
+    )
     frames = iter_frames(processed, w, h, obs.fps, obs.window.start_ms, obs.window.end_ms)
     for row, f in enumerate(frames):
         if row >= len(obs.pose.t_ms):
@@ -183,8 +194,9 @@ def write_trick_video(
         cv2.rectangle(img, (0, 0), (w, 28), (0, 0, 0), -1)
         cv2.putText(img, label, (8, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         footer = f"trick: {trick.outcome} ({trick.confidence:.2f})  clip: {clip_outcome}"
-        cv2.rectangle(img, (0, h - 28), (w, h), (0, 0, 0), -1)
-        cv2.putText(img, footer, (8, h - 9), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        cv2.rectangle(img, (0, h - 52), (w, h), (0, 0, 0), -1)
+        cv2.putText(img, footer, (8, h - 33), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        cv2.putText(img, scores, (8, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
         enc.stdin.write(img.tobytes())
     enc.stdin.close()
     if enc.wait() != 0:
@@ -223,20 +235,15 @@ def main(argv: list[str] | None = None) -> int:
         processed = os.path.join(tmp, "processed.mp4")
         info = media.probe(args.file)
         media.transcode(args.file, processed, info)
-        pinfo = media.probe(processed)
         settings = get_settings()
-        r = localize.analyze(processed, pinfo, settings.yolox_model_path)
-        observations = [
-            stage_b.observe(
-                processed, pinfo, r, w, settings.yolox_model_path, settings.pose_model_path
-            )
-            for w in r.windows
-        ]
-        verdict = gate.assess_clip(r, observations, pinfo.duration_ms)
+        res = pipeline.analyze(
+            processed, settings.yolox_model_path, settings.pose_model_path, args.file
+        )
+        r, pinfo, verdict = res.stage_a, res.info, res.verdict
         clip_outcome = (
-            f"would score {len(verdict.landed)} trick(s)"
+            f"steeze {res.steeze_score} from {len(verdict.landed)} trick(s)"
             if verdict.failure_reason is None
-            else f"would fail: {verdict.failure_reason}"
+            else f"unanalyzable: {verdict.failure_reason}"
         )
 
         print(json.dumps({
@@ -253,20 +260,25 @@ def main(argv: list[str] | None = None) -> int:
                  "window_ms": [round(w.start_ms), round(w.end_ms)]}
                 for w in r.windows
             ],
-            "timings_s": {k: round(v, 2) for k, v in r.timings_s.items()},
             "stage_b": [
+                None if o is None else
                 {"takeoff_ms": _r(o.takeoff_ms), "touchdown_ms": _r(o.touchdown_ms),
                  "pose_found": round(o.pose.found_frac, 2),
                  "feet_visibility": round(o.pose.feet_visibility(), 2),
                  "board_found": round(o.board_found_frac, 2),
                  "skater_h_px": round(o.skater_h),
                  "timings_s": {k: round(v, 2) for k, v in o.timings_s.items()}}
-                for o in observations
+                for o in res.observations
             ],
             "landing": [_landing(t) for t in verdict.tricks],
-            "gate": {"failure_reason": verdict.failure_reason,
-                     "landed_tricks": len(verdict.landed),
-                     "confidence": round(verdict.confidence, 2)},
+            "measurements": res.measurements,
+            "subscores": res.subscores,
+            "result": {"failure_reason": verdict.failure_reason,
+                       "landed_tricks": len(verdict.landed),
+                       "confidence": round(verdict.confidence, 2),
+                       "breakdown": res.breakdown,
+                       "steeze_score": res.steeze_score},
+            "timings_s": {k: round(v, 2) for k, v in res.timings_s.items()},
         }, indent=2))  # fmt: skip
 
         if not args.no_video:
@@ -279,8 +291,10 @@ def main(argv: list[str] | None = None) -> int:
             # the file is reached on the host.
             print(f"debug video: backend/{os.path.relpath(out)}")
             for n, trick in enumerate(verdict.tricks, 1):
+                if trick.obs is None:  # its analysis crashed: nothing to draw
+                    continue
                 out = os.path.join(out_dir, f"{stem}.trick{n}.debug.mp4")
-                write_trick_video(processed, pinfo, trick, clip_outcome, out)
+                write_trick_video(processed, pinfo, trick, res.subscores[n - 1], clip_outcome, out)
                 print(f"trick {n} debug video: backend/{os.path.relpath(out)}")
     return 0
 

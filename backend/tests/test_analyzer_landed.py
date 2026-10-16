@@ -16,6 +16,7 @@ from app.analyzer import pose as P  # noqa: E402
 from app.analyzer.detect import PERSON, SKATEBOARD, Detection  # noqa: E402
 from app.analyzer.localize import TrickWindow  # noqa: E402
 from app.analyzer.reasons import (  # noqa: E402
+    ANALYSIS_FAILED,
     BODY_NOT_VISIBLE,
     CLIP_ENDS,
     LEFT_FRAME,
@@ -23,6 +24,7 @@ from app.analyzer.reasons import (  # noqa: E402
     NO_LANDING,
     TOO_DARK,
     TOO_FAR,
+    TRICK_FAILED,
 )
 from app.analyzer.stage_b import BOARD_EVERY, TrickObservation  # noqa: E402
 
@@ -207,3 +209,25 @@ def test_30fps_footage_lowers_confidence():
     c60 = gate.assess_clip(_stage_a(), [_obs()], CLIP_END).confidence
     c30 = gate.assess_clip(_stage_a(), [_obs(fps=30.0)], CLIP_END).confidence
     assert c30 < c60 and c30 >= 0.5
+
+
+# --- a trick whose analysis crashed (6c-3) -----------------------------------
+
+
+def test_a_crashed_trick_is_left_out_and_the_rest_still_score():
+    v = gate.assess_clip(_stage_a(2), [_obs(), None], CLIP_END)
+    assert v.failure_reason is None and len(v.landed) == 1
+    assert v.tricks[1].outcome == TRICK_FAILED and v.tricks[1].obs is None
+
+
+def test_a_crashed_trick_and_a_bail_fail_as_analysis_failed():
+    """The crashed trick might have been the landed one, so the clip can't
+    claim "no landed trick detected"."""
+    bail = _obs(board=_board(500, 590))
+    v = gate.assess_clip(_stage_a(2), [bail, None], CLIP_END)
+    assert v.failure_reason == ANALYSIS_FAILED
+
+
+def test_every_trick_crashing_fails_as_analysis_failed_even_in_the_dark():
+    v = gate.assess_clip(_stage_a(1, brightness=10.0), [None], CLIP_END)
+    assert v.failure_reason == ANALYSIS_FAILED and v.confidence == 0.0

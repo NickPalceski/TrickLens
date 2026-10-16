@@ -1,4 +1,4 @@
-"""SQS consumer: media processing (step 6a) + stubbed scorer.
+"""SQS consumer: media processing (step 6a) + the steeze analyzer (6c).
 
 Same processing code either way: locally, the __main__ block long-polls SQS
 in a loop; in production (from step 5) an SQS event-source-mapping invokes
@@ -7,16 +7,16 @@ vs. invoked is the worker's dev/prod seam, same idea as AWS_ENDPOINT_URL
 elsewhere in the app.
 
 With settings.analyzer == "real" (the worker image, Dockerfile.worker), the
-raw upload is first probed, transcoded to processed/ and thumbnailed via
-app/analyzer/media.py; with "stub" (the API image and its test suite, which
-have no ffmpeg) that step is skipped entirely.
+raw upload is probed, transcoded to processed/ and thumbnailed via
+app/analyzer/media.py, then app/analyzer/pipeline.py finds, judges and
+scores the tricks (6c-3). The gate decides the status, calibration.py the
+score.
 
-The scorer here stands in for the real analyzer (step 6c): it fabricates
-output in the exact shape the real one will produce — six subscores, a
-confidence, and occasionally `unanalyzable` with a specific reason — so
-everything downstream (schemas, the publish gate, eventually the UI) gets
-built and exercised against the real shape now. See docs/ARCHITECTURE.md's
-build-order rationale for why step 3 stubs this instead of skipping it.
+With "stub" (the API image and its test suite, which have no ffmpeg or CV
+stack) all of that is skipped and _stub_score fabricates output in the
+exact shape the real analyzer produces (six subscores, some n/a,
+`details.tricks`, occasionally `unanalyzable` with a specific reason), so
+the API keeps being built and tested against the real shape.
 """
 
 import asyncio
@@ -33,6 +33,8 @@ from typing import Any
 
 from sqlalchemy import and_, func, or_, select, update
 
+from app.analyzer import calibration
+from app.analyzer.reasons import ANALYSIS_FAILED
 from app.config import get_settings
 from app.db import SessionLocal, run_in_fresh_loop
 from app.logs import configure_logging
@@ -45,7 +47,7 @@ from app.services.storage import PREFIX_PROCESSED, PREFIX_THUMBS, get_storage
 configure_logging()
 log = logging.getLogger("tricklens.worker")
 
-MODEL_VERSION = "stub-v1"
+STUB_MODEL_VERSION = "stub-v1"
 
 # How long an `analyzing` clip belongs to the run that claimed it. It must
 # be longer than the worker Lambda's 300s timeout (infra/lambda.tf), so a
@@ -59,11 +61,7 @@ ANALYZING_LEASE = timedelta(seconds=360)
 # is given up on rather than run once more. See _give_up_on_final_receive.
 MAX_RECEIVES = 3
 
-# The failure reason when the analyzer itself broke rather than the clip.
-# See docs/components/analyzer.md (Worker).
-ANALYSIS_FAILED = "analysis failed"
-
-_SUBSCORES = ("pop", "landing_stability", "roll_away", "stomp", "compactness", "catch")
+_SUBSCORES = calibration.SUBSCORES
 _FAILURE_REASONS = (
     "skater too far from camera",
     "trick left the frame",
@@ -73,9 +71,15 @@ _FAILURE_REASONS = (
 )
 
 
+def model_version() -> str:
+    """What scores this worker's clips: the stub, or the real analyzer."""
+    return calibration.MODEL_VERSION if get_settings().analyzer == "real" else STUB_MODEL_VERSION
+
+
 def _stub_score(clip_id: uuid.UUID) -> dict[str, Any]:
     """Deterministic given the clip id, so re-running the same clip in dev
-    reproduces the same result instead of a new random one every time."""
+    reproduces the same result instead of a new random one every time.
+    Same keys as _analyze_real's result."""
     rng = random.Random(clip_id.int)
 
     if rng.random() < 0.1:
@@ -84,25 +88,45 @@ def _stub_score(clip_id: uuid.UUID) -> dict[str, Any]:
             "failure_reason": rng.choice(_FAILURE_REASONS),
         }
 
-    breakdown = {name: round(rng.uniform(45, 97), 1) for name in _SUBSCORES}
+    # Catch is n/a about a third of the time, as it is for an ollie.
+    subs: dict[str, float | None] = {name: round(rng.uniform(45, 97), 1) for name in _SUBSCORES}
+    if rng.random() < 0.3:
+        subs["catch"] = None
+    breakdown, steeze = calibration.aggregate([subs])
+    confidence = round(rng.uniform(0.82, 0.99), 2)
+    pop = rng.randrange(500, 2000)
+    trick = {
+        "pop_ms": pop, "apex_ms": pop + 200, "land_ms": pop + 400,
+        "takeoff_ms": pop + 10, "touchdown_ms": pop + 420,
+        "outcome": "landed", "confidence": confidence,
+        "landing": None, "measurements": None, "subscores": subs,
+    }  # fmt: skip
     return {
-        "confidence": round(rng.uniform(0.82, 0.99), 2),
+        "confidence": confidence,
         "steeze_breakdown": breakdown,
-        "steeze_score": round(sum(breakdown.values()) / len(breakdown), 1),
+        "steeze_score": steeze,
+        "details": {"schema": 1, "stub": True, "tricks": [trick]},
     }
 
 
-async def _process_media(clip: Clip) -> str | None:
-    """Probe, transcode and thumbnail the raw upload (step 6a), updating
-    `clip` in place. Returns a user-facing failure reason if the file itself
-    is unusable, None on success. Any other exception propagates, so SQS
-    retries the message.
+async def _analyze_real(clip: Clip) -> dict[str, Any]:
+    """Probe, transcode, analyze and thumbnail the raw upload, updating
+    `clip`'s media fields in place. Returns the result in _stub_score's
+    shape.
 
-    Imported lazily: app.analyzer is worker-image-only code, and this module
-    is also imported by the API image's test suite.
+    A bad *file* returns its media reason, and nothing is uploaded. An
+    exception from the analyzer itself (pipeline.analyze has no S3 or
+    database access, so it's never an infrastructure error) is logged and
+    becomes "analysis failed": a code bug would fail the same way on every
+    retry. The processed clip and thumbnail are still uploaded then, so the
+    owner can watch it. S3 errors propagate, so SQS retries the message.
+
+    Imported lazily: app.analyzer's CV modules are worker-image-only, and
+    this module is also imported by the API image's test suite.
     """
-    from app.analyzer import gate, localize, media, stage_b
+    from app.analyzer import media, pipeline
 
+    settings = get_settings()
     storage = get_storage()
     ext = os.path.splitext(clip.s3_key)[1]
     with tempfile.TemporaryDirectory(prefix="tricklens-") as tmp:
@@ -120,7 +144,7 @@ async def _process_media(clip: Clip) -> str | None:
             await asyncio.to_thread(media.transcode, raw, processed, info)
             timings["probe_transcode"] = time.perf_counter() - t0
         except media.MediaError as e:
-            return e.reason
+            return {"confidence": 0.0, "failure_reason": e.reason}
         log.info(
             "worker: clip %s media: %dms at %.0ffps | %s",
             clip.id,
@@ -129,71 +153,28 @@ async def _process_media(clip: Clip) -> str | None:
             {k: round(v, 2) for k, v in timings.items()},
         )
 
-        # Stage A (6b): find the tricks. Advisory until 6c, since scoring is
-        # still the stub. So a failure here is logged and the clip carries
-        # on rather than becoming unanalyzable, and the windows themselves
-        # are only logged, not stored.
         thumb_at_ms = info.duration_ms // 2
         try:
-            processed_info = await asyncio.to_thread(media.probe, processed)
-            stage_a = await asyncio.to_thread(
-                localize.analyze, processed, processed_info, get_settings().yolox_model_path
+            res = await asyncio.to_thread(
+                pipeline.analyze,
+                processed,
+                settings.yolox_model_path,
+                settings.pose_model_path,
+                f"clip {clip.id}",
             )
         except Exception:
-            log.exception("worker: clip %s stage A failed, continuing without it", clip.id)
+            log.exception("worker: clip %s analysis crashed", clip.id)
+            result: dict[str, Any] = {"confidence": 0.0, "failure_reason": ANALYSIS_FAILED}
         else:
-            log.info(
-                "worker: clip %s stage A: %d trick(s) %s | skater in %.0f%% of samples, "
-                "%.2f of frame height | %s",
-                clip.id,
-                len(stage_a.windows),
-                [(round(w.pop_ms), round(w.apex_ms), round(w.land_ms)) for w in stage_a.windows],
-                100 * stage_a.skater_coverage,
-                stage_a.skater_height_frac,
-                {k: round(v, 2) for k, v in stage_a.timings_s.items()},
-            )
-            if stage_a.windows:
-                # The poster frame is the highest moment of the biggest pop.
-                best = max(stage_a.windows, key=lambda w: w.peak_elevation)
-                thumb_at_ms = int(best.apex_ms)
-            # Stage B (6c-1): pose + board at native fps per trick, then the
-            # landed check and confidence gate (6c-2). Same advisory rules as
-            # Stage A until 6c-3 scores from them: logged, nothing stored.
-            settings = get_settings()
-            observations = []
-            for n, window in enumerate(stage_a.windows, 1):
-                try:
-                    obs = await asyncio.to_thread(
-                        stage_b.observe,
-                        processed,
-                        processed_info,
-                        stage_a,
-                        window,
-                        settings.yolox_model_path,
-                        settings.pose_model_path,
-                    )
-                except Exception:
-                    log.exception("worker: clip %s stage B trick %d failed", clip.id, n)
-                    continue
-                log.info(
-                    "worker: clip %s stage B trick %d: takeoff %s touchdown %s | pose %.0f%%, "
-                    "feet vis %.2f, board %.0f%% | %s",
-                    clip.id,
-                    n,
-                    None if obs.takeoff_ms is None else round(obs.takeoff_ms),
-                    None if obs.touchdown_ms is None else round(obs.touchdown_ms),
-                    100 * obs.pose.found_frac,
-                    obs.pose.feet_visibility(),
-                    100 * obs.board_found_frac,
-                    {k: round(v, 2) for k, v in obs.timings_s.items()},
-                )
-                observations.append(obs)
-            try:
-                verdict = gate.assess_clip(stage_a, observations, processed_info.duration_ms)
-            except Exception:
-                log.exception("worker: clip %s gate failed", clip.id)
-            else:
-                _log_gate(clip.id, verdict)
+            _log_analysis(clip.id, res)
+            thumb_at_ms = res.thumb_at_ms
+            result = {
+                "confidence": round(res.confidence, 2),
+                "failure_reason": res.failure_reason,
+                "steeze_breakdown": res.breakdown,
+                "steeze_score": res.steeze_score,
+                "details": res.details(),
+            }
         await asyncio.to_thread(media.thumbnail, processed, thumb, thumb_at_ms)
 
         processed_key = f"{PREFIX_PROCESSED}/{clip.id}.mp4"
@@ -207,14 +188,38 @@ async def _process_media(clip: Clip) -> str | None:
     # POST /clips (see docs/components/analyzer.md, Media).
     clip.duration_ms = info.duration_ms
     clip.source_fps = round(info.fps)
-    return None
+    return result
 
 
-def _log_gate(clip_id: uuid.UUID, verdict: Any) -> None:
-    """Log the gate's advisory verdict (6c-2): one line per trick, then the
-    outcome the clip *would* get. `verdict` is a gate.ClipAssessment (typed
-    loosely: app.analyzer is worker-image-only)."""
-    for n, t in enumerate(verdict.tricks, 1):
+def _log_analysis(clip_id: uuid.UUID, res: Any) -> None:
+    """One line per stage, per trick, then the outcome. `res` is a
+    pipeline.AnalysisResult (typed loosely: app.analyzer's CV modules are
+    worker-image-only)."""
+    a = res.stage_a
+    log.info(
+        "worker: clip %s stage A: %d trick(s) %s | skater in %.0f%% of samples, "
+        "%.2f of frame height | %s",
+        clip_id,
+        len(a.windows),
+        [(round(w.pop_ms), round(w.apex_ms), round(w.land_ms)) for w in a.windows],
+        100 * a.skater_coverage,
+        a.skater_height_frac,
+        {k: round(v, 2) for k, v in a.timings_s.items()},
+    )
+    for n, (obs, t) in enumerate(zip(res.observations, res.verdict.tricks, strict=True), 1):
+        if obs is not None:
+            log.info(
+                "worker: clip %s stage B trick %d: takeoff %s touchdown %s | pose %.0f%%, "
+                "feet vis %.2f, board %.0f%% | %s",
+                clip_id,
+                n,
+                None if obs.takeoff_ms is None else round(obs.takeoff_ms),
+                None if obs.touchdown_ms is None else round(obs.touchdown_ms),
+                100 * obs.pose.found_frac,
+                obs.pose.feet_visibility(),
+                100 * obs.board_found_frac,
+                {k: round(v, 2) for k, v in obs.timings_s.items()},
+            )
         c = t.landing
         detail = (
             ""
@@ -232,19 +237,23 @@ def _log_gate(clip_id: uuid.UUID, verdict: Any) -> None:
             t.confidence,
             detail,
         )
-    if verdict.failure_reason is None:
+        if res.subscores[n - 1] is not None:
+            log.info("worker: clip %s scores trick %d: %s", clip_id, n, res.subscores[n - 1])
+    if res.failure_reason is None:
         log.info(
-            "worker: clip %s gate: would score %d landed trick(s), confidence %.2f",
+            "worker: clip %s gate: scored %d landed trick(s), steeze %s, confidence %.2f | %s",
             clip_id,
-            len(verdict.landed),
-            verdict.confidence,
+            len(res.verdict.landed),
+            res.steeze_score,
+            res.confidence,
+            {k: round(v, 2) for k, v in res.timings_s.items()},
         )
     else:
         log.info(
-            "worker: clip %s gate: would fail: %s (confidence %.2f)",
+            "worker: clip %s gate: failed: %s (confidence %.2f)",
             clip_id,
-            verdict.failure_reason,
-            verdict.confidence,
+            res.failure_reason,
+            res.confidence,
         )
 
 
@@ -279,7 +288,7 @@ async def _give_up_on_final_receive(db, clip_id: uuid.UUID) -> bool:
     db.add(
         Analysis(
             clip_id=clip_id,
-            model_version=MODEL_VERSION,
+            model_version=model_version(),
             confidence=Decimal("0"),
             failure_reason=ANALYSIS_FAILED,
         )
@@ -339,40 +348,29 @@ async def _process_message(body: dict[str, Any], receive_count: int = 1) -> None
             return
 
         if get_settings().analyzer == "real":
-            failure = await _process_media(clip)
-            if failure is not None:
-                db.add(
-                    Analysis(
-                        clip_id=clip.id,
-                        model_version=MODEL_VERSION,
-                        confidence=Decimal("0"),
-                        failure_reason=failure,
-                    )
-                )
-                clip.status = ClipStatus.UNANALYZABLE
-                await db.commit()
-                log.info("worker: clip %s -> %s (%s)", clip_id, clip.status, failure)
-                return
-
-        result = _stub_score(clip.id)
+            result = await _analyze_real(clip)
+        else:
+            result = _stub_score(clip.id)
 
         db.add(
             Analysis(
                 clip_id=clip.id,
-                model_version=MODEL_VERSION,
+                model_version=model_version(),
                 confidence=Decimal(str(result["confidence"])),
                 steeze_breakdown=result.get("steeze_breakdown"),
                 failure_reason=result.get("failure_reason"),
+                details=result.get("details"),
             )
         )
-        if "steeze_breakdown" in result:
+        if result.get("steeze_score") is not None:
             clip.status = ClipStatus.ANALYZED
             clip.steeze_score = Decimal(str(result["steeze_score"]))
         else:
             clip.status = ClipStatus.UNANALYZABLE
         await db.commit()
+        reason = result.get("failure_reason")
 
-    log.info("worker: clip %s -> %s", clip_id, clip.status)
+    log.info("worker: clip %s -> %s%s", clip_id, clip.status, f" ({reason})" if reason else "")
 
 
 async def _poll_forever() -> None:

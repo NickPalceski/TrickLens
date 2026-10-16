@@ -7,10 +7,12 @@ up, the media step (verify, transcode, thumbnail), and the steeze analyzer
 
 ← Back to the [architecture overview](../ARCHITECTURE.md).
 
-**Status:** media (6a), Stage A (6b) and Stage B (6c-1) are live. The
-landed check and confidence gate (6c-2) are live too. Stage B and the gate run
-in advisory mode (logged, not stored). Scores are still the stub
-until 6c-3. See the [build order](../ARCHITECTURE.md#build-order).
+**Status:** media (6a), Stage A (6b), Stage B (6c-1) and the landed
+check and confidence gate (6c-2) are live. 6c-3 (measurements,
+calibration, scoring, the stub off) is built and verified locally, not yet
+deployed. With it, the gate decides the clip's status and calibration.py
+its score; the stub only runs where `ANALYZER=stub` (the API image and CI).
+See the [build order](../ARCHITECTURE.md#build-order).
 
 ## What the worker does with one clip
 
@@ -20,32 +22,41 @@ flowchart TD
     claim{"Atomic claim:<br/>queued, or analyzing<br/>with an expired lease?"}
     skip(["Skip: finished,<br/>or another run owns it"])
     mode{"ANALYZER?"}
+    stub["Stub score<br/>(API image, tests)"]
     dl["Download raw/ upload to /tmp"]
     probe["ffprobe: real duration + fps"]
     bad(["unanalyzable<br/>'unreadable video file' /<br/>'no video stream found' /<br/>'clip too short'"])
     tx["ffmpeg: 720p, upright,<br/>constant fps ≤ 60, ≤ 30s"]
     sa["Stage A: find the pops<br/>(15fps, YOLOX + tracker)"]
     sb["Stage B per trick: pose +<br/>board + take-off/touch-down<br/>(native fps)"]
-    gt["Landed check per trick +<br/>confidence gate<br/>(advisory: logged)"]
+    gt["Landed check per trick +<br/>confidence gate"]
+    meas["Measure each judged trick,<br/>score the landed ones,<br/>average them"]
+    crash["Analyzer crash:<br/>'analysis failed'"]
     thumb["Thumbnail at the biggest<br/>pop's apex (else mid-clip)"]
     up["Upload processed/ + thumbs/"]
-    score["Score: stub until 6c-3"]
-    write(["analyses row +<br/>clip status analyzed / unanalyzable"])
+    write(["analyses row (+ details) +<br/>clip status analyzed / unanalyzable"])
 
     msg --> claim
     claim -- no --> skip
     claim -- "yes: status = analyzing" --> mode
-    mode -- "stub (API image, tests)" --> score
+    mode -- "stub" --> stub --> write
     mode -- "real (worker image)" --> dl --> probe
     probe -- "bad file" --> bad
-    probe --> tx --> sa --> sb --> gt --> thumb --> up --> score --> write
+    probe --> tx --> sa --> sb --> gt --> meas --> thumb
+    sa -. "exception" .-> crash
+    gt -. "exception" .-> crash
+    crash --> thumb
+    thumb --> up --> write
 ```
 
-Stage A, Stage B and the gate are **advisory** for now: their results are
-logged (`media: …`, `stage A: …`, `stage B trick N: …`, `landing trick N:
-…`, `gate: would score …` / `gate: would fail: …`), and a failure in any of
-them is logged without failing the clip. They become the source of the
-score and the status in 6c-3.
+Since 6c-3 the analyzer decides the clip's status and score (until then
+Stage A, Stage B and the gate were advisory: logged, with the stub
+deciding). Each step logs a line: `media: …`, `stage A: …`, `stage B
+trick N: …`, `landing trick N: …`, `scores trick N: {…}` for a landed
+trick, then `gate: scored N landed trick(s), steeze …` or `gate: failed:
+…`, and finally `-> analyzed` or `-> unanalyzable (reason)`. A crash in
+one trick's Stage B or measurements fails only that trick (see
+[Worker](#worker), Errors).
 
 ## Inside the analyzer
 
@@ -65,7 +76,7 @@ flowchart LR
     subgraph stageB ["Stage B: stage_b.py (one window, native fps)"]
         fb["frames.py<br/>decode the window only"]
         pose["pose.py<br/>MediaPipe BlazePose 'full'"]
-        bb["board every other frame<br/>(full frame + zoomed crop)"]
+        bb["board every other frame,<br/>every 4th after the landing<br/>(full frame + zoomed crop)"]
         ref["refine_contacts()<br/>take-off / touch-down"]
     end
 
@@ -74,8 +85,9 @@ flowchart LR
         gate["gate.py<br/>clip checks, reasons,<br/>confidence"]
     end
 
-    subgraph next ["6c-3 (planned)"]
-        meas["measurements<br/>→ calibration.py → subscores"]
+    subgraph score ["6c-3: score it"]
+        meas["measure.py<br/>raw measurements<br/>per judged trick"]
+        cal["calibration.py<br/>subscores, averaged over<br/>the landed tricks"]
     end
 
     proc --> fa --> det --> trk --> sig --> pops
@@ -87,8 +99,11 @@ flowchart LR
     bb --> landed
     landed --> gate
     pops -- "brightness, skater size" --> gate
-    gate -- "landed tricks" --> meas
+    gate -- "judged tricks" --> meas --> cal
 ```
+
+`pipeline.py` runs all of this for one clip, and both the worker and `make
+analyze-clip` call it.
 
 | Module | Job |
 |---|---|
@@ -101,7 +116,10 @@ flowchart LR
 | `stage_b.py` | Stage B: pose + board per window, refined take-off / touch-down |
 | `landed.py` | Per trick: landed, bailed or unclear, from the feet and the board just after touch-down |
 | `gate.py` | Per clip: which tricks count, the failure reason when none do, and a confidence |
-| `reasons.py` | The user-facing failure reasons the gate can give |
+| `measure.py` | Per judged trick: the raw measurements the subscores come from (6c-3) |
+| `calibration.py` | Measurements → 0–100 subscores → the clip's breakdown and steeze score. Pure Python, so the API image (and 6d) can import it |
+| `pipeline.py` | The whole analyzer on one processed clip, with per-trick crash handling. Called by the worker and the CLI |
+| `reasons.py` | The user-facing failure reasons the gate can give. Pure constants |
 | `cli.py` | `make analyze-clip`: the worker's exact path on a local file, plus debug videos |
 
 ## Worker
@@ -131,9 +149,23 @@ matters: 300s Lambda timeout < 360s lease < SQS visibility timeout (1800s
 prod, 600s local). A redelivery that arrived *inside* the lease would be
 skipped and deleted.
 
-**Errors.** A bad *file* becomes `unanalyzable` with a specific reason. Any
-other exception (S3, database) propagates, so SQS retries the message (3
-receives, then the dead-letter queue).
+**Errors.** A bad *file* becomes `unanalyzable` with a specific reason.
+An exception in the analyzer itself (6c-3) is a code bug that would fail
+the same way on every retry, so it isn't retried:
+- one trick's Stage B or measurements crashing leaves that trick out as
+  *analysis failed for this trick*, like a bail, and the clip's other
+  tricks are still judged and scored;
+- a crash anywhere else (Stage A, the gate) marks the clip *analysis
+  failed*;
+- if no trick landed and one crashed, the clip is *analysis failed* too,
+  not *no landed trick detected*: the crashed trick might have been the
+  landed one.
+
+Either way the traceback is logged, and the processed clip and thumbnail
+are still uploaded so the owner can watch it. Any other exception (S3,
+database) propagates, so SQS retries the message (3 receives, then the
+dead-letter queue). `pipeline.analyze` has no S3 or database access, which
+keeps the two kinds apart.
 
 **A run that dies is given up on at the last receive.** A crash inside
 native code (a C++ `CHECK`, a segfault) kills the whole process, so no
@@ -161,6 +193,18 @@ forever.
 
 `MAX_RECEIVES` in `app/worker.py` must match `maxReceiveCount` in
 `infra/sqs.tf` and `scripts/localstack-init.sh`.
+
+**Stuck clips are swept (6c-3).** The give-up only helps a clip some run
+already claimed. A message whose every receive fails *before* the claim
+(the database down, say) lands in the DLQ and leaves its clip `queued`
+with nothing left to come back for it. `app/sweep.py` marks any clip still
+`queued` or `analyzing` after 2 hours `unanalyzable`, with an *analysis
+failed* row stamped `model_version: sweep`. Two hours is well past
+anything SQS can still do (3 receives × 1800s visibility = 90 minutes).
+It fails the clip rather than re-enqueuing it, because a retry would need
+a counter to avoid looping forever. It runs on the rankings Lambda's
+30-minute EventBridge tick (`app.rankings.lambda_handler` calls it), so
+it has no infrastructure of its own; locally, `make sweep`.
 
 **The worker image** (`backend/Dockerfile.worker`): the API's Lambda base
 image plus
@@ -208,6 +252,10 @@ quota, AWS requires at least 10 executions to stay unreserved.
   Stage B (7.4s of it board detection, up from 4.1s with the shorter
   window), 32.1s end to end, 762MB, 3.7s init. Same verdicts as local on
   both clips.
+- 6c-3 (window to landing + 1.3s for roll-away): locally, Stage B went
+  from ~3s to ~4.2s per trick on the kickflip; measuring and scoring take
+  under 10ms. On Lambda that's roughly +3–4s per trick. To confirm in the
+  prod check.
 - The rule that follows: keep the heavy CV imports (cv2, onnxruntime,
   mediapipe) inside the handler path, never at module level, or every cold
   start pays for them during init.
@@ -258,8 +306,11 @@ GPUs, fully deterministic.
    bystander nearer the camera.
 3. **Localize — Stage A** *(6b, done)*: at 15fps over the whole clip, find
    the **pops**, then cut a ~1.2s window around each.
-4. **Score — Stage B** *(6c, in progress)*: only inside those windows, at
-   native fps, using MediaPipe pose.
+4. **Stage B** *(6c-1)*: only inside those windows, at native fps, using
+   MediaPipe pose, then the landed check and the gate *(6c-2)*.
+5. **Score** *(6c-3)*: raw measurements per trick, turned into subscores by
+   `calibration.py` and averaged over the landed tricks. See
+   [Subscores, as built](#subscores-as-built-6c-3).
 
 > Two-stage localization is what makes 30s clips affordable: full-cost
 > processing runs on roughly 5% of frames, and multi-trick lines come free.
@@ -306,9 +357,10 @@ box, i.e. the lowest foot), the **board's centre**, and the skater's
   sample, while its centre rose a steady ~0.12 over four.
 - **Pops** are peaks of the airborne signal ≥ `MIN_POP = 0.08`, with
   pop/landing where it crosses 30% of the peak, 130–1500ms of airtime, and
-  ≥ 0.6s apart. Each becomes a window of [pop − 0.4s, landing + 0.8s].
+  ≥ 0.6s apart. Each becomes a window of [pop − 0.4s, landing + 1.3s].
   The end was max(pop + 0.8s, landing + 0.4s) until 6c-2, which stopped
-  short of the landed check's span on both real clips.
+  short of the landed check's span on both real clips, then landing +
+  0.8s until 6c-3 extended it for roll-away (0.6–1.2s after touch-down).
 
 **On the real clips**, also checked by eye in the debug video:
 
@@ -326,8 +378,10 @@ clip's native rate (60fps for phone footage), and in one pass:
 - runs **pose** on every frame (`pose.py`): MediaPipe's BlazePose GHUM
   "full" model in VIDEO mode, on the full frame;
 - runs the **board** detector on every other frame from 0.2s before the
-  pop to the end of the window, with Stage A's full-frame + zoomed-crop
-  merge. That covers the air and the landed check;
+  pop to Stage A's landing + 0.8s, with Stage A's full-frame + zoomed-crop
+  merge. That covers the air and the landed check. From there to the end
+  of the window (roll-away, 6c-3) it's every 4th frame, which halves what
+  the longer window costs;
 - **refines take-off and touch-down** from the lowest foot point's height
   above its own resting level. The level before the pop is the deck; the
   level after landing is the deck or the ground (a bail), joined by a
@@ -443,8 +497,10 @@ Every threshold is an uncalibrated guess at the top of `gate.py` and
 `landed.py`. Both real clips pass every non-landing check by a wide margin,
 so none of them has been tested against a clip near its edge.
 
-**Advisory until 6c-3.** The worker logs each trick's verdict and the
-outcome the clip *would* get. Status and score still come from the stub.
+**Live since 6c-3.** Until then the worker only logged the outcome the
+clip *would* get. Now the gate's outcome is the clip's status, and a trick
+whose analysis crashed comes in as *analysis failed for this trick* (see
+[Worker](#worker), Errors).
 
 ### Decisions for the rest of 6c
 
@@ -456,19 +512,22 @@ outcome the clip *would* get. Status and score still come from the stub.
   the board is seen end-on, so its length can't be measured.
 - **New failure reason "body not clearly visible"**, for when pose can't
   follow the skater. It's more honest than reusing "no clean airtime found".
-- **An analyzer crash marks the clip `unanalyzable` ("analysis failed")**
-  and logs the traceback. A code bug fails the same way on every retry,
-  so retrying would only park the clip in the DLQ, stuck at `analyzing`.
-  Infrastructure errors (S3, database) still raise and get SQS retries.
-  The backstop for crashes that kill the process outright (native aborts,
-  timeouts) already exists: the last-receive give-up under
-  [Worker](#worker). 6c-3 adds catching ordinary exceptions in-process.
+- **An analyzer crash isn't retried** and logs the traceback. A code bug
+  fails the same way on every retry, so retrying would only park the clip
+  in the DLQ, stuck at `analyzing`. Decided for 6c-3: a crash in one
+  trick fails only that trick ("analysis failed for this trick") when the
+  clip's other tricks could be analyzed; a crash outside the per-trick
+  work fails the clip ("analysis failed"). Infrastructure errors (S3,
+  database) still raise and get SQS retries. The backstop for crashes that
+  kill the process outright (native aborts, timeouts) is the last-receive
+  give-up under [Worker](#worker).
 - **Milestones:**
   - 6c-1: pose + refined contacts, deployed advisory to prove MediaPipe on
     Lambda;
   - 6c-2: landed check + confidence gate, advisory (built);
   - 6c-3: measurements, `calibration.py`, averaging, migration `0009`
-    (`analyses.details`), API, stub off;
+    (`analyses.details`), API, stub off, the stuck-clip sweep (built,
+    verified locally);
   - then the prod check.
 
 ### Subscores
@@ -510,6 +569,65 @@ against real, hand-judged clips. Those clips don't exist yet. So:
 **The breakdown is always shown.** A bare number reads as a bug; a visible
 breakdown reads as an opinion the user can argue with.
 
+### Subscores, as built (6c-3)
+
+`measure.py` turns each judged trick (landed or bailed) into raw
+measurements, from the observations Stage B already made, so it adds no
+decoding. Distances are in skater heights, body shapes in torso lengths
+from MediaPipe's world landmarks, which don't depend on camera distance.
+Then `calibration.py` maps each measurement onto 0–100 with a clamped
+linear ramp between two guessed points, and averages where a subscore
+reads more than one. Only landed tricks are scored; a bail's measurements
+are stored for 6d anyway.
+
+| Subscore | Measurement | Ramp (guessed) | n/a when |
+|---|---|---|---|
+| Pop | `pop_height`: the lowest foot's peak above its resting level, in the air (Stage A's peak as a fallback) | 0.08 → 20, 0.50 → 100 | never |
+| Landing stability | over 0–0.6s after touch-down: `settle_ms` until the hips stay within 0.03 of their riding level; `torso_sway_deg` (std of the signed lean); `arm_flail` (how far the arms swing) | 100ms → 100, 600ms → 20; 2° → 100, 15° → 20; 0.2 → 100, 0.8 → 20 | too little pose |
+| Roll-away | over 0.6–1.2s after touch-down: `rollaway_on_board_frac`, and `foot_down` (two judged samples in a row off the board, or a too-wide stance), which caps it at 40 | 0.5 → 20, 1.0 → 100 | under 0.3s of footage, or < 3 judged samples |
+| Stomp | over the first 0.2s: each foot's position along the board, and `stomp_error`, the worse foot's distance from its bolt line (0.28 / 0.72 of the board) | 0 → 100, 0.25 board lengths → 20 | board seen end-on (shorter than 0.3 skater heights) |
+| Compactness | in the air: `leg_ratio` (hip to ankle) and `arm_ratio` (hips to the farther wrist) | 1.0 → 100, 1.6 → 30; 1.2 → 100, 2.2 → 40 | too little pose in the air |
+| Catch | `catch_frac`: how much of the airtime both feet were back on the board before touch-down | 0 → 30, 0.7 → 100 | the feet never left the board (an ollie) |
+
+Choices made by measuring the clips first (a frame-by-frame dump of every
+candidate signal):
+- **The board box's top edge is the nose while the board is tilted.** At
+  the kickflip's pop the back foot sat 0.39 skater heights *below* the
+  box top. So the catch doesn't use the gap to the box top. The feet left
+  the board when a foot left the box's x-span or the stance widened by
+  0.12 over the pre-pop stance (the flick: 0.29 → 0.50). Caught is the
+  start of the last run of on-board samples before touch-down.
+- **Hip height above the lowest foot**, not hip position in the frame, for
+  settling: it cancels camera motion and the skater rolling across.
+- **Signed torso lean in the image plane**, not unsigned lean in 3D:
+  swaying forward and back cancels out of an unsigned angle, and depth is
+  MediaPipe's noisiest axis (the kickflip: 5.7° unsigned, 2.1° signed).
+- **Speed for roll-away is not measured.** A follow-cam keeps the skater
+  centred, so their speed in the frame means nothing without modelling
+  the camera. Roll-away is "rode away on the board, no foot down".
+
+**The sanity anchor** is the tripod kickflip, which its skater calls
+sketchy. The trick debug video shows why: a clean catch and roll-away, but
+the arms windmill for balance after landing (`arm_flail` 0.62), and the
+front foot lands toward the nose (0.84 along the board against the bolt
+at 0.72). Without `arm_flail` the guessed ramps gave landing stability 89,
+so it was added. As built:
+
+| | Pop | Landing stability | Roll-away | Stomp | Compactness | Catch | **Steeze** |
+|---|---|---|---|---|---|---|---|
+| Measured | 0.38 | 50ms, 2.1°, 0.62 | 1.0, no foot down | 0.12 | 1.21, 1.93 | 200 of 400ms | |
+| Subscore | 77 | 81 | 100 | 61 | 66 | 80 | **77.5** |
+
+The follow-cam bail isn't scored ("no landed trick detected"), and its
+measurements show what happened: a foot down, on the board for 45% of the
+roll-away, and no catch (the board flipped after landing, not in the air).
+
+**Stored as `analyses.details`** (migration `0009`; shape in
+[data-model.md](data-model.md)): per trick, its times, outcome, the
+landed check's counts, the measurements and the subscores. The API shows
+the per-trick outcome, times and subscores as `analysis.tricks`
+([api.md](api.md)). The model version is `steeze-v0-uncalibrated` until 6d.
+
 ### The confidence gate
 
 Low confidence returns `unanalyzable` with a **specific** reason, never a
@@ -524,8 +642,13 @@ Bails are handled by scoring only landed tricks. A clip with zero landed
 tricks is rejected — rather than rejecting any clip that *contains* a bail,
 which would false-positive on scuffed-but-landed tricks with no user recourse.
 
-Until 6c-3, the **stub scorer** deliberately fails ~10% of clips with one of
-these reasons, decided by the clip id (`random.Random(clip_id.int)`). An
+The analyzer itself can also fail: *analysis failed* for the whole clip,
+and *analysis failed for this trick* per trick (see [Worker](#worker),
+Errors).
+
+The **stub scorer** (`ANALYZER=stub`: the API image and CI, and every
+clip before 6c-3) deliberately fails ~10% of clips with one of these
+reasons, decided by the clip id (`random.Random(clip_id.int)`). An
 `unanalyzable` result with `model_version: stub-v1` isn't a pipeline
 failure.
 
@@ -547,6 +670,30 @@ failure.
   lands lower than they took off. `MAX_AIRTIME_MS` is only a backstop.
 - **A shaky handheld clip** may need real camera-shake cancelling. Neither
   test clip has it.
+- **Every subscore ramp is anchored on one landed clip** (6c-3). The
+  ollie case for catch (n/a when the feet never leave the board), a
+  foot-down landing and a head-on stomp are all untested against real
+  footage; the user's next clips (head-on landing, multi-trick line,
+  foot-down) come after the analyzer ships.
+- **Roll-away doesn't measure speed** (see
+  [Subscores, as built](#subscores-as-built-6c-3)), and almost any landed
+  trick rides away on the board, so it separates little until a
+  foot-down clip exists.
+- **An early push can fail a landed trick.** Putting a foot down to push
+  too soon after landing (to catch balance or keep speed) should cost
+  roll-away, and from 0.6s after touch-down it does: a foot down caps
+  roll-away at 40. But a push *inside* the landed check's span (0.1–0.6s)
+  takes one foot off the board there. On the board under 70% of the
+  frames makes the trick unclear ("no landed trick detected"), and a
+  pushing foot off for over half the span pushes the median stance past
+  0.45, which reads as a bail. Measured on the two clips, per judged
+  frame in that span: the kickflip had both feet on in 19/19; the bail had
+  both on in 4, one in 3, neither in 9. The bail's first 100ms read as
+  both feet on, so "landed on both feet first" alone can't tell a push
+  from a bail. The planned rule: a push keeps the *same* foot on the board
+  throughout, with the board riding along, and almost never has neither
+  foot on. It waits for a real early-push clip to build and test it
+  against (decided with the user, 2026-10-15).
 
 ### The flywheel
 
@@ -647,8 +794,9 @@ dir in Lambda's read-only home. The image now sets
 ## Seeing what it saw
 
 `make analyze-clip FILE=tests/fixtures/clips/<clip>` runs exactly the
-worker's path on a local file. It prints the windows, Stage B per trick,
-each trick's landing verdict, the gate's outcome and timings, and writes
+worker's path on a local file (`pipeline.analyze`). It prints the windows,
+Stage B per trick, each trick's landing verdict, measurements and
+subscores, the clip's breakdown, steeze score and timings, and writes
 debug videos under `tests/fixtures/clips/_debug/`:
 
 - `<clip>.debug.mp4` (Stage A): skater and board boxes, the elevation
@@ -657,14 +805,16 @@ debug videos under `tests/fixtures/clips/_debug/`:
 - `<clip>.trick<N>.debug.mp4` (Stage B): the window at full rate, played at
   1/3 speed, with the pose skeleton, feet, board and take-off/touch-down
   marked. In the landed check's span the feet turn green (on the board) or
-  red (off it), and the bottom line shows the trick's verdict and the
-  clip's gate outcome.
+  red (off it), and the bottom lines show the trick's verdict, the clip's
+  outcome and the trick's subscores.
 
 Those videos are the real check on the analyzer until calibration (6d).
 The README's sneak-peek GIFs are made from them.
 
-**Tests:** synthetic signal tests for Stage A and Stage B, and synthetic
-feet/board observations for the landed check and every gate reason (no
-models, run in CI), detector/tracker tests with a hand-built model output, and tests on
-the real clips in the gitignored `backend/tests/fixtures/clips/` (local
-only). See the [development guide](../development.md#tests).
+**Tests:** synthetic signal tests for Stage A and Stage B, synthetic
+feet/board observations for the landed check and every gate reason,
+synthetic bodies and boards for every measurement and for the pipeline's
+per-trick crash handling (no models, run in CI), detector/tracker tests
+with a hand-built model output, `calibration.py` tests in the API image,
+and tests on the real clips in the gitignored
+`backend/tests/fixtures/clips/` (local only). See the [development guide](../development.md#tests).

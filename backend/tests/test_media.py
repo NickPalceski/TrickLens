@@ -224,6 +224,15 @@ async def test_worker_writes_processed_and_thumb_and_verifies_metadata(tmp_path)
     assert processed is not None and processed["ContentType"] == "video/mp4"
     assert thumb is not None and thumb["ContentType"] == "image/jpeg"
 
+    # The real analyzer scored it (6c-3), not the stub. A test pattern has
+    # no skater, so the gate fails it, with its evidence in details.
+    from app.analyzer import calibration
+
+    [a] = analyses
+    assert a.model_version == calibration.MODEL_VERSION
+    assert clip.status == ClipStatus.UNANALYZABLE and a.failure_reason is not None
+    assert a.details["schema"] == 1 and a.details["tricks"] == []
+
     # And the processed file is really the 720p transcode, not a copy.
     local = os.path.join(tmp_path, "check.mp4")
     await storage.download(clip.processed_key, local)
@@ -271,7 +280,7 @@ async def test_worker_reclaims_a_clip_whose_run_died(tmp_path):
     await worker._process_message({"clip_id": str(clip_id)})
 
     clip, _ = await _load(clip_id)
-    assert clip.status in (ClipStatus.ANALYZED, ClipStatus.UNANALYZABLE)  # stub scorer's 10%
+    assert clip.status in (ClipStatus.ANALYZED, ClipStatus.UNANALYZABLE)
     assert clip.processed_key is not None
 
 
@@ -293,3 +302,27 @@ async def test_worker_leaves_a_live_run_alone(tmp_path):
     assert clip.status == ClipStatus.ANALYZING
     assert clip.processed_key is None
     assert analyses == []
+
+
+@needs_real_worker
+@pytest.mark.asyncio(loop_scope="session")
+async def test_an_analyzer_crash_fails_the_clip_but_keeps_its_video(tmp_path, monkeypatch):
+    """A code bug fails the same way on every retry, so it's not retried:
+    "analysis failed", and the clip can still be watched (6c-3)."""
+    from app import worker
+    from app.analyzer import pipeline
+    from app.analyzer.reasons import ANALYSIS_FAILED
+
+    def broken(*_a, **_k):
+        raise RuntimeError("analyzer bug")
+
+    monkeypatch.setattr(pipeline, "analyze", broken)
+    clip_id = await _queued_clip_with_upload(
+        _make_clip(str(tmp_path / "in.mp4"), size="640x360", seconds=1, audio=False)
+    )
+    await worker._process_message({"clip_id": str(clip_id)})
+
+    clip, analyses = await _load(clip_id)
+    assert clip.status == ClipStatus.UNANALYZABLE
+    assert [a.failure_reason for a in analyses] == [ANALYSIS_FAILED]
+    assert clip.processed_key is not None and clip.thumb_key is not None

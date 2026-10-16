@@ -32,6 +32,22 @@ class TrickOut(BaseModel):
     canonical_name: str
 
 
+class AnalyzedTrickOut(BaseModel):
+    """One trick the analyzer found in the clip (6c-3), in clip order. Not
+    the user's trick tags (`ClipOut.tricks`): the analyzer never names a
+    trick, and nothing matches the two up."""
+
+    # `landed`, `bailed`, or why it couldn't be judged ("trick left the
+    # frame", "analysis failed for this trick", ...). Only landed tricks
+    # are scored.
+    outcome: str
+    takeoff_ms: int | None = None  # into the clip, for jumping to the trick
+    touchdown_ms: int | None = None
+    confidence: float
+    # Same keys as steeze_breakdown, null where n/a. Null when not landed.
+    subscores: dict[str, float | None] | None = None
+
+
 class AnalysisOut(BaseModel):
     # protected_namespaces=(): "model_version" collides with pydantic's
     # reserved "model_" prefix otherwise, and it's the right field name here.
@@ -39,8 +55,15 @@ class AnalysisOut(BaseModel):
 
     model_version: str
     confidence: Decimal
-    steeze_breakdown: dict[str, float] | None = None
+    # All six subscores, each averaged over the landed tricks; null where
+    # it's n/a for every one of them (catch on an ollie). Null entirely
+    # when the clip is unanalyzable.
+    steeze_breakdown: dict[str, float | None] | None = None
     failure_reason: str | None = None
+    # Empty for analyses without details (stub-v1 before 6c-3, media
+    # failures, "analysis failed"). Also filled for unanalyzable clips, so
+    # the UI can say which trick failed and why.
+    tricks: list[AnalyzedTrickOut] = []
     created_at: datetime
 
 

@@ -80,7 +80,7 @@ healthy `make health` looks like:
   "status": "ok",
   "env": "dev",
   "checks": [
-    { "name": "postgres", "ok": true, "ms": 2.1, "detail": { "revision": "0008" } },
+    { "name": "postgres", "ok": true, "ms": 2.1, "detail": { "revision": "0009" } },
     { "name": "s3",       "ok": true, "ms": 8.4 },
     { "name": "sqs",      "ok": true, "ms": 6.9, "detail": { "waiting": 0, "in_flight": 0 } },
     { "name": "cognito",  "ok": true, "ms": 41.2 }
@@ -156,6 +156,7 @@ The **id token**, not the access token, is the bearer credential, so
 | `make analyze-clip FILE=...` | Run the analyzer on a local clip and write debug videos | `docker compose run --rm --no-deps --user "$(id -u):$(id -g)" worker python -m app.analyzer.cli <file>` |
 | `make licenses` | Fail if any worker-image Python dependency is AGPL | see the `licenses` target in the `Makefile` |
 | `make rankings` | Rebuild Discover rankings + team score snapshots | `docker compose run --rm api python -m app.rankings` |
+| `make sweep` | Fail clips stuck `queued`/`analyzing` for over 2h ("analysis failed"); prod runs it on every rankings tick | `docker compose run --rm api python -m app.sweep` |
 | `make tf-init` / `tf-plan` / `tf-apply` | Terraform against prod (see the [deployment guide](deployment.md)) | `terraform -chdir=infra ...` |
 
 Containers run as root, so anything a container writes into the
@@ -172,8 +173,12 @@ production uses. CI runs exactly these commands (see
 - **`make test`** (API image): the whole API, end to end. The API image has
   no ffmpeg or CV stack, so the worker runs its stub scorer here.
 - **`make test-worker`** (worker image): the media pipeline, detector,
-  tracker, Stage A, Stage B, the landed check and the gate. Most use synthetic signals or ffmpeg's test
+  tracker, Stage A, Stage B, the landed check and the gate, the
+  measurements and the pipeline's crash handling, and the worker end to
+  end with the real analyzer. Most use synthetic signals or ffmpeg's test
   video, so they run in CI. Under `make test` they all skip.
+  `calibration.py` is pure Python, so its tests (`test_calibration.py`)
+  run in the API image.
 - **Real clips:** `backend/tests/fixtures/clips/` is **gitignored**: real
   skate clips are personal footage and are never committed (the README's
   GIFs are the deliberate exception). With clips present,
@@ -256,9 +261,12 @@ curl -X PATCH "localhost:8000/clips/$clip_id/score-inclusion" \
 ```
 
 What the worker does with the clip, and what `video_url` / `thumb_url`
-point at, is in the [analyzer doc](components/analyzer.md). Until 6c-3 the
-score is a stub that fails ~10% of clips on purpose (`model_version:
-stub-v1`).
+point at, is in the [analyzer doc](components/analyzer.md). Since 6c-3 the
+`worker` container scores with the real analyzer (`model_version:
+steeze-v0-uncalibrated`), so a clip with no skater or no landed trick comes
+back `unanalyzable` with the gate's reason, and `analysis.tricks` says what
+happened to each trick. Only `make test` (API image) still uses the stub,
+which fails ~10% of clips on purpose (`model_version: stub-v1`).
 
 ### Seeing what the analyzer saw
 
@@ -395,6 +403,7 @@ rankings depend on `make rankings`. How it works:
 | Uploading to the presigned URL fails to connect / DNS error | `AWS_PUBLIC_ENDPOINT_URL` missing from `.env` (needs `http://localhost:4566`), or the API wasn't restarted. See [services](components/services.md#presigned-urls-and-the-public-endpoint). |
 | A clip never leaves `queued` | `docker compose logs -f worker` should show `polling <queue url>` and one line per message. If you just restarted the worker, its message may be stuck in flight for 10 minutes (CLAUDE.md gotcha): wait ~20s after a restart before enqueueing. |
 | A real video comes back `unanalyzable`: "unreadable video file" / "no video stream found" / "clip too short" | That's ffprobe's verdict on the file, not a scoring failure. Check it with `ffprobe <file>`. |
-| `unanalyzable` with another reason and `model_version: stub-v1` | The stub scorer's deliberate ~10% fake failure, until 6c-3. Not a bug. |
+| `unanalyzable` with another reason and `model_version: stub-v1` | The stub scorer's deliberate ~10% fake failure (API image, and every clip from before 6c-3). Not a bug. |
+| `unanalyzable` with "analysis failed" | The analyzer crashed (traceback in `docker compose logs worker`, after `analysis crashed`), a run kept dying, or the clip sat stuck for 2h and was swept (`model_version: sweep`). "analysis failed for this trick" in `analysis.tricks` is one trick's crash; the rest were still scored. |
 | `OSError: libEGL.so.1` from MediaPipe | The worker image lacks `mesa-libEGL`/`libglvnd-gles`. Rebuild it: `docker compose build worker`. |
 | Root-owned files appear in the repo | A container wrote them. Delete via a container, and run future writes with `--user "$(id -u):$(id -g)"`. |

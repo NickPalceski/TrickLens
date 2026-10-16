@@ -119,6 +119,11 @@ async def test_full_upload_to_publish_flow(authed_client, monkeypatch):
         pytest.skip("stub's ~10% failure branch landed on this clip id — not a bug")
     assert body["status"] == "analyzed"
     assert set(body["analysis"]["steeze_breakdown"]) == set(worker._SUBSCORES)
+    # Per-trick detail out of analyses.details (6c-3), the stub's one trick.
+    (trick,) = body["analysis"]["tricks"]
+    assert trick["outcome"] == "landed"
+    assert trick["subscores"] == body["analysis"]["steeze_breakdown"]
+    assert trick["takeoff_ms"] < trick["touchdown_ms"]
 
     resp = await authed_client.post(f"/clips/{clip_id}/publish")
     assert resp.status_code == 422, "shouldn't be publishable before any trick is tagged"

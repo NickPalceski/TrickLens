@@ -1,4 +1,4 @@
-"""Stage A on the user's real clips (step 6b). Local only.
+"""The analyzer on the user's real clips (steps 6b-6c). Local only.
 
 The clips are personal footage in backend/tests/fixtures/clips/, which is
 gitignored, so these skip in CI and on any machine without them (see
@@ -11,13 +11,14 @@ values: a detector or threshold tweak that moves a pop by one sample
 (67ms at 15fps) shouldn't fail the suite.
 """
 
+import json
 import os
 
 import pytest
 
 pytest.importorskip("cv2")
 
-from app.analyzer import gate, landed, localize, media, stage_b  # noqa: E402
+from app.analyzer import calibration, gate, landed, localize, media, pipeline, stage_b  # noqa: E402
 from app.analyzer.reasons import NO_LANDING  # noqa: E402
 from app.config import get_settings  # noqa: E402
 
@@ -121,3 +122,38 @@ def test_followcam_bail_is_a_bail(tmp_path):
     assert t.landing.verdict == landed.Verdict.BAILED
     assert t.landing.stance >= 0.45
     assert v.failure_reason == NO_LANDING
+
+
+# --- the whole pipeline: measurements and scores (6c-3) -----------------------
+
+
+def _pipeline(tmp_path, name: str) -> pipeline.AnalysisResult:
+    path, _ = _processed(tmp_path, name)
+    return pipeline.analyze(path, MODEL, POSE_MODEL, name)
+
+
+def test_tripod_kickflip_is_scored(tmp_path):
+    """The sanity anchor for calibration.py's guesses: landed, but the
+    user calls it sketchy (arms windmilling after landing, front foot
+    toward the nose), so mid-to-high, not near 100. Measured: pop 0.38,
+    stomp error 0.12, caught 200ms before touch-down, steeze 77.5."""
+    res = _pipeline(tmp_path, "kickflip_sketchy_60fps.mov")
+    assert res.failure_reason is None
+    assert set(res.breakdown) == set(calibration.SUBSCORES)
+    assert all(v is not None for v in res.breakdown.values())  # a flip trick: catch applies
+    assert 65 <= res.steeze_score <= 85
+    [m] = res.measurements
+    assert 0.3 <= m["pop_height"] <= 0.45
+    assert m["separated"] and 100 <= m["catch_ms"] <= 300
+    assert m["foot_down"] is False and m["arm_flail"] > 0.4
+    json.dumps(res.details(), allow_nan=False)
+
+
+def test_followcam_bail_is_not_scored_but_is_measured(tmp_path):
+    """Bails aren't scored, but their measurements are stored for 6d: the
+    user stepped off, which roll-away sees as a foot down."""
+    res = _pipeline(tmp_path, "bail_60fps.mov")
+    assert res.failure_reason == NO_LANDING and res.breakdown is None
+    [t] = res.details()["tricks"]
+    assert t["outcome"] == "bailed" and t["subscores"] is None
+    assert t["measurements"]["foot_down"] is True

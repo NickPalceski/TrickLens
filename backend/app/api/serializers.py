@@ -12,12 +12,13 @@ from collections.abc import Sequence
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.clip import Clip
+from app.analyzer.calibration import SUBSCORES
+from app.models.clip import Analysis, Clip
 from app.models.enums import JoinRequestKind
 from app.models.social import ClipView, Comment, Follow, Like
 from app.models.team import Team, TeamJoinRequest, TeamMember
 from app.models.user import User
-from app.schemas.clip import AnalysisOut, ClipOut, TrickOut
+from app.schemas.clip import AnalysisOut, AnalyzedTrickOut, ClipOut, TrickOut
 from app.schemas.social import CommentOut
 from app.schemas.team import TeamBrief, TeamMemberOut, TeamOut
 from app.schemas.user import ProfileOut, UserBrief, UserPublic
@@ -219,7 +220,7 @@ async def clip_out(
         steeze_score=clip.steeze_score,
         published_at=clip.published_at,
         tricks=[TrickOut.model_validate(ct.trick) for ct in clip.clip_tricks],
-        analysis=AnalysisOut.model_validate(latest) if latest else None,
+        analysis=analysis_out(latest) if latest else None,
         like_count=like_count,
         comment_count=comment_count,
         view_count=view_count,
@@ -227,6 +228,40 @@ async def clip_out(
         team=team_brief(clip.team) if clip.team else None,
         score_included=clip.score_included,
         created_at=clip.created_at,
+    )
+
+
+def _in_order(subscores: dict | None) -> dict | None:
+    """Subscores in calibration.SUBSCORES order. JSONB doesn't keep key
+    order, and the breakdown reads best in a fixed one."""
+    if subscores is None:
+        return None
+    return {k: subscores[k] for k in SUBSCORES if k in subscores} | subscores
+
+
+def analysis_out(a: Analysis) -> AnalysisOut:
+    """`tricks` comes out of `analyses.details` (6c-3), falling back to
+    Stage A's pop/landing where Stage B couldn't refine the take-off or
+    touch-down."""
+    tricks = [
+        AnalyzedTrickOut(
+            outcome=t["outcome"],
+            takeoff_ms=t.get("takeoff_ms") if t.get("takeoff_ms") is not None else t.get("pop_ms"),
+            touchdown_ms=(
+                t.get("touchdown_ms") if t.get("touchdown_ms") is not None else t.get("land_ms")
+            ),
+            confidence=t["confidence"],
+            subscores=_in_order(t.get("subscores")),
+        )
+        for t in (a.details or {}).get("tricks", [])
+    ]
+    return AnalysisOut(
+        model_version=a.model_version,
+        confidence=a.confidence,
+        steeze_breakdown=_in_order(a.steeze_breakdown),
+        failure_reason=a.failure_reason,
+        tricks=tricks,
+        created_at=a.created_at,
     )
 
 

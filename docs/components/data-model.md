@@ -74,6 +74,7 @@ erDiagram
         decimal confidence
         jsonb steeze_breakdown "null when gated"
         string failure_reason
+        jsonb details "per-trick evidence (6c-3)"
         timestamptz created_at
     }
     tricks {
@@ -177,12 +178,47 @@ sending `.name` instead of `.value`).
 | `0006` | 4c | `teams`, `team_members`, `team_join_requests`, `clips.team_id`/`score_included`, the deferred `follows.followee_team_id` FK |
 | `0007` | 4d | `clip_views`, `clip_rankings`, `team_score_history` |
 | `0008` | 6a | `clips.processed_key` |
+| `0009` | 6c-3 | `analyses.details` |
 
 Production runs `alembic upgrade head` *before* the new code goes live, so
 every migration must be backward-compatible with the previous code (see
 [Migrations run before the new image goes live](infrastructure.md#migrations-run-before-the-new-image-goes-live-never-after)).
 
 ## Design notes
+
+- **`analyses.details` (6c-3) is the evidence behind a score, in JSONB.**
+  Written by the real analyzer (`pipeline.AnalysisResult.details()`);
+  the stub writes the same shape with `"stub": true` and no
+  measurements. Null on media failures, *analysis failed* rows and every
+  analysis before 6c-3. Its shape, versioned by `schema`:
+
+  ```json
+  {
+    "schema": 1,
+    "clip": {"duration_ms": 4718, "fps": 60.0, "skater_height_frac": 0.14,
+             "skater_coverage": 0.83, "brightness": 151.2},
+    "tricks": [{
+      "pop_ms": 1233, "apex_ms": 1467, "land_ms": 1567, "peak_elevation": 0.32,
+      "takeoff_ms": 1250, "touchdown_ms": 1650,
+      "outcome": "landed", "confidence": 0.92,
+      "pose_found": 0.95, "feet_visibility": 0.93,
+      "landing": {"touchdown_ms": 1650, "sampled": 16, "judged": 16, "on_board": 16,
+                  "implausible_boards": 0, "stance": 0.27, "board_offset_range": 0.05},
+      "measurements": {"pop_height": 0.38, "settle_ms": 50.0, "catch_frac": 0.5, "...": "..."},
+      "subscores": {"pop": 77.0, "landing_stability": 81.2, "...": "..."}
+    }],
+    "timings_s": {"stage_b": 5.27, "total": 7.52}
+  }
+  ```
+
+  `outcome` is `landed`, `bailed`, or the trick's failure reason.
+  `measurements` is null when the trick failed before the landed check,
+  `subscores` unless it landed. The raw measurements are what 6d rescores
+  from (`calibration.subscores()` over them) without re-running video, so
+  they're stored for bails too. Only `outcome`, the times and `subscores`
+  reach the API (`analysis.tricks`); the measurements are internal units,
+  not an API contract. `steeze_breakdown` always has all six subscores,
+  null where a subscore was n/a on every landed trick.
 
 - **UUID primary keys** — IDs appear in public URLs; sequential integers leak
   counts and allow enumeration.

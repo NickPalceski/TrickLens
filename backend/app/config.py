@@ -60,7 +60,8 @@ class Settings(BaseSettings):
     # "stub": skip all media processing and fabricate a score (app/worker.py's
     # _stub_score). The API image has no ffmpeg, so its test suite and CI
     # always run this way. "real": probe + transcode + thumbnail with ffmpeg
-    # (step 6a), then score. Scoring itself is still the stub until 6c.
+    # (step 6a), then the real analyzer scores it (app/analyzer/pipeline.py,
+    # 6c-3).
     # Dockerfile.worker sets ANALYZER=real, so the image that actually has
     # ffmpeg is the one that opts in.
     analyzer: Literal["stub", "real"] = "stub"

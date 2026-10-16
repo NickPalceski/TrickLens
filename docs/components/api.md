@@ -119,6 +119,39 @@ The clip routes move a clip through its statuses (the
 one, and until then a presigned URL for the raw upload. `thumb_url` is the
 poster frame's CDN URL.
 
+**`analysis`** is the clip's latest analysis (`serializers.analysis_out`):
+
+```json
+{
+  "model_version": "steeze-v0-uncalibrated",
+  "confidence": "0.92",
+  "steeze_breakdown": {"pop": 77.0, "landing_stability": 81.2, "roll_away": 100.0,
+                       "stomp": 61.1, "compactness": 65.8, "catch": 80.0},
+  "failure_reason": null,
+  "tricks": [{"outcome": "landed", "takeoff_ms": 1250, "touchdown_ms": 1650,
+              "confidence": 0.92, "subscores": {"pop": 77.0, "...": "..."}}],
+  "created_at": "..."
+}
+```
+
+- `steeze_breakdown` always has all six subscores, in that order, each
+  averaged over the clip's landed tricks. One that was n/a on every landed
+  trick (catch for an ollie) is `null`, and the UI shows it as n/a. The
+  whole breakdown is `null` when the clip is unanalyzable.
+- `tricks` (6c-3) lists what the analyzer found, in clip order:
+  `outcome` (`landed`, `bailed`, or why it couldn't be judged, e.g. "trick
+  left the frame", "analysis failed for this trick"), the take-off and
+  touch-down in ms for jumping to the trick (Stage A's pop and landing
+  when Stage B couldn't refine them), its confidence, and `subscores`
+  for landed tricks only. It's filled for unanalyzable clips too, so the
+  UI can say which trick failed and why. It's empty for analyses without
+  `details` (stub analyses before 6c-3, media failures, *analysis
+  failed*).
+- `analysis.tricks` is not `ClipOut.tricks`: those are the user's tags.
+  The analyzer never names a trick, and nothing matches the two up.
+- The raw measurements behind the subscores stay in `analyses.details`
+  ([data-model.md](data-model.md)); they're internal units, not API.
+
 ## Feed and Discover
 
 **Home feed: fan-out-on-read.** `GET /feed` queries `clips` directly,

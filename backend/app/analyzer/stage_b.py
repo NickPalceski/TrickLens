@@ -11,8 +11,8 @@ and, in one pass:
   On the tripod kickflip, Stage A's landing (1.57s) is ~80ms before the
   feet actually reach the board.
 
-6c-1 stops at these observations. landed.py and gate.py (6c-2) judge them,
-and 6c-3 (measurements, scores) builds on them too.
+landed.py and gate.py (6c-2) judge these observations, and measure.py
+(6c-3) turns a judged trick into the raw measurements it's scored from.
 """
 
 import time
@@ -28,10 +28,16 @@ from app.analyzer.media import VideoInfo
 from app.analyzer.track import iou
 
 # Board detection every BOARD_EVERY-th frame (30fps at 60fps source), from
-# BOARD_BEFORE_MS before the pop to the end of the window: the air, and
-# the 0.1-0.6s after touch-down that the landed check (landed.py) reads.
+# BOARD_BEFORE_MS before the pop through the air and the 0.1-0.6s after
+# touch-down that the landed check (landed.py) reads. After that (Stage A's
+# landing + BOARD_SPARSE_AFTER_LAND_MS), only every BOARD_EVERY_LATE-th frame
+# to the end of the window: roll-away (measure.py) needs the feet on the
+# board, not the board at every frame, and it halves what the 6c-3 window
+# extension costs.
 BOARD_EVERY = 2
+BOARD_EVERY_LATE = 4
 BOARD_BEFORE_MS = 200
+BOARD_SPARSE_AFTER_LAND_MS = 800
 
 # Feet count as "off" whatever they stand on once the lowest foot point is
 # this many skater-heights above its on-board/on-ground baseline. Pose
@@ -154,6 +160,7 @@ def observe(
     skater_h = float(np.median(hs)) if hs else float("nan")
 
     board_lo, board_hi = window.pop_ms - BOARD_BEFORE_MS, window.end_ms
+    sparse_from = window.land_ms + BOARD_SPARSE_AFTER_LAND_MS
     skater: list[Detection | None] = []
     board: dict[int, Detection | None] = {}
     t_board = 0.0
@@ -163,7 +170,8 @@ def observe(
         for row, f in enumerate(iter_frames(path, w, h, fps, window.start_ms, window.end_ms)):
             s = skater_at(stage_a, f.t_ms)
             skater.append(s)
-            if s is not None and board_lo <= f.t_ms <= board_hi and row % BOARD_EVERY == 0:
+            every = BOARD_EVERY_LATE if f.t_ms > sparse_from else BOARD_EVERY
+            if s is not None and board_lo <= f.t_ms <= board_hi and row % every == 0:
                 t0 = time.perf_counter()
                 full = [d for d in detector.detect(f.image) if d.cls == SKATEBOARD]
                 x1, y1, x2, y2 = board_crop(s, w, h)

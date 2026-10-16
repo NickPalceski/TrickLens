@@ -37,6 +37,7 @@ from enum import StrEnum
 import numpy as np
 
 from app.analyzer import pose as P
+from app.analyzer.detect import Detection
 from app.analyzer.reasons import CLIP_ENDS, NO_LANDING
 from app.analyzer.stage_b import MIN_FOOT_VISIBILITY, TrickObservation
 
@@ -96,6 +97,20 @@ def foot(pose: P.PoseTrack, row: int, points: tuple[int, ...]) -> tuple[float, f
     return float(seen[:, 0].mean()), float(seen[:, 1].max())
 
 
+def plausible(b: Detection, h: float) -> bool:
+    """A box short enough to be one board (see MAX_BOARD_LEN)."""
+    return b.width <= MAX_BOARD_LEN * h
+
+
+def feet_on(b: Detection, left: tuple[float, float], right: tuple[float, float], h: float) -> bool:
+    """Both feet over the board's x-span and down on its deck. Also used by
+    measure.py (6c-3) for roll-away and the catch."""
+    m = FOOT_MARGIN * h
+    over = all(b.x1 - m <= f[0] <= b.x2 + m for f in (left, right))
+    on_deck = all(abs(f[1] - b.y1) <= FOOT_TO_DECK * h for f in (left, right))
+    return over and on_deck
+
+
 def check_landing(obs: TrickObservation, clip_end_ms: float) -> LandingCheck:
     # Stage B's touch-down is the precise one. When it couldn't refine one
     # (feet never clearly left the baseline), Stage A did find a landing.
@@ -121,16 +136,13 @@ def check_landing(obs: TrickObservation, clip_end_ms: float) -> LandingCheck:
         b = obs.board[row]
         if b is None:
             continue
-        if b.width > MAX_BOARD_LEN * h:
+        if not plausible(b, h):
             c.implausible_boards += 1
             continue
         if not (left and right):
             continue
         c.judged += 1
-        m = FOOT_MARGIN * h
-        over = all(b.x1 - m <= f[0] <= b.x2 + m for f in (left, right))
-        on_deck = all(abs(f[1] - b.y1) <= FOOT_TO_DECK * h for f in (left, right))
-        c.rows[row] = over and on_deck
+        c.rows[row] = feet_on(b, left, right, h)
         c.on_board += c.rows[row]
         offsets.append((b.center[0] - (left[0] + right[0]) / 2) / h)
 

@@ -4,11 +4,11 @@
 # (API image) they all skip.
 WORKER_TESTS := tests/test_media.py tests/test_analyzer_detect.py \
 	tests/test_analyzer_localize.py tests/test_analyzer_stage_b.py \
-	tests/test_analyzer_landed.py \
+	tests/test_analyzer_landed.py tests/test_analyzer_measure.py \
 	tests/test_analyzer_real_clips.py
 
 .PHONY: help init up down clean logs ps health migrate revision shell psql fmt test test-worker \
-	licenses analyze-clip rankings \
+	licenses analyze-clip rankings sweep \
 	tf-init tf-plan tf-apply
 
 help: ## Show available commands
@@ -74,6 +74,9 @@ licenses: ## Fail if any worker-image Python dependency is AGPL (TrickLens goes 
 
 rankings: ## Rebuild Discover rankings + team score snapshots (on demand; scheduled automatically in prod, step 5)
 	docker compose run --rm api python -m app.rankings
+
+sweep: ## Fail clips stuck queued/analyzing for over 2h (on demand; runs with every rankings tick in prod, 6c-3)
+	docker compose run --rm api python -m app.sweep
 
 tf-init: ## Init Terraform against the account-specific state backend (run scripts/terraform-bootstrap.sh first)
 	@ACCOUNT_ID=$$(aws sts get-caller-identity --query Account --output text); \
