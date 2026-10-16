@@ -828,8 +828,31 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
     a user's clips; the design's upload visibility and tag-at-upload
     don't match the API.
 
-**Not done yet:** frontend phases F2 (read screens), F3 (upload and team
-flows) and F4 (real Cognito, live API, hosting).
+- **Frontend phase F2 (read screens) done (2026-10-16)**, still on mock
+  data; the user asked to build around the API gaps until the backend is at
+  MVP and keep them noted (docs/components/frontend.md, Known gaps).
+  - Screens: log in and sign up (with Cognito's password rules and the
+    emailed-code step the design lacked), feed + comments (side panel on
+    desktop, modal bottom sheet on phones), clip detail (single,
+    multi-trick, couldn't-score, the owner's score-inclusion switch),
+    Discover (sort and tab in the URL), own and other profiles with
+    Follow, edit profile.
+  - `@tricklens/api` gained hooks for every F2 route, `patchClip` (one
+    clip updated in every cached list), and a stateful mock backend
+    (`mocks/db.ts`) that follows the API's rules and resets per test.
+  - Gaps are built around, not faked into the API: profiles call a
+    **proposed** `GET /users/{username}/clips` that only the mock answers
+    (`queries/proposed.ts`); captions, avatar upload, a user's teams and
+    team levels are left out of the UI until the API has them.
+  - Verified: `make web-check` green (45 tests, 36 in the web app); the
+    running dev server screenshotted on every F2 screen at 1440px and
+    390px, light and dark, no console errors or overflow. Fixed along the
+    way: a reply landing in a folded thread, retrying 404s, ranked cards'
+    run-together accessible names, focus scrolling under the phone tab
+    bar (`scroll-padding`).
+
+**Not done yet:** frontend phases F3 (upload and team flows) and F4 (real
+Cognito, live API, hosting).
 
 ## Build order
 
@@ -887,7 +910,7 @@ F. 🔶 Web app, a **parallel track** (decided with the user 2026-10-15),
    not gated on step 6: built as a mock-data prototype until wiring.
    - F1 ✅ workspace, tokens, themes + Settings, app shell, routes, typed
      API client, MSW mock API, CI
-   - F2 ⬜ auth screens (mocked), feed + comments, Discover, clip detail,
+   - F2 ✅ auth screens (mocked), feed + comments, Discover, clip detail,
      profiles
    - F3 ⬜ upload → publish flow, team flow
    - F4 ⬜ real Cognito, live API, presigned uploads, hosting + deploy

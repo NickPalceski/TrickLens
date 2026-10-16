@@ -1,0 +1,113 @@
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.left,
+.right {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.who {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.when {
+  font-size: 0.8125rem;
+  color: var(--faint);
+}
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.tag {
+  padding: 0.25rem 0.75rem;
+  border-radius: var(--radius-pill);
+  background: var(--brown);
+  color: var(--yellow);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.explain {
+  color: var(--ink-2);
+}
+
+.include {
+  padding: 0.75rem 0.875rem;
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.footnote {
+  margin-top: 0.5rem;
+}
+
+.failed {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.625rem;
+  padding: 1.5rem;
+  border-color: var(--danger);
+}
+
+.failedTitle {
+  font-size: 1.75rem;
+}
+
+.comments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 1.25rem 0 0;
+  overflow: hidden;
+}
+
+.comments > h2 {
+  padding: 0 1.25rem 0.5rem;
+}
+
+/* Phones: for a clip that isn't scored, the reason comes before the video. */
+.statusFirst .right {
+  order: -1;
+}
+
+@media (min-width: 900px) {
+  .statusFirst .right {
+    order: 0;
+  }
+
+  .layout {
+    flex-direction: row;
+    gap: 3.5rem;
+    align-items: flex-start;
+  }
+
+  .left {
+    flex: 0 0 22rem;
+    position: sticky;
+    top: 6rem;
+  }
+
+  .right {
+    flex: 1 1 32rem;
+    gap: 1.75rem;
+  }
+}

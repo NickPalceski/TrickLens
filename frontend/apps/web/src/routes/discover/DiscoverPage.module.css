@@ -1,0 +1,191 @@
+.columns {
+  display: flex;
+  gap: 2.5rem;
+  align-items: flex-start;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.clips {
+  flex: 1 1 40rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.125rem;
+}
+
+.sortRow {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.25rem 0.875rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clipCard {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.clipCard > div:first-child {
+  margin-bottom: 0.5rem;
+  border-radius: var(--radius-lg);
+}
+
+.rank {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  padding: 0.3125rem 0.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1rem;
+  line-height: 1;
+  box-shadow: var(--shadow);
+}
+
+.first {
+  background: var(--yellow);
+  color: var(--brown);
+}
+
+.clipName {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clipCard:hover .clipName {
+  text-decoration: underline;
+}
+
+.clipMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.clipHandle {
+  font-size: 0.875rem;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teams {
+  padding: 1.5rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.teamsTitle {
+  font-size: 1.375rem;
+}
+
+.teamList {
+  margin: 0.25rem 0 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.teamRow {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+  padding: 0.875rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.teamRank {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-family: var(--font-display);
+  font-weight: 800;
+}
+
+.teamText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 0.75rem;
+}
+
+.teamName {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--ink);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teamName:hover {
+  text-decoration: underline;
+}
+
+.teamRank.first {
+  background: var(--yellow);
+  color: var(--brown);
+}
+
+.delta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.deltaNum {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.25rem;
+  color: var(--link);
+  font-variant-numeric: tabular-nums;
+}
+
+.deltaLabel {
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+
+@media (min-width: 900px) {
+  .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .teams {
+    flex: 0 0 24rem;
+  }
+}

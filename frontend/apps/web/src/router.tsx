@@ -3,18 +3,11 @@ import { RequireAuth } from './app/auth.tsx';
 import { AppShell } from './layouts/AppShell.tsx';
 import { AuthLayout } from './layouts/AuthLayout.tsx';
 import { LoginPage, SignupPage } from './routes/auth/AuthPages.tsx';
-import {
-  ClipPage,
-  DiscoverPage,
-  FeedPage,
-  NotFoundPage,
-  ProfileEditPage,
-  ProfilePage,
-  SkaterPage,
-  TeamPage,
-  TeamsPage,
-  UploadPage,
-} from './routes/screens.tsx';
+import { ClipPage } from './routes/clips/ClipPage.tsx';
+import { DiscoverPage } from './routes/discover/DiscoverPage.tsx';
+import { FeedPage } from './routes/feed/FeedPage.tsx';
+import { ProfileEditPage, ProfilePage, SkaterPage } from './routes/profile/ProfilePages.tsx';
+import { NotFoundPage, TeamPage, TeamsPage, UploadPage } from './routes/screens.tsx';
 import { SettingsPage } from './routes/settings/SettingsPage.tsx';
 
 /** Every URL in the app (docs/components/frontend.md, Routes). Exported for tests. */

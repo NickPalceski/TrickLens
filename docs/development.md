@@ -404,6 +404,31 @@ curl "localhost:8000/discover/teams?limit=20" -H "Authorization: Bearer $ID_TOKE
 rankings depend on `make rankings`. How it works:
 [api.md](components/api.md#feed-and-discover).
 
+### Web app
+
+`make web` (or `make up`) serves it on <http://localhost:3000>, answering
+every API call from the mock (see
+[frontend](components/frontend.md#mock-mode)). Things to try:
+
+- **Log in** with any email and an 8+ character password; a shorter one
+  shows the wrong-password error. **Sign up** walks through Cognito's
+  password rules and the emailed-code step (any 6 digits).
+- **Feed:** like a clip, play one (a view is recorded), open comments
+  (beside the feed on desktop, a bottom sheet on phones), reply, delete
+  your own comment.
+- **Clip detail:** `@juliavance`'s three-trick line shows the per-trick
+  breakdown with a bail and an n/a catch; her kickflip has the
+  score-inclusion switch.
+- **Discover:** switch Top scores / Most active; on a phone-width window,
+  the Clips/Teams switch.
+- **Profiles:** follow `@destinyfoster`; edit your setup.
+- **Settings:** Light, Dark, Match system.
+
+Mock state (likes, follows, comments, edits) lasts until the page reloads.
+`VITE_API_MODE=live` in `frontend/apps/web/.env.local` points it at the
+real API, but sign-in stays mocked until phase F4 wires Cognito, so live
+mode only works once that lands.
+
 ## Troubleshooting
 
 | Symptom | Cause |

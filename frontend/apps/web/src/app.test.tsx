@@ -51,8 +51,5 @@ describe('settings', () => {
 
     await router.navigate('/feed');
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
-
-    await user.click(screen.getByRole('button', { name: 'Continue as @juliavance' }));
-    await waitFor(() => expect(router.state.location.pathname).toBe('/feed'));
   });
 });

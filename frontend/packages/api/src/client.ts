@@ -40,11 +40,18 @@ export function createApiClient({ baseUrl, getToken, fetch }: ApiClientOptions):
   return client;
 }
 
+function toError(result: { error?: unknown; response: Response }): ApiError {
+  const detail = (result.error as { detail?: unknown } | undefined)?.detail ?? result.error;
+  return new ApiError(result.response.status, detail);
+}
+
 /** Unwraps an openapi-fetch result: the data, or an ApiError. */
 export function unwrap<T>(result: { data?: T; error?: unknown; response: Response }): T {
-  if (result.error !== undefined || result.data === undefined) {
-    const detail = (result.error as { detail?: unknown } | undefined)?.detail ?? result.error;
-    throw new ApiError(result.response.status, detail);
-  }
+  if (result.error !== undefined || result.data === undefined) throw toError(result);
   return result.data;
+}
+
+/** For routes that answer 204 No Content: throws an ApiError unless the response was OK. */
+export function expectOk(result: { error?: unknown; response: Response }): void {
+  if (!result.response.ok) throw toError(result);
 }

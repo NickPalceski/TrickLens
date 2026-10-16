@@ -10,6 +10,17 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* Keep anything scrolled into view (focus, links to a section) clear of the
+     sticky header and, on phones, the fixed tab bar (layouts/AppShell). */
+  scroll-padding-top: calc(3.5rem + env(safe-area-inset-top, 0px));
+  scroll-padding-bottom: calc(4.375rem + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 900px) {
+  html {
+    scroll-padding-top: 4.5rem;
+    scroll-padding-bottom: 0;
+  }
 }
 
 body {

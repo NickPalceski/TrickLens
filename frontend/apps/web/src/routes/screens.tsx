@@ -1,26 +1,8 @@
-// Every signed-in screen that phase 2/3 replaces with the real thing. Each
-// points at its artboards on the design canvas.
+// Signed-in screens still to build in phase F3, each pointing at its
+// artboards on the design canvas, plus the not-found page.
 import { Link, useParams } from 'react-router';
 import styles from './Placeholder.module.css';
 import { Placeholder } from './Placeholder.tsx';
-
-export const FeedPage = () => (
-  <Placeholder
-    title="Feed"
-    summary="New clips from skaters and teams you follow, with the steeze breakdown and comments."
-    phase={2}
-    artboards={['Home Feed', 'Phone — Home Feed', 'Phone — Comments Sheet']}
-  />
-);
-
-export const DiscoverPage = () => (
-  <Placeholder
-    title="Discover"
-    summary="This week's top clips by score or activity, and the teams rising fastest."
-    phase={2}
-    artboards={['Discover', 'Phone — Discover · Clips', 'Phone — Discover · Teams']}
-  />
-);
 
 export const UploadPage = () => (
   <Placeholder
@@ -30,48 +12,6 @@ export const UploadPage = () => (
     artboards={['Upload Clip', 'Clip Status', 'Clip Review']}
   />
 );
-
-export const ClipPage = () => {
-  const { clipId } = useParams();
-  return (
-    <Placeholder
-      title="Clip"
-      summary={`Clip ${clipId ?? ''}: the video, the score breakdown per landed trick, likes and comments.`}
-      phase={2}
-      artboards={['Clip Detail', 'Clip Detail — Multi-Trick Line']}
-    />
-  );
-};
-
-export const ProfilePage = () => (
-  <Placeholder
-    title="Your profile"
-    summary="Your clips, setup, followers and average steeze."
-    phase={2}
-    artboards={['Profile — View', 'Phone — Profile']}
-  />
-);
-
-export const ProfileEditPage = () => (
-  <Placeholder
-    title="Edit profile"
-    summary="Name, bio, photo and setup."
-    phase={2}
-    artboards={['Profile — Edit']}
-  />
-);
-
-export const SkaterPage = () => {
-  const { username } = useParams();
-  return (
-    <Placeholder
-      title={`@${username ?? ''}`}
-      summary="Another skater's profile, with Follow."
-      phase={2}
-      artboards={['Profile — Another Skater']}
-    />
-  );
-};
 
 export const TeamsPage = () => (
   <Placeholder

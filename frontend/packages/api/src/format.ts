@@ -27,3 +27,20 @@ export function formatCount(n: number): string {
   if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0).replace(/\.0$/, '')}k`;
   return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
 }
+
+/** "now", "12m", "5h", "3d", "6w": compact relative time for posts and comments. */
+export function formatTimeAgo(iso: string, now: number = Date.now()): string {
+  const s = Math.max(0, (now - Date.parse(iso)) / 1000);
+  if (s < 60) return 'now';
+  if (s < 3600) return `${Math.floor(s / 60)}m`;
+  if (s < 86_400) return `${Math.floor(s / 3600)}h`;
+  if (s < 7 * 86_400) return `${Math.floor(s / 86_400)}d`;
+  return `${Math.floor(s / (7 * 86_400))}w`;
+}
+
+/** Milliseconds into a clip as m:ss.s ("0:03.9"). */
+export function formatClipTime(ms: number): string {
+  const total = ms / 1000;
+  const m = Math.floor(total / 60);
+  return `${m}:${(total - m * 60).toFixed(1).padStart(4, '0')}`;
+}

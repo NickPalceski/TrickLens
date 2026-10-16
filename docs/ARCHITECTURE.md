@@ -20,7 +20,8 @@ tiers are in [subscriptions.md](subscriptions.md).
 **Current state:** steps 1–5 are done and live in AWS. Step 6 (the real
 analyzer) is in progress: 6a through 6c-3 are live, so clips get real
 (uncalibrated) scores. 6d, calibration, is next. The web app runs as a
-parallel track: phase F1 (scaffold) is done and runs on a mock API.
+parallel track: phases F1 (scaffold) and F2 (read screens) are done and run
+on a mock API.
 See the [build order](#build-order).
 
 ---
@@ -431,7 +432,7 @@ on the worker; see [subscriptions.md](subscriptions.md).
 | 7 | Weekly analysis quota + paid subscriptions (Stripe), profile customization later — [subscriptions.md](subscriptions.md) | planned |
 | F | Web app, a parallel track ([frontend.md](components/frontend.md#build-phases)) | **in progress** |
 | F1 | Workspace, tokens, both themes + Settings toggle, app shell, routes, typed API client, mock API, CI | **done** |
-| F2 | Auth screens (mocked), feed + comments, Discover, clip detail, profiles | |
+| F2 | Auth screens (mocked), feed + comments, Discover, clip detail, profiles | **done** |
 | F3 | Upload → publish flow, team flow | |
 | F4 | Real Cognito, live API, presigned uploads, hosting + deploy | after 6c |
 

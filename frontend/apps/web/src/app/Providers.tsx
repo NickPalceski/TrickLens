@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ApiProvider, createApiClient } from '@tricklens/api';
+import { ApiError, ApiProvider, createApiClient } from '@tricklens/api';
 import { type ReactNode, useRef, useState } from 'react';
 import { apiUrl } from '../env.ts';
 import { AuthProvider, useAuth } from './auth.tsx';
@@ -17,7 +17,16 @@ function Api({ children }: { children: ReactNode }) {
 export function Providers({ children }: { children: ReactNode }) {
   const [queryClient] = useState(
     () =>
-      new QueryClient({ defaultOptions: { queries: { staleTime: 30_000, refetchOnWindowFocus: false } } }),
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 30_000,
+            refetchOnWindowFocus: false,
+            // A 4xx won't change on retry (not found, not allowed); only retry server and network errors.
+            retry: (failures, error) => !(error instanceof ApiError && error.status < 500) && failures < 2,
+          },
+        },
+      }),
   );
   return (
     <ThemeProvider>

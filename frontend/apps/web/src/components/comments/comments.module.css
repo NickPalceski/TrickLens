@@ -1,0 +1,263 @@
+.thread {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.items > .item {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.body {
+  flex: 1;
+  min-width: 0;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.time {
+  font-size: 0.8125rem;
+  color: var(--faint);
+}
+
+.text {
+  margin-top: 0.125rem;
+  font-size: 0.9375rem;
+  line-height: 1.45;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-top: 0.25rem;
+}
+
+.action {
+  min-height: 1.75rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.action:hover {
+  color: var(--ink);
+}
+
+.danger {
+  color: var(--danger);
+}
+
+.confirm {
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+}
+
+.replies {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  margin: 0.875rem 0 0;
+  padding: 0 0 0 0.875rem;
+  list-style: none;
+  border-left: 2px solid var(--line);
+}
+
+.more {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--link);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.list > .more {
+  display: block;
+  width: 100%;
+  padding: 1rem;
+  text-align: center;
+}
+
+.empty {
+  padding: 2rem 1.25rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+.composer {
+  flex-shrink: 0;
+  padding: 0.875rem 1.25rem calc(0.875rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.replying {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.replying b {
+  color: var(--link);
+}
+
+.composerRow {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  min-height: 2.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-pill);
+  border: 1.5px solid var(--border);
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--ink);
+  box-shadow: 0 0 0 3px var(--sel);
+}
+
+.error {
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--danger);
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  color: var(--ink);
+}
+
+.header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 1rem 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.title {
+  font-size: 1.25rem;
+}
+
+.count {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.subtitle {
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+/* Desktop: a card beside the feed, as tall as the screen allows. */
+.side {
+  position: sticky;
+  top: 5.5rem;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 7rem);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+/* Phones: a modal sheet from the bottom. */
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: var(--scrim);
+}
+
+.sheet {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 82dvh;
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  outline: none;
+}
+
+.grabber {
+  flex-shrink: 0;
+  width: 2.5rem;
+  height: 4px;
+  margin: 0.5rem auto 0.25rem;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+}
