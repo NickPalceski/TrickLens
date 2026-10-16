@@ -9,8 +9,7 @@ up, the media step (verify, transcode, thumbnail), and the steeze analyzer
 
 **Status:** media (6a), Stage A (6b), Stage B (6c-1) and the landed
 check and confidence gate (6c-2) are live. 6c-3 (measurements,
-calibration, scoring, the stub off) is built and verified locally, not yet
-deployed. With it, the gate decides the clip's status and calibration.py
+calibration, scoring, the stub off) is live and verified in prod. The gate decides the clip's status and calibration.py
 its score; the stub only runs where `ANALYZER=stub` (the API image and CI).
 See the [build order](../ARCHITECTURE.md#build-order).
 
@@ -531,9 +530,9 @@ whose analysis crashed comes in as *analysis failed for this trick* (see
     Lambda;
   - 6c-2: landed check + confidence gate, advisory (built);
   - 6c-3: measurements, `calibration.py`, averaging, migration `0009`
-    (`analyses.details`), API, stub off, the stuck-clip sweep (built,
-    verified locally);
-  - then the prod check.
+    (`analyses.details`), API, stub off, the stuck-clip sweep (live,
+    verified in prod: kickflip analyzed at 79.7, bail "no landed trick
+    detected").
 
 ### Subscores
 

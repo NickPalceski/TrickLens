@@ -365,8 +365,8 @@ Step 6b (Stage A: finding the tricks) is done and live, verified in prod.
 live (advisory), verified in prod after the MediaPipe tcmalloc fix (see
 gotchas). 6c-2 (landed check + confidence gate) is done and live
 (advisory), verified in prod. 6c-3 (measurements, calibration, real
-scores, stub off, stuck-clip sweep) is built and verified locally, not yet
-deployed. Next: deploy 6c-3 and run the prod check.**
+scores, stub off, stuck-clip sweep) is live and verified in prod. Next:
+6d (calibration), once the user has more clips.**
 Running locally:
 
 ```bash
@@ -699,8 +699,8 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   side-on clips; a head-on clip is the known risk. The user is collecting
   more clips (head-on landed trick, multi-trick line, foot-down landing).
 
-- **Step 6c-3 (measurements, calibration, real scores)** built and
-  verified locally (2026-10-15), not yet deployed:
+- **Step 6c-3 (measurements, calibration, real scores)** live and verified
+  in prod (2026-10-15):
   - API image 79 tests pass (23 skip there); `make test-worker` 90/90
     (18 new synthetic measurement/pipeline tests, 3 gate crash tests, 2
     real-clip pipeline tests, a worker crash test); ruff clean on the
@@ -738,6 +738,20 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
     "both feet on", so the fix must key on the *same* foot staying on the
     board (bail: neither foot on in 9/16 frames). Waits for a real
     early-push clip; see docs/components/analyzer.md, Known limits.
+  - **Verified in prod** (deploys of `28cf777`, then `7822dde`), run as a
+    script with the prod-check collection's steps, as a prod test user
+    made with admin calls (see docs/deployment.md). The first run caught a
+    real bug: the kickflip's catch scored 30 (steeze 69.5) because one
+    partial board box (0.23 skater heights) just before touch-down read as
+    both feet off. Running locally on prod's own processed file reproduced
+    it exactly, since x264 output depends on the thread count (Lambda: 2
+    vCPUs) and so the transcodes differ. Fixed by skipping boxes under 0.6×
+    the trick's median in the catch. After the fix: kickflip **analyzed,
+    79.7** (catch 91; local file 77.5), bail **unanalyzable "no landed
+    trick detected"**, all 12 checks per clip green, `/health/deep` at
+    `0009`. Wall time complete → final status: bail ~27s, kickflip 76s
+    (103s as the first run after a deploy). No CloudWatch access from the
+    dev user, so no REPORT lines this time.
 
 - **Docs restructured (2026-10-07).** The README is trimmed to what the
   app is, the sneak peek, a small "how it works" diagram, status, stack and
@@ -792,12 +806,12 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
        the image, per-trick debug video *(live advisory, verified in prod)*
      - 6c-2 ✅ landed check + confidence gate, advisory *(live advisory,
        verified in prod)*
-     - 6c-3 🔶 measurements, `calibration.py`, averaging, migration `0009`
+     - 6c-3 ✅ measurements, `calibration.py`, averaging, migration `0009`
        (`analyses.details`), API `tricks`, stub off; plus a periodic sweep
        of old `queued` clips (decided 2026-10-14): a message that fails all
        its receives *before* the claim lands in the DLQ and leaves its clip
        `queued` forever, which the last-receive give-up doesn't cover
-       *(built, verified locally; deploy + prod check next)*
+       *(live, verified in prod)*
    - 6d ⬜ calibration once the user has hand-judged clips → `steeze-v1`
 7. ⬜ Weekly analysis quota + paid subscriptions (Free 5/wk, Plus $3.99
    25/wk, Pro $7.99 75/wk; Stripe), profile customization later — planned

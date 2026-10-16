@@ -17,8 +17,8 @@ Setup and day-to-day commands are in the
 tiers are in [subscriptions.md](subscriptions.md).
 
 **Current state:** steps 1–5 are done and live in AWS. Step 6 (the real
-analyzer) is in progress: 6a, 6b, 6c-1 and 6c-2 are live, and 6c-3 (real
-scores, the stub off) is built and verified locally, awaiting its deploy.
+analyzer) is in progress: 6a through 6c-3 are live, so clips get real
+(uncalibrated) scores. 6d, calibration, is next.
 See the [build order](#build-order).
 
 ---
@@ -419,7 +419,7 @@ on the worker; see [subscriptions.md](subscriptions.md).
 | 6c | MediaPipe pose, six subscores, confidence gate, averaging landed tricks, `steeze-v0-uncalibrated` | **in progress** |
 | 6c-1 | Stage B: windowed 60fps decode, pose, board around the trick, refined take-off/touch-down, libEGL + pose model in the image, per-trick debug video | **live (advisory), verified in prod** |
 | 6c-2 | Landed check + confidence gate, advisory; longer Stage B window; media timings | **live (advisory), verified in prod** |
-| 6c-3 | Measurements, calibration, averaging, migration `0009`, API `analysis.tricks`, stub off, stuck-clip sweep | **built, verified locally** (deploy + prod check next) |
+| 6c-3 | Measurements, calibration, averaging, migration `0009`, API `analysis.tricks`, stub off, stuck-clip sweep | **live, verified in prod** |
 | 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | |
 | 7 | Weekly analysis quota + paid subscriptions (Stripe), profile customization later — [subscriptions.md](subscriptions.md) | planned |
 

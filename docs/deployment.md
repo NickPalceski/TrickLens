@@ -51,6 +51,15 @@ run it top to bottom. It covers:
   detected") still passes, as long as the media checks do;
 - fetching the video and thumbnail from CloudFront.
 
+**Without Postman or email:** the 6c-3 check ran the same steps from a
+script, against a prod test user made with admin calls instead of sign-up
+(no confirmation email): `aws cognito-idp admin-create-user --user-pool-id
+<prod pool> --username prodcheck-6c3@example.com --user-attributes
+Name=email,Value=prodcheck-6c3@example.com Name=email_verified,Value=true
+--message-action SUPPRESS`, then `admin-set-user-password ... --permanent`.
+That user (`prodcheck6c3`) still exists; its password wasn't kept, so set
+a new one the same way to reuse it.
+
 Fill these in the collection's **Variables** tab (Current Value): the three
 endpoint values come from `terraform -chdir=infra output` and aren't
 committed (public repo).
