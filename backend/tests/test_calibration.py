@@ -125,3 +125,93 @@ def test_subscores_come_out_in_their_fixed_order():
     a.steeze_breakdown = {"stomp": 1.0, "pop": 2.0, "catch": None, "roll_away": 3.0,
                           "compactness": 4.0, "landing_stability": 5.0}  # fmt: skip
     assert list(analysis_out(a).steeze_breakdown) == list(C.SUBSCORES)
+
+
+# --- make calibrate (calibrate.py): judgments, pairing, fitting (6d-1) ----------
+
+from app.analyzer import calibrate as T  # noqa: E402
+
+
+def _judged(outcome="landed", at=None, **scores):
+    return T.JudgedTrick(
+        outcome, at, {k: (None if v == "n/a" else float(v)) for k, v in scores.items()}
+    )
+
+
+def _found(pop_ms=1200, outcome="landed", **m):
+    return {"pop_ms": pop_ms, "outcome": outcome, "measurements": m or None}
+
+
+def test_judgments_parse_and_reject_mistakes():
+    ok = {"clip": [{"file": "a.mov", "trick": [{"outcome": "landed", "pop": 70, "catch": "n/a"}]}]}
+    [clip] = T.parse_judgments(ok)
+    assert clip.tricks[0].scores == {"pop": 70.0, "catch": None}
+    bad = [
+        {"clip": [{"file": "a.mov", "trick": [{"outcome": "stomped"}]}]},  # unknown outcome
+        {"clip": [{"file": "a.mov", "trick": [{"outcome": "landed", "pops": 70}]}]},  # typo
+        {"clip": [{"file": "a.mov", "trick": [{"outcome": "landed", "pop": 170}]}]},  # range
+        {"clip": [{"file": "a.mov", "trick": [{"outcome": "bailed", "pop": 70}]}]},  # bail scored
+        {"clip": [{"file": "a.mov", "trick": [{"outcome": "landed"}, {"outcome": "landed"}]}]},
+    ]
+    for data in bad:
+        with pytest.raises(ValueError):
+            T.parse_judgments(data)
+
+
+def test_pairing_by_order_and_by_time():
+    clip = T.JudgedClip("a.mov", [_judged(), _judged("bailed")])
+    found = [_found(1000), _found(3000, "bailed")]
+    assert [p.found["pop_ms"] for p in T.pair_tricks(clip, found)] == [1000, 3000]
+
+    clip = T.JudgedClip("a.mov", [_judged(at=3.1), _judged("bailed", at=6.0)])
+    pairs = T.pair_tricks(clip, [_found(1000), _found(3000)])
+    assert [(p.judged and p.judged.at_s, p.found and p.found["pop_ms"]) for p in pairs] == [
+        (3.1, 3000),  # nearest pop
+        (6.0, None),  # nothing within MATCH_WITHIN_S: missed
+        (None, 1000),  # found, but you didn't judge it: extra
+    ]
+
+
+def test_a_fit_recovers_a_known_ramp():
+    """Your scores follow pop 0.1 -> 30, 0.4 -> 90 exactly: the fit finds
+    that line, kept on the current 20 -> 100 end scores."""
+    pts = [(x, 30 + 200 * (x - 0.1)) for x in (0.1, 0.15, 0.2, 0.3, 0.35, 0.4)]
+    f = T.fit_ramp("pop_height", "POP_HEIGHT", pts)
+    assert f.status == "fitted" and f.r == pytest.approx(1.0)
+    xa, sa, xb, sb = f.proposed
+    assert (sa, sb) == (20.0, 100.0)
+    assert C.ramp(0.25, f.proposed) == pytest.approx(60.0)
+
+
+def test_a_fit_refuses_too_little_a_flip_or_a_weak_link():
+    assert T.fit_ramp("pop_height", "POP_HEIGHT", [(0.2, 50)] * 3).status == "too few"
+    higher_is_worse = [(x, 100 - 100 * x) for x in (0.1, 0.2, 0.3, 0.4, 0.5)]
+    f = T.fit_ramp("pop_height", "POP_HEIGHT", higher_is_worse)
+    assert f.status == "flips direction" and f.proposed == C.POP_HEIGHT
+    noise = [(0.1, 60), (0.2, 40), (0.3, 70), (0.4, 45), (0.5, 62), (0.6, 50)]
+    assert T.fit_ramp("pop_height", "POP_HEIGHT", noise).status == "weak"
+
+
+def test_foot_down_tricks_stay_out_of_the_roll_away_fit():
+    clip = T.JudgedClip("a.mov", [_judged(roll_away=30)])
+    pairs = T.pair_tricks(clip, [_found(rollaway_on_board_frac=1.0, foot_down=True)])
+    assert T.training_points(pairs, "roll_away", "rollaway_on_board_frac") == []
+
+
+def test_the_report_fits_and_compares_clip_scores():
+    """Six landed tricks whose pop scores follow a different line than the
+    guess: the report proposes it, and the fitted error beats today's."""
+    clips, pairs = [], []
+    for i, h in enumerate((0.1, 0.15, 0.2, 0.3, 0.35, 0.4)):
+        c = T.JudgedClip(f"c{i}.mov", [_judged(pop=30 + 200 * (h - 0.1))])
+        clips.append(c)
+        pairs += T.pair_tricks(c, [_found(pop_height=h)])
+    now = T.errors(pairs, C.current_ramps())
+    fitted = T.errors(pairs, {n: f.proposed for n, f in T.fit_all(pairs).items()})
+    assert fitted["pop"] < now["pop"] and fitted["pop"] == pytest.approx(0.0, abs=0.1)
+    assert T.leave_one_out(pairs)["pop"] == pytest.approx(0.0, abs=0.5)
+    text = T.report(clips, pairs)
+    assert "agree on landed vs not: 6/6" in text
+    assert (
+        "POP_HEIGHT = " in text and "SETTLE_MS = (100.0, 100.0, 600.0, 20.0)  # unchanged" in text
+    )

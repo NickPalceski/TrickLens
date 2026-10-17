@@ -156,6 +156,8 @@ The **id token**, not the access token, is the bearer credential, so
 | `make analyze-clip FILE=...` | Run the analyzer on a local clip and write debug videos | `docker compose run --rm --no-deps --user "$(id -u):$(id -g)" worker python -m app.analyzer.cli <file>` |
 | `make licenses` | Fail if any worker-image Python dependency is AGPL | see the `licenses` target in the `Makefile` |
 | `make rankings` | Rebuild Discover rankings + team score snapshots | `docker compose run --rm api python -m app.rankings` |
+| `make calibrate` | Run the analyzer on your hand-judged clips (`tests/fixtures/clips/judgments.toml`) and print a report with proposed `calibration.py` constants (6d) | `docker compose run --rm --no-deps --user "$(id -u):$(id -g)" worker python -m app.analyzer.calibrate` |
+| `make rescore` | Dry run: which stored scores the current `calibration.py` would change (`ARGS=--apply` writes them) | `docker compose run --rm api python -m app.rescore` |
 | `make sweep` | Fail clips stuck `queued`/`analyzing` for over 2h ("analysis failed"); prod runs it on every rankings tick | `docker compose run --rm api python -m app.sweep` |
 | `make tf-init` / `tf-plan` / `tf-apply` | Terraform against prod (see the [deployment guide](deployment.md)) | `terraform -chdir=infra ...` |
 
@@ -177,8 +179,9 @@ production uses. CI runs exactly these commands (see
   measurements and the pipeline's crash handling, and the worker end to
   end with the real analyzer. Most use synthetic signals or ffmpeg's test
   video, so they run in CI. Under `make test` they all skip.
-  `calibration.py` is pure Python, so its tests (`test_calibration.py`)
-  run in the API image.
+  `calibration.py` and `calibrate.py`'s fitting are pure Python, so their
+  tests (`test_calibration.py`) run in the API image, as do the rescoring
+  tests (`test_rescore.py`, real Postgres).
 - **Real clips:** `backend/tests/fixtures/clips/` is **gitignored**: real
   skate clips are personal footage and are never committed (the README's
   GIFs are the deliberate exception). With clips present,

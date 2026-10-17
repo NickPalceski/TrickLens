@@ -85,3 +85,12 @@ variable "budget_email" {
   description = "Notified at 80%/100% of the $5/mo budget threshold."
   type        = string
 }
+
+variable "worker_max_concurrency" {
+  description = "Most worker runs at once (the SQS trigger's maximum concurrency, 2-1000): the spend ceiling. Clips past it wait in the queue."
+  type        = number
+  # The account's whole Lambda concurrency was 10 when this was set
+  # (2026-10-17), shared with the API and rankings, so the worker gets half.
+  # At 30-120s a clip, 5 at once still clears 150-600 clips an hour.
+  default = 5
+}

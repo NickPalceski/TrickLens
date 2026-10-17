@@ -117,6 +117,7 @@ analyze-clip` call it.
 | `gate.py` | Per clip: which tricks count, the failure reason when none do, and a confidence |
 | `measure.py` | Per judged trick: the raw measurements the subscores come from (6c-3) |
 | `calibration.py` | Measurements → 0–100 subscores → the clip's breakdown and steeze score. Pure Python, so the API image (and 6d) can import it |
+| `calibrate.py` | `make calibrate` (6d): runs the analyzer on hand-judged clips and proposes new `calibration.py` constants. A tool, not part of the worker |
 | `pipeline.py` | The whole analyzer on one processed clip, with per-trick crash handling. Called by the worker and the CLI |
 | `reasons.py` | The user-facing failure reasons the gate can give. Pure constants |
 | `cli.py` | `make analyze-clip`: the worker's exact path on a local file, plus debug videos |
@@ -221,8 +222,10 @@ image in its own ECR repo. It still reuses `app.db`, `app.models` and
 
 **Lambda sizing:** 3008MB, 300s timeout, 2GB `/tmp`. Memory is really the
 CPU knob (Lambda allocates ~1 vCPU per 1769MB), and 3008MB is the cap new
-AWS accounts start with. It reserves no concurrency: at the initial account
-quota, AWS requires at least 10 executions to stay unreserved.
+AWS accounts start with. At most 5 runs go at once: the SQS trigger's
+maximum concurrency caps it, so a burst of clips waits in the queue
+instead of growing the bill (why that and not reserved concurrency:
+[infrastructure](infrastructure.md#sqs-timings)).
 
 **Measured in prod:**
 - A routine cold start initializes in ~1.7s. The first invocation of a
@@ -566,7 +569,8 @@ against real, hand-judged clips. Those clips don't exist yet. So:
 - It stores each trick's **raw measurements**, not just the resulting
   scores.
 - 6d tunes the constants once the clips exist, bumps the version, and
-  recalculates existing analyses from those stored measurements. That
+  recalculates existing analyses from those stored measurements (see
+  [Calibration (6d)](#calibration-6d)). That
   needs no video re-run, and works even for clips whose raw upload has
   expired.
 
@@ -641,6 +645,90 @@ roll-away, and no catch (the board flipped after landing, not in the air).
 landed check's counts, the measurements and the subscores. The API shows
 the per-trick outcome, times and subscores as `analysis.tricks`
 ([api.md](api.md)). The model version is `steeze-v0-uncalibrated` until 6d.
+
+### Calibration (6d)
+
+6d turns the guessed constants into ones fitted to real judgments. It's
+split in two, because the judgments need clips that only get filmed now
+that the analyzer is live:
+- **6d-1 (built):** the tooling below, which needs no new clips.
+- **6d-2 (waits for clips):** check the verdicts against the user's labels
+  and fix the landed check, build the push rule (see
+  [Known limits](#known-limits)), fit the constants, ship `steeze-v1` and
+  rescore.
+
+**Judging.** The user records each clip in
+`backend/tests/fixtures/clips/judgments.toml`, gitignored like the clips:
+
+```toml
+[[clip]]
+file = "kickflip_sketchy_60fps.mov"
+note = "tripod, side-on, portrait"
+
+  [[clip.trick]]            # one per trick, in clip order
+  outcome = "landed"        # "landed", "landed-push" or "bailed"
+  at = 1.2                  # roughly when the pop is, in seconds (required with several tricks)
+  pop = 75                  # each subscore 0-100 for a landed trick,
+  landing_stability = 55    # or "n/a" where it doesn't apply;
+  roll_away = 85            # bails get no scores
+  stomp = 60
+  compactness = 65
+  catch = 80
+```
+
+All six subscores per landed trick, decided with the user: an overall
+score alone could only tune the scale, not show which subscore is off. The
+clip's score is the average, the same way the analyzer averages, so it
+isn't entered separately. `landed-push` is a landing with a foot put down
+to push too early, the push rule's test case.
+
+**`make calibrate`** (`calibrate.py`) runs the analyzer once per judged clip
+and caches the result (`_debug/<clip>.analysis.json`), keyed by a hash of
+the analyzer's code and the clip file, so re-fitting is instant and a
+change to `measure.py` re-runs the clips by itself. Judged tricks are
+matched to found ones by order, or by `at` within 0.75s. The report:
+- **Verdicts:** yours against the analyzer's per trick, how many agree on
+  landed vs not, tricks it missed or found extra, and how it handled early
+  pushes.
+- **Subscores:** on tricks you both call landed, the mean error in points
+  now, after fitting, and *left out* (each trick scored by a fit made
+  without it). A fitted error far below the left-out one means the fit
+  memorised the clips.
+- **Measurements:** how well each tracks your score (r), and whether it
+  was fitted.
+- **Clip scores:** yours against the analyzer's, now and proposed.
+- **Proposed constants** to paste into `calibration.py` after review.
+  Nothing changes automatically.
+
+**Fitting.** Each measurement is fitted on its own against the subscore it
+feeds: least squares on (measurement, your score), turned back into a ramp
+that keeps the current end scores (e.g. 20 → 100) and moves where they're
+reached. A subscore with several measurements stays their mean, each
+fitted against the same score: fewer parameters than a joint fit, which
+matters with ~20 tricks. A measurement keeps its current ramp, and the
+report says why, with fewer than 5 points, a correlation under 0.3
+("weak"), or a clear trend the wrong way ("flips direction", e.g. higher
+pop scoring lower, which would mean the measurement is broken).
+Foot-down tricks stay out of the roll-away fit: they score
+`FOOT_DOWN_CAP` whatever the ramp says.
+
+**Shipping it:** paste the reviewed constants, bump `MODEL_VERSION` to
+`steeze-v1`, deploy, then rescore.
+
+**Rescoring** (`app/rescore.py`, `make rescore` locally, the manual
+`rescore.yml` job in prod). Without it, every clip analyzed before the
+change keeps its old-constant score, so old and new clips would be ranked
+against each other on two different scales: in Discover, on profiles and
+in team averages. The measurements behind every score are stored in
+`analyses.details`, so rescoring recomputes the subscores from them with
+no video (the raw uploads expire after 7 days anyway). For each analyzed
+or published clip whose latest analysis has measurements and another
+model version, it appends a new analysis row (the old one stays as
+history) and updates the clip's score. Verdicts don't change, since those
+need the video. A dry run lists old → new first, and a second run finds
+nothing to do. Every later recalibration (v2, v3, …) reuses it. Run it
+after the deploy that ships the constants: before it, the worker would
+still score new clips with the old ones.
 
 ### The confidence gate
 

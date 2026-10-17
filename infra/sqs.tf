@@ -29,8 +29,21 @@ resource "aws_sqs_queue" "analysis" {
 # Same reasoning as the low maxReceiveCount above: batch_size=1 means one
 # poison message can't drag a batch of otherwise-healthy messages down with
 # it, since lambda_handler has no per-record failure isolation.
+#
+# scaling_config caps how many worker runs go at once (the spend ceiling,
+# docs/components/infrastructure.md, SQS timings): past it, clips wait in the
+# queue instead of starting more 3GB workers. This, not the function's
+# reserved_concurrent_executions, because a reserved limit makes Lambda
+# throttle: the throttled message goes back to the queue, every bounce counts
+# as a receive, and after maxReceiveCount it lands in the DLQ, so a burst
+# would end in "analysis failed" clips. Here the trigger just doesn't pick up
+# more messages. It also reserves nothing from the account's pool.
 resource "aws_lambda_event_source_mapping" "worker" {
   event_source_arn = aws_sqs_queue.analysis.arn
   function_name    = aws_lambda_function.worker.arn
   batch_size       = 1
+
+  scaling_config {
+    maximum_concurrency = var.worker_max_concurrency
+  }
 }

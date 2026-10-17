@@ -53,7 +53,7 @@ flowchart TB
     client -- "GET video / thumb" --> cf --> s3
     api -- "presign, head" --> s3
     api -- SendMessage --> sqs
-    sqs -- "event-source mapping" --> worker
+    sqs -- "event-source mapping<br/>(≤ 5 runs at once)" --> worker
     sqs -. redrive .-> dlq
     worker -- "raw/ in, processed/ + thumbs/ out" --> s3
     eb --> rank
@@ -66,7 +66,7 @@ flowchart TB
 | ECR `tricklens`, `tricklens-worker` | `ecr.tf` | Two repos, each keeping its last 5 images. Separate repos so each has its own rollback history |
 | Lambda `tricklens-api` / `-worker` / `-rankings` | `lambda.tf` | API and rankings share the API image, selected by `image_config.command`. The worker has its own image |
 | API Gateway HTTP API | `api_gateway.tf` | One `$default` route, `AWS_PROXY` integration, payload format 2.0 |
-| SQS `tricklens-analysis` + DLQ | `sqs.tf` | Visibility timeout 1800s (6× the worker's 300s timeout); `maxReceiveCount` 3; event-source mapping with `batch_size = 1` |
+| SQS `tricklens-analysis` + DLQ | `sqs.tf` | Visibility timeout 1800s (6× the worker's 300s timeout); `maxReceiveCount` 3; event-source mapping with `batch_size = 1` and `maximum_concurrency` 5 (`var.worker_max_concurrency`) |
 | S3 media bucket | `s3.tf` | Bucket name includes the account id. 7-day expiry on `raw/`. Public access blocked, readable only by CloudFront |
 | CloudFront | `cloudfront.tf` | Origin Access Control to S3, `GET`/`HEAD` only, `PriceClass_100` |
 | Cognito `tricklens-prod` | `cognito.tf` | Email as username, email verification, public client (no secret), `USER_PASSWORD_AUTH` |
@@ -115,6 +115,10 @@ flowchart LR
         t2 --> build --> mig --> apply --> smoke
     end
 
+    subgraph rescore ["rescore.yml: manual (6d)"]
+        rs["app.rescore against Neon,<br/>from the runner<br/>(dry run unless 'apply')"]
+    end
+
     oidc["GitHub OIDC → AWS roles<br/>tricklens-gha-plan (read-only)<br/>tricklens-gha-deploy"]
     plan -. assumes .-> oidc
     build -. assumes .-> oidc
@@ -132,6 +136,13 @@ flowchart LR
 - **`deploy.yml`** runs on every push to `main`. The jobs are strictly
   sequential: the ordering itself is a safety property (see below). There's
   no manual approval gate, by choice, for a solo-dev project.
+- **`rescore.yml`** (6d) only runs by hand, from the Actions tab. It
+  rescores stored analyses with the deployed `calibration.py`
+  (`app/rescore.py`): a dry run that lists old → new scores unless its
+  `apply` box is checked. Like the migrate job it talks to Neon straight
+  from the runner with the `ALEMBIC_DATABASE_URL` secret, and needs no AWS
+  role. Run it after the deploy that ships new calibration constants (see
+  [deployment](../deployment.md#rescoring-after-a-calibration-change)).
 
 Rollback is `terraform apply -var image_tag=<previous_sha>` (see below).
 
@@ -258,6 +269,30 @@ redelivery recover a clip whose run died (see the
 [analyzer doc](analyzer.md#worker)). `maxReceiveCount` is a low 3 because
 the handler has no per-record failure isolation, and `batch_size = 1` keeps
 one poison message from dragging healthy ones down with it.
+
+**The spend ceiling is the trigger's maximum concurrency, not reserved
+concurrency** (added 2026-10-17). Lambda scales the worker out with the
+queue, one 3GB run per clip, and the $5 budget only emails. So the SQS
+trigger picks up at most `var.worker_max_concurrency` (5) messages at a
+time, and a burst waits in the queue (14-day retention) instead of
+growing the bill. At 30–120s a clip that still clears 150–600 clips an
+hour. The obvious alternative, `reserved_concurrent_executions` on the
+function, was rejected for two reasons:
+- **Throttling burns receives.** A reserved limit makes Lambda throttle
+  invokes past it; the throttled message goes back to the queue, each
+  bounce counts toward `maxReceiveCount` (3), and the message lands in
+  the DLQ, its clip later swept to "analysis failed". The trigger's own
+  cap never picks the message up, so nothing bounces.
+- **It reserves from the account's pool.** The account's whole Lambda
+  concurrency was **10** when this was set (Lambda console, Dashboard:
+  "Full account concurrency"), and AWS keeps at least 10 unreserved, so
+  any reservation would fail the apply. The trigger's cap reserves
+  nothing.
+
+The limit of 10 is a problem by itself, since the API, worker and
+rankings share it: past 10 concurrent requests the API throttles. An
+increase to 1000 (free) is requested through Service Quotas → AWS Lambda →
+Concurrent executions. With 10, the worker's 5 leaves half for the API.
 
 ### Terraform state: S3 + DynamoDB, bootstrapped by hand once, never self-managed
 

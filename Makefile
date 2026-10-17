@@ -8,7 +8,7 @@ WORKER_TESTS := tests/test_media.py tests/test_analyzer_detect.py \
 	tests/test_analyzer_real_clips.py
 
 .PHONY: help init up down clean logs ps health migrate revision shell psql fmt test test-worker \
-	licenses analyze-clip rankings sweep \
+	licenses analyze-clip calibrate rescore rankings sweep \
 	tf-init tf-plan tf-apply
 
 help: ## Show available commands
@@ -74,6 +74,12 @@ licenses: ## Fail if any worker-image Python dependency is AGPL (TrickLens goes 
 
 rankings: ## Rebuild Discover rankings + team score snapshots (on demand; scheduled automatically in prod, step 5)
 	docker compose run --rm api python -m app.rankings
+
+calibrate: ## Tune calibration.py against your hand-judged clips (tests/fixtures/clips/judgments.toml); prints a report, changes nothing
+	docker compose run --rm --no-deps --user "$$(id -u):$$(id -g)" worker python -m app.analyzer.calibrate
+
+rescore: ## Dry run: list stored scores that the current calibration.py would change (add ARGS=--apply to write)
+	docker compose run --rm api python -m app.rescore $(ARGS)
 
 sweep: ## Fail clips stuck queued/analyzing for over 2h (on demand; runs with every rankings tick in prod, 6c-3)
 	docker compose run --rm api python -m app.sweep

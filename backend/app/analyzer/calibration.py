@@ -14,7 +14,8 @@ breakdown's non-null subscores.
 **Every constant is a guess** (hence `steeze-v0-uncalibrated`), anchored
 on one landed clip: the tripod kickflip, which its skater calls sketchy,
 so it should land mid-range rather than near 100. See
-docs/components/analyzer.md, Subscores, as built (6c-3).
+docs/components/analyzer.md, Subscores, as built (6c-3). 6d tunes these
+constants with `make calibrate` (calibrate.py) against hand-judged clips.
 """
 
 from collections.abc import Mapping, Sequence
@@ -38,8 +39,31 @@ LEG_RATIO = (1.0, 100.0, 1.6, 30.0)  # hip-ankle per torso length: tucked → st
 ARM_RATIO = (1.2, 100.0, 2.2, 40.0)  # farther wrist from the hips per torso length
 CATCH_FRAC = (0.0, 30.0, 0.7, 100.0)  # of the airtime, caught before touch-down
 
+Ramp = tuple[float, float, float, float]
 
-def ramp(x: float, ramp_def: tuple[float, float, float, float]) -> float:
+# Which measurements each subscore reads, and the ramp each goes through
+# (by constant name, so calibrate.py can propose new values for it). A
+# subscore with several is their mean.
+COMPONENTS: dict[str, tuple[tuple[str, str], ...]] = {
+    "pop": (("pop_height", "POP_HEIGHT"),),
+    "landing_stability": (
+        ("settle_ms", "SETTLE_MS"),
+        ("torso_sway_deg", "TORSO_SWAY_DEG"),
+        ("arm_flail", "ARM_FLAIL"),
+    ),
+    "roll_away": (("rollaway_on_board_frac", "ROLLAWAY_ON_BOARD"),),
+    "stomp": (("stomp_error", "STOMP_ERROR"),),
+    "compactness": (("leg_ratio", "LEG_RATIO"), ("arm_ratio", "ARM_RATIO")),
+    "catch": (("catch_frac", "CATCH_FRAC"),),
+}
+
+
+def current_ramps() -> dict[str, Ramp]:
+    """Every ramp constant by name, as this module defines it."""
+    return {name: globals()[name] for comps in COMPONENTS.values() for _, name in comps}
+
+
+def ramp(x: float, ramp_def: Ramp) -> float:
     xa, sa, xb, sb = ramp_def
     w = min(1.0, max(0.0, (x - xa) / (xb - xa)))
     return sa + (sb - sa) * w
@@ -50,31 +74,21 @@ def _mean(values: Sequence[float | None]) -> float | None:
     return sum(vs) / len(vs) if vs else None
 
 
-def _get(m: Mapping[str, Any], key: str, ramp_def) -> float | None:
-    v = m.get(key)
-    return None if v is None else ramp(float(v), ramp_def)
-
-
-def subscores(m: Mapping[str, Any]) -> dict[str, float | None]:
-    """0-100 per subscore (None = n/a) from one trick's measure.measure()."""
-    roll = _get(m, "rollaway_on_board_frac", ROLLAWAY_ON_BOARD)
-    if roll is not None and m.get("foot_down"):
-        roll = min(roll, FOOT_DOWN_CAP)
-    raw = {
-        "pop": _get(m, "pop_height", POP_HEIGHT),
-        "landing_stability": _mean(
-            [
-                _get(m, "settle_ms", SETTLE_MS),
-                _get(m, "torso_sway_deg", TORSO_SWAY_DEG),
-                _get(m, "arm_flail", ARM_FLAIL),
-            ]
-        ),
-        "roll_away": roll,
-        "stomp": _get(m, "stomp_error", STOMP_ERROR),
-        "compactness": _mean([_get(m, "leg_ratio", LEG_RATIO), _get(m, "arm_ratio", ARM_RATIO)]),
-        "catch": _get(m, "catch_frac", CATCH_FRAC),
-    }
-    return {k: None if v is None else round(v, 1) for k, v in raw.items()}
+def subscores(m: Mapping[str, Any], ramps: Mapping[str, Ramp] | None = None) -> dict:
+    """0-100 per subscore (None = n/a) from one trick's measure.measure().
+    `ramps` overrides constants by name (calibrate.py tries proposals with
+    it); anything not in it comes from this module."""
+    use = current_ramps() | dict(ramps or {})
+    out: dict[str, float | None] = {}
+    for name, comps in COMPONENTS.items():
+        parts = [
+            None if m.get(key) is None else ramp(float(m[key]), use[ramp_name])
+            for key, ramp_name in comps
+        ]
+        out[name] = _mean(parts)
+    if out["roll_away"] is not None and m.get("foot_down"):
+        out["roll_away"] = min(out["roll_away"], FOOT_DOWN_CAP)
+    return {k: None if v is None else round(v, 1) for k, v in out.items()}
 
 
 def aggregate(
