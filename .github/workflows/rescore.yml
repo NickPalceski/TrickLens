@@ -1,0 +1,55 @@
+# Manual: rescore stored analyses with the current calibration.py (step 6d).
+#
+# Run it from the Actions tab after the deploy that ships new calibration
+# constants (and a new MODEL_VERSION). Unchecked "apply" is a dry run that
+# lists old -> new scores and writes nothing; check it to write. Safe to
+# run twice: the second run finds nothing to do. See
+# docs/components/analyzer.md, Calibration (6d), and docs/deployment.md.
+#
+# Database only, straight from the runner like deploy.yml's migrate job,
+# with the same ALEMBIC_DATABASE_URL secret: app/rescore.py uses the
+# DB-only settings, so it needs no AWS access at all.
+name: Rescore
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Write the new scores (unchecked: dry run, list them only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rescore
+
+jobs:
+  rescore:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -r backend/requirements.txt
+
+      - name: rescore
+        working-directory: backend
+        env:
+          ALEMBIC_DATABASE_URL: ${{ secrets.ALEMBIC_DATABASE_URL }}
+          APPLY: ${{ inputs.apply && '--apply' || '' }}
+        run: |
+          # Neon can be scaled to zero and slow to wake on the first
+          # connection, so retry; rescoring is idempotent. The last attempt
+          # runs outside the loop so its exit code is the step's (see the
+          # migrate job's comment for why a loop must not end on sleep).
+          for attempt in 1 2 3; do
+            python -m app.rescore $APPLY && exit 0
+            echo "attempt $attempt failed, retrying in 5s..."
+            sleep 5
+          done
+          python -m app.rescore $APPLY

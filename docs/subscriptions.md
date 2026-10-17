@@ -115,12 +115,16 @@ yet decided.
 ## Hard ceiling on spend
 
 Quotas don't stop a sign-up flood or a bug, and the $5 AWS Budget only
-alerts; it doesn't stop anything. Separately from subscriptions, the
-worker Lambda should get a `reserved_concurrent_executions` of around
-5–10 in `infra/lambda.tf` (it has none today). A spike then makes clips
-wait in the SQS queue instead of scaling the bill. Each clip takes
-30–120s, so 10 concurrent runs still clear several hundred clips an hour.
-This is worth doing before step 7, independently of it.
+alerts; it doesn't stop anything. So, separately from subscriptions and
+ahead of step 7, the worker is capped at 5 runs at once (done
+2026-10-17): the SQS trigger's `maximum_concurrency`
+(`var.worker_max_concurrency` in `infra/sqs.tf`), not the function's
+`reserved_concurrent_executions` as first planned. A reserved limit
+throttles, and throttled messages burn SQS receives until they land in
+the DLQ; the account's whole concurrency was also only 10, which leaves
+nothing to reserve. A spike now waits in the queue instead of scaling the
+bill, and 5 runs at 30–120s a clip still clear 150–600 clips an hour. See
+[infrastructure](components/infrastructure.md#sqs-timings).
 
 ## Implementation sketch
 

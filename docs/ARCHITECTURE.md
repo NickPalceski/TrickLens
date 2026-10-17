@@ -407,8 +407,11 @@ capped at 14 days per Lambda function, and an AWS Budget alarm at $5
 
 The worker is the one cost that grows with *use*, not sign-ups: about
 $0.0016–0.0056 per analysis past the free tier. The planned answer is a
-weekly analysis quota with paid tiers, plus a reserved-concurrency ceiling
-on the worker; see [subscriptions.md](subscriptions.md).
+weekly analysis quota with paid tiers (see
+[subscriptions.md](subscriptions.md)). The hard ceiling is already in
+place: at most 5 worker runs at once, the SQS trigger's maximum
+concurrency, so a spike queues instead of scaling the bill (see
+[infrastructure](components/infrastructure.md#sqs-timings)).
 
 ---
 
@@ -428,7 +431,9 @@ on the worker; see [subscriptions.md](subscriptions.md).
 | 6c-1 | Stage B: windowed 60fps decode, pose, board around the trick, refined take-off/touch-down, libEGL + pose model in the image, per-trick debug video | **live (advisory), verified in prod** |
 | 6c-2 | Landed check + confidence gate, advisory; longer Stage B window; media timings | **live (advisory), verified in prod** |
 | 6c-3 | Measurements, calibration, averaging, migration `0009`, API `analysis.tricks`, stub off, stuck-clip sweep | **live, verified in prod** |
-| 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses; the push rule (an early push costs roll-away instead of failing the landing) | |
+| 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | in progress |
+| 6d-1 | The tooling: `judgments.toml`, `make calibrate` (fit + report), `app/rescore.py` + the manual `rescore.yml` job | **built, verified locally** |
+| 6d-2 | With the user's clips: verdicts checked, the push rule (an early push costs roll-away instead of failing the landing), fitted constants, `steeze-v1`, prod rescore | waits for clips |
 | 7 | Weekly analysis quota + paid subscriptions (Stripe), profile customization later — [subscriptions.md](subscriptions.md) | planned |
 | F | Web app, a parallel track ([frontend.md](components/frontend.md#build-phases)) | **in progress** |
 | F1 | Workspace, tokens, both themes + Settings toggle, app shell, routes, typed API client, mock API, CI | **done** |

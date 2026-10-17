@@ -157,3 +157,28 @@ def test_followcam_bail_is_not_scored_but_is_measured(tmp_path):
     [t] = res.details()["tricks"]
     assert t["outcome"] == "bailed" and t["subscores"] is None
     assert t["measurements"]["foot_down"] is True
+
+
+# --- make calibrate end to end (6d-1) -------------------------------------------
+
+
+def test_calibrate_runs_on_the_real_clips(tmp_path, capsys):
+    """The whole tool on real footage: both verdicts agree with the user's
+    notes, and a second run comes from the cache."""
+    from app.analyzer import calibrate
+
+    for name in ("kickflip_sketchy_60fps.mov", "bail_60fps.mov"):
+        src = os.path.join(CLIPS, name)
+        if not os.path.exists(src):
+            pytest.skip(f"real clip {name} not present (gitignored, local only)")
+        os.symlink(os.path.abspath(src), tmp_path / name)
+    (tmp_path / "judgments.toml").write_text(
+        '[[clip]]\nfile = "kickflip_sketchy_60fps.mov"\n'
+        '[[clip.trick]]\noutcome = "landed"\npop = 75\ncatch = 80\n'
+        '[[clip]]\nfile = "bail_60fps.mov"\n[[clip.trick]]\noutcome = "bailed"\n'
+    )
+    assert calibrate.main(["--clips", str(tmp_path)]) == 0
+    out = capsys.readouterr()
+    assert "agree on landed vs not: 2/2" in out.out
+    assert calibrate.main(["--clips", str(tmp_path)]) == 0
+    assert capsys.readouterr().err.count("from cache") == 2

@@ -32,6 +32,25 @@ first clip after a deploy is slow once (see
 **Rollback:** `terraform apply -var image_tag=<previous_sha>`. ECR keeps the
 last 5 images per repo, so that works for the last 5 deploys.
 
+## Rescoring after a calibration change
+
+When a deploy ships new `calibration.py` constants and a new
+`MODEL_VERSION` (6d), clips analyzed before it keep their old scores until
+they're rescored from their stored measurements (why:
+[Calibration (6d)](components/analyzer.md#calibration-6d)).
+
+1. Wait for that deploy to go green, so new clips are already scored with
+   the new constants.
+2. GitHub → **Actions** → **Rescore** → **Run workflow**, with *apply*
+   unchecked. The log lists every clip it would change, old → new score.
+3. If those look right, run it again with *apply* checked. Running it
+   again afterwards changes nothing.
+
+Discover's snapshot picks the new scores up on its next rebuild (every 30
+minutes). The job uses the `ALEMBIC_DATABASE_URL` secret, like the migrate
+job, and no AWS role. Locally the same thing is `make rescore`
+(`make rescore ARGS=--apply` to write).
+
 ## Checking a deploy end to end (Postman)
 
 A green pipeline only proves `/health/deep` passes. To prove a clip really

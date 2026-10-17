@@ -395,8 +395,9 @@ Step 6b (Stage A: finding the tricks) is done and live, verified in prod.
 live (advisory), verified in prod after the MediaPipe tcmalloc fix (see
 gotchas). 6c-2 (landed check + confidence gate) is done and live
 (advisory), verified in prod. 6c-3 (measurements, calibration, real
-scores, stub off, stuck-clip sweep) is live and verified in prod. Next:
-6d (calibration), once the user has more clips.**
+scores, stub off, stuck-clip sweep) is live and verified in prod. 6d-1
+(calibration tooling) is built and verified locally; 6d-2 waits for the
+user's hand-judged clips.**
 Running locally:
 
 ```bash
@@ -783,6 +784,30 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
     (103s as the first run after a deploy). No CloudWatch access from the
     dev user, so no REPORT lines this time.
 
+- **Step 6d-1 (calibration tooling)** built and verified locally
+  (2026-10-17), no deploy needed for it to be used (`make calibrate` is
+  local; the rescore job runs by hand):
+  - API image 87 pass (24 skip): 9 new fitting/parsing tests in
+    `test_calibration.py`, 3 rescoring tests in `test_rescore.py` (real
+    Postgres, sync DB-only connection); `make test-worker` 92/92 (a real-
+    clip `make calibrate` test); ruff clean on the new files.
+  - `make calibrate` on the starter `judgments.toml` (both clips'
+    outcomes, subscores left for the user): verdicts 2/2, kickflip 77.5,
+    nothing to fit yet; the second run comes from the cache. `make
+    rescore` dry run: 0 clips (everything is already on the current
+    version).
+  - `calibration.py` is now table-driven (`COMPONENTS`, `current_ramps()`,
+    `subscores(m, ramps)`) so the tool can try proposals; scores
+    unchanged.
+  - Decided with the user (2026-10-17): judge all six subscores per landed
+    trick, the clip score is their average; the prod rescore is a manual
+    GitHub Actions job. The worker concurrency cap (step 7's "before step
+    7" item): the account's Lambda concurrency turned out to be 10 (the
+    Lambda console's Dashboard), so the worker is capped with the SQS
+    trigger's `maximum_concurrency` = 5 instead of reserved concurrency
+    (docs/components/infrastructure.md, SQS timings), and the user is
+    requesting an increase to 1000.
+
 - **Docs restructured (2026-10-07).** The README is trimmed to what the
   app is, the sneak peek, a small "how it works" diagram, status, stack and
   quick-start/deploy pointers. Depth moved into `docs/`:
@@ -892,8 +917,18 @@ Cognito, live API, hosting).
        its receives *before* the claim lands in the DLQ and leaves its clip
        `queued` forever, which the last-receive give-up doesn't cover
        *(live, verified in prod)*
-   - 6d ⬜ calibration once the user has hand-judged clips → `steeze-v1`.
-     Also build the **push rule** then (asked for 2026-10-15): a foot put
+   - 6d 🔶 calibration against hand-judged clips → `steeze-v1`, split in
+     two (decided with the user 2026-10-17):
+     - 6d-1 ✅ tooling, no clips needed: `judgments.toml` (all six
+       subscores per landed trick; the clip score is their average, not
+       entered), `make calibrate` (`app/analyzer/calibrate.py`: cached
+       analyzer runs, verdict table, per-measurement fits, leave-one-out
+       error, proposed constants), `app/rescore.py` + the manual
+       `.github/workflows/rescore.yml` job (dry run unless *apply*)
+       *(built, verified locally)*
+     - 6d-2 ⬜ with the user's clips: verdicts first, the push rule, fit,
+       `steeze-v1`, prod rescore.
+     The **push rule** (asked for 2026-10-15): a foot put
      down to push too soon after landing should lower roll-away, not turn
      a landed trick into "no landed trick detected" or a bail, which is
      what a push inside the landed check's 0.1–0.6s span does today. Key
@@ -903,8 +938,11 @@ Cognito, live API, hosting).
      against; see docs/components/analyzer.md, Known limits.
 7. ⬜ Weekly analysis quota + paid subscriptions (Free 5/wk, Plus $3.99
    25/wk, Pro $7.99 75/wk; Stripe), profile customization later — planned
-   in `docs/subscriptions.md` (2026-10-15). Separately and sooner: a
-   `reserved_concurrent_executions` ceiling on the worker Lambda
+   in `docs/subscriptions.md` (2026-10-15). Its "before step 7" spend
+   ceiling is done (2026-10-17): the worker's SQS trigger caps it at 5 runs
+   at once (`maximum_concurrency`, not reserved concurrency, which
+   throttles into the DLQ); the account's Lambda limit was 10, and the
+   user is requesting 1000 through Service Quotas
 
 F. 🔶 Web app, a **parallel track** (decided with the user 2026-10-15),
    not gated on step 6: built as a mock-data prototype until wiring.
