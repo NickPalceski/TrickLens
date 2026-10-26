@@ -683,8 +683,12 @@ the first one fitted to hand-judged scores.
 split in two, because the judgments need clips that only get filmed now
 that the analyzer is live:
 - **6d-1 (built):** the tooling below, which needs no new clips.
-- **6d-2 (done for the MVP, 2026-10-26):** the verdicts checked against
-  the user's notes on seven real clips, and fixed; the push rule built.
+- **6d-2 (done for the MVP, live, 2026-10-26):** the verdicts checked
+  against the user's notes on seven real clips, and fixed; the push rule
+  built. Verified in prod on five of them: 50-50 66.4, pyramid ollie
+  72.9, nose grind 51.9 (a landed push), kickflip 79.7, bail "no landed
+  trick detected"; prod's transcodes put scores within ~2 points of
+  local.
   No subscores were judged, so nothing was fitted: the constants stay the
   6c-3 guesses, and `steeze-v1` waits for judged scores (from the user or
   from users' clips later).

@@ -812,6 +812,14 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
     push rule has never seen a real early push.
   - Tests: API image 88 pass (23 skip), worker image 104/104 (8 new
     synthetic, 5 new real-clip); ruff clean.
+  - **Verified in prod** (deploy of `adf2581`), the prod-check steps run
+    as a script as the admin-made test user (password reset with
+    `admin-set-user-password`; not kept): 50-50 analyzed 66.4 (local 64.2,
+    109s as the first run after the deploy), pyramid ollie analyzed 72.9
+    (was a false bail), nose grind analyzed 51.9 (one trick, pushed,
+    roll-away 20, plus a "clip ends too soon" step-off), kickflip 79.7
+    (unchanged), bail unanalyzable "no landed trick detected"; every
+    check green, all `steeze-v0.2-uncalibrated`.
 
 - **Docs restructured (2026-10-07).** The README is trimmed to what the
   app is, the sneak peek, a small "how it works" diagram, status, stack and

@@ -427,7 +427,7 @@ concurrency, so a spike queues instead of scaling the bill (see
 | 6c-3 | Measurements, calibration, averaging, migration `0009`, API `analysis.tricks`, stub off, stuck-clip sweep | **live, verified in prod** |
 | 6d | Calibration against real clips | **done (MVP)** |
 | 6d-1 | The tooling: `judgments.toml`, `make calibrate` (fit + report), `app/rescore.py` + the manual `rescore.yml` job | **built, verified locally** |
-| 6d-2 | With the user's seven clips (ledges, a ramp, 30fps): verdicts checked and fixed, the push rule (an early push costs roll-away instead of failing the landing), `steeze-v0.2-uncalibrated` | **done (MVP)** |
+| 6d-2 | With the user's seven clips (ledges, a ramp, 30fps): verdicts checked and fixed, the push rule (an early push costs roll-away instead of failing the landing), `steeze-v0.2-uncalibrated` | **live, verified in prod** |
 | later | Fit the constants to hand-judged scores → `steeze-v1`, prod rescore. Not blocking: waits for judged clips | |
 | 7 | Weekly analysis quota + paid subscriptions (Stripe), profile customization later — [subscriptions.md](subscriptions.md) | planned |
 
