@@ -65,10 +65,11 @@ The full picture, with the key flows and design decisions, is in
 
 Steps 1–5 are done and **live in AWS**: auth, the full clip pipeline, the
 social features, and automated deploys. Step 6, the real analyzer, is in
-progress. Media processing, trick finding, body-pose analysis, the landed
-check and real scores (six subscores, averaged over the landed tricks) are
-live. The scoring constants are uncalibrated guesses until enough
-hand-judged clips exist to tune them.
+done for the MVP: media processing, trick finding, body-pose analysis, the
+landed check and real scores (six subscores, averaged over the landed
+tricks), checked on real clips including ledge tricks. The scoring
+constants are uncalibrated guesses until enough hand-judged clips exist to
+tune them.
 See the [build order](docs/ARCHITECTURE.md#build-order).
 
 ## Stack

@@ -23,6 +23,10 @@ built (6c-2)):
 | Tripod kickflip (landed) | 16/16 of 16 | 0 | 0.26 |
 | Follow-cam bail | 2/13 of 16 | 3 | 0.54 |
 
+Two 6d-2 additions: a foot counts as on the deck anywhere within the
+board box's height (foot_on: boards filmed from behind), and the push rule
+(PUSH_MAX_NEITHER).
+
 "Board moving along with the skater" was in the plan too. It's kept as a
 measurement only (`board_offset_range`, 0.05 vs 0.27 on these clips) until
 more footage shows whether it survives camera motion.
@@ -56,6 +60,17 @@ LANDED_FRAC = 0.7  # of the judged frames
 BAILED_FRAC = 0.3
 MIN_JUDGED_FRAC = 0.5  # of the board-sampled frames in the span
 
+# The push rule (6d-2): a skater who puts a foot down to push right after
+# landing keeps the *other* foot on the board, so in those frames exactly
+# one foot is on it, always the same one. That's a landing (roll-away pays
+# for the push, calibration.FOOT_DOWN_CAP), not a bail. A bail mostly has
+# neither foot on: the follow-cam bail had both on in 4 of 16 judged
+# frames, one in 3 and neither in 9, and its first 100ms read "both on", so
+# "both on first, then one" alone isn't enough. Hence: at most this share
+# of judged frames with neither foot on, and the one-foot frames all the
+# same foot. Built without a real early-push clip; synthetic tests only.
+PUSH_MAX_NEITHER = 0.15
+
 LEFT = (P.L_ANKLE, P.L_HEEL, P.L_TOE)
 RIGHT = (P.R_ANKLE, P.R_HEEL, P.R_TOE)
 
@@ -78,6 +93,9 @@ class LandingCheck:
     stance: float | None = None  # median, skater heights
     board_offset_range: float | None = None  # measurement only, see module doc
     rows: dict[int, bool] = field(default_factory=dict)  # judged frame row -> on board
+    one_foot: int = 0  # judged frames with exactly one foot on the board
+    neither: int = 0  # ...with neither
+    pushed: bool = False  # the push rule applied: one foot stayed on while the other pushed
 
     @property
     def on_board_frac(self) -> float:
@@ -102,13 +120,26 @@ def plausible(b: Detection, h: float) -> bool:
     return b.width <= MAX_BOARD_LEN * h
 
 
-def feet_on(b: Detection, left: tuple[float, float], right: tuple[float, float], h: float) -> bool:
-    """Both feet over the board's x-span and down on its deck. Also used by
-    measure.py (6c-3) for roll-away and the catch."""
+def foot_on(b: Detection, f: tuple[float, float], h: float) -> bool:
+    """One foot over the board's x-span and down on its deck.
+
+    The deck is anywhere from the box's top edge to its bottom, give or take
+    FOOT_TO_DECK at the top (6d-2). Side-on the box is thin, so that's the
+    old "near the top edge" test. Filmed from behind or above, the box is
+    tall (the board's length runs away from the camera) and the nearer foot
+    stands well below its top edge: the pyramid ollie's back foot was 0.16
+    skater heights below it, which made a ridden-away landing read as a
+    bail."""
     m = FOOT_MARGIN * h
-    over = all(b.x1 - m <= f[0] <= b.x2 + m for f in (left, right))
-    on_deck = all(abs(f[1] - b.y1) <= FOOT_TO_DECK * h for f in (left, right))
+    over = b.x1 - m <= f[0] <= b.x2 + m
+    on_deck = b.y1 - FOOT_TO_DECK * h <= f[1] <= max(b.y2, b.y1 + FOOT_TO_DECK * h)
     return over and on_deck
+
+
+def feet_on(b: Detection, left: tuple[float, float], right: tuple[float, float], h: float) -> bool:
+    """Both feet on the board (foot_on). Also used by measure.py (6c-3) for
+    roll-away and the catch."""
+    return foot_on(b, left, h) and foot_on(b, right, h)
 
 
 def check_landing(obs: TrickObservation, clip_end_ms: float) -> LandingCheck:
@@ -124,6 +155,7 @@ def check_landing(obs: TrickObservation, clip_end_ms: float) -> LandingCheck:
     c = LandingCheck(Verdict.UNCLEAR, NO_LANDING, td)
 
     stances, offsets = [], []
+    lone_feet: set[str] = set()  # which foot was the one on, in one-foot frames
     for row, t in enumerate(obs.pose.t_ms):
         if not lo <= t <= hi:
             continue
@@ -142,8 +174,14 @@ def check_landing(obs: TrickObservation, clip_end_ms: float) -> LandingCheck:
         if not (left and right):
             continue
         c.judged += 1
-        c.rows[row] = feet_on(b, left, right, h)
+        l_on, r_on = foot_on(b, left, h), foot_on(b, right, h)
+        c.rows[row] = l_on and r_on
         c.on_board += c.rows[row]
+        if l_on != r_on:
+            c.one_foot += 1
+            lone_feet.add("left" if l_on else "right")
+        elif not l_on:
+            c.neither += 1
         offsets.append((b.center[0] - (left[0] + right[0]) / 2) / h)
 
     if stances:
@@ -151,12 +189,23 @@ def check_landing(obs: TrickObservation, clip_end_ms: float) -> LandingCheck:
     if offsets:
         c.board_offset_range = float(np.ptp(offsets))
 
-    if c.stance is not None and c.stance > MAX_STANCE:
+    # The push rule (PUSH_MAX_NEITHER): one foot stayed on while the other
+    # pushed, so those frames count as on the board, and the pushing foot's
+    # wide stance isn't a bail.
+    c.pushed = (
+        c.one_foot > 0
+        and c.on_board > 0
+        and len(lone_feet) == 1
+        and c.neither <= PUSH_MAX_NEITHER * c.judged
+    )
+    on_frac = (c.on_board + c.one_foot) / c.judged if c.pushed else c.on_board_frac
+
+    if not c.pushed and c.stance is not None and c.stance > MAX_STANCE:
         c.verdict, c.unclear_reason = Verdict.BAILED, None
     elif c.judged_frac < MIN_JUDGED_FRAC:
         pass  # UNCLEAR: too little evidence either way
-    elif c.on_board_frac >= LANDED_FRAC:
+    elif on_frac >= LANDED_FRAC:
         c.verdict, c.unclear_reason = Verdict.LANDED, None
-    elif c.on_board_frac <= BAILED_FRAC:
+    elif on_frac <= BAILED_FRAC:
         c.verdict, c.unclear_reason = Verdict.BAILED, None
     return c

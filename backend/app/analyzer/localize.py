@@ -70,6 +70,11 @@ MIN_AIRTIME_MS = 130
 # check. Terrain changes (ledges, drops, stair sets) aren't modelled yet.
 MAX_AIRTIME_MS = 1500
 MIN_POP_SEPARATION_S = 0.6
+# A pop needs this much footage before it (6d-2). One in the first 0.3s, or
+# airborne from the first sample, is the clip starting mid-action: the
+# nose-grind clip opens with the board thrown down and hopped on, which
+# scored as a landed trick. There's no take-off to judge, so it's skipped.
+MIN_LEAD_MS = 300
 
 # --- Window -----------------------------------------------------------------
 WINDOW_BEFORE_MS = 400
@@ -221,6 +226,8 @@ def find_pops(sig: Signals, fps: float = SAMPLE_FPS) -> list[TrickWindow]:
         airtime = land_ms - pop_ms
         if not MIN_AIRTIME_MS <= airtime <= MAX_AIRTIME_MS:
             continue
+        if a == 0 or pop_ms < MIN_LEAD_MS:
+            continue
         board_seg = sig.elev_board[a : b + 1]
         if not np.any(np.nan_to_num(board_seg, nan=-1.0) >= MIN_BOARD_RISE):
             continue
@@ -234,7 +241,31 @@ def find_pops(sig: Signals, fps: float = SAMPLE_FPS) -> list[TrickWindow]:
                 peak_elevation=float(air[p]),
             )
         )
-    return windows
+    return merge_overlapping(windows)
+
+
+def merge_overlapping(windows: list[TrickWindow]) -> list[TrickWindow]:
+    """One window per airborne stretch (6d-2). Two peaks in one stretch (a
+    grind's pop onto the ledge and its drop off the end, the nose-grind
+    clip) each found the same landing, and the trick was scored twice.
+    Merged: the earliest pop, the latest landing, the higher peak's apex."""
+    out: list[TrickWindow] = []
+    for w in sorted(windows, key=lambda w: w.pop_ms):
+        prev = out[-1] if out else None
+        if prev is None or w.pop_ms >= prev.land_ms:
+            out.append(w)
+            continue
+        top = w if w.peak_elevation > prev.peak_elevation else prev
+        pop_ms, land_ms = min(prev.pop_ms, w.pop_ms), max(prev.land_ms, w.land_ms)
+        out[-1] = TrickWindow(
+            pop_ms=pop_ms,
+            apex_ms=top.apex_ms,
+            land_ms=land_ms,
+            start_ms=min(prev.start_ms, w.start_ms),
+            end_ms=max(prev.end_ms, w.end_ms),
+            peak_elevation=top.peak_elevation,
+        )
+    return out
 
 
 # --- The model-driven part ------------------------------------------------------

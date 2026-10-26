@@ -311,3 +311,13 @@ def test_the_breakdown_averages_the_landed_tricks(fake_stages):
     assert res.breakdown["catch"] is None  # no catch on either
     present = [v for v in res.breakdown.values() if v is not None]
     assert res.steeze_score == pytest.approx(sum(present) / len(present), abs=0.06)
+
+
+def test_no_catch_when_the_airtime_includes_an_obstacle():
+    """A grind or a ramp reads as a long "airtime" whose stance widens on the
+    board, not in a flick (6d-2): catch is n/a, not scored."""
+    o = _obs()
+    _set_feet(o.pose.image, _rows(o, TAKEOFF + 50, TAKEOFF + 250), (AT_BOLTS[0], 400.0))
+    assert _m(o)["catch_ms"] is not None
+    o.touchdown_ms = TAKEOFF + measure.MAX_CATCH_AIRTIME_MS + 100
+    assert _m(o)["catch_ms"] is None

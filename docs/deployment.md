@@ -64,7 +64,7 @@ run it top to bottom. It covers:
 - create, upload a real clip, complete, and poll, with tests checking that
   ffprobe replaced the fake duration/fps and that `video_url`/`thumb_url`
   are CDN URLs. Since 6c-3 it also checks that the real analyzer scored it
-  (`steeze-v0-uncalibrated`, `analysis.tricks` filled) and, for an
+  (a `steeze-` model version, `analysis.tricks` filled) and, for an
   analyzed clip, the six-subscore breakdown and its mean. An
   `unanalyzable` result with a gate reason (the bail: "no landed trick
   detected") still passes, as long as the media checks do;

@@ -52,9 +52,10 @@ def test_missing_measurements_are_na_not_zero():
     assert C.subscores({}) == dict.fromkeys(C.SUBSCORES)
 
 
-def test_a_foot_down_caps_roll_away():
-    m = {"rollaway_on_board_frac": 1.0, "foot_down": True}
-    assert C.subscores(m)["roll_away"] == C.FOOT_DOWN_CAP
+def test_a_foot_down_or_an_early_push_caps_roll_away():
+    for flag in ("foot_down", "early_push"):
+        m = {"rollaway_on_board_frac": 1.0, flag: True}
+        assert C.subscores(m)["roll_away"] == C.FOOT_DOWN_CAP
 
 
 def test_the_sketchy_kickflip_lands_mid_to_high_not_near_100():

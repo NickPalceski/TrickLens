@@ -218,7 +218,7 @@ def training_points(pairs: Iterable[Pair], subscore: str, measurement: str):
         y = p.judged.scores.get(subscore)
         if m.get(measurement) is None or y is None:
             continue
-        if subscore == "roll_away" and m.get("foot_down"):
+        if subscore == "roll_away" and (m.get("foot_down") or m.get("early_push")):
             continue  # capped at FOOT_DOWN_CAP whatever the ramp says
         pts.append((float(m[measurement]), y))
     return pts

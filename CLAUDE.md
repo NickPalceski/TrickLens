@@ -366,8 +366,10 @@ live (advisory), verified in prod after the MediaPipe tcmalloc fix (see
 gotchas). 6c-2 (landed check + confidence gate) is done and live
 (advisory), verified in prod. 6c-3 (measurements, calibration, real
 scores, stub off, stuck-clip sweep) is live and verified in prod. 6d-1
-(calibration tooling) is built and verified locally; 6d-2 waits for the
-user's hand-judged clips.**
+(calibration tooling) and 6d-2 (the MVP pass over the user's seven real
+clips: verdict fixes, the push rule) are done, so step 6 is done for the
+MVP. Fitting the constants to hand-judged scores (`steeze-v1`) is a later,
+non-blocking improvement. Next: step 7.**
 Running locally:
 
 ```bash
@@ -778,6 +780,39 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
     (docs/components/infrastructure.md, SQS timings), and the user is
     requesting an increase to 1000.
 
+- **Step 6d-2 (the MVP pass over real clips)** done (2026-10-26), on
+  `main` (the shared checkout is on the `frontend` branch, where another
+  agent works; 6d-2 was built in a separate `main` worktree):
+  - The user's notes for 7 clips are in `test_video_details.md` next to
+    them (they found the TOML layout awkward); `judgments.toml` is kept in
+    step with those notes by hand, outcomes and rough pop times only. No
+    0-100 scores, so nothing was fitted.
+  - New clips: ollie gap (30fps), ollie over a pyramid from behind
+    (30fps), boardslide then a failed half cab (30fps, 10s), 50-50 and a
+    failed nose grind on a ledge (60fps). Mostly ledge and ramp tricks,
+    which the analyzer wasn't built for.
+  - Found and fixed: the nose grind (a fail) *scored*, its opening hop-on
+    counted as a landed trick and the grind counted twice → pops in a
+    clip's first 0.3s are skipped (`localize.MIN_LEAD_MS`), overlapping
+    windows merge (`merge_overlapping`); the pyramid ollie (landed) read
+    as a bail because from behind the near foot stands low in a tall board
+    box → `landed.foot_on` accepts feet anywhere within the box's height;
+    grinds, the slide and the pyramid scored a catch → catch n/a over
+    950ms of "airtime" (`measure.MAX_CATCH_AIRTIME_MS`); the **push rule**
+    built (`landed.PUSH_MAX_NEITHER`: one-foot frames all the same foot,
+    ≤15% neither → landed, `pushed`, roll-away capped at 40).
+    `MODEL_VERSION` → `steeze-v0.2-uncalibrated`.
+  - Result, `make calibrate`: verdicts agree 6/7. Steeze: ollie gap 79.3,
+    kickflip 77.5, pyramid 74.3, boardslide 68.2, 50-50 64.2, nose grind
+    50.8 (lowest). Known limits recorded (docs/components/analyzer.md,
+    Known limits): trick intent (the nose grind lost the grind, came down
+    on the board and stepped off a foot at a time, which reads as a landed
+    push), ramps/banks distort timing (the pyramid's landing reads ~0.6s
+    late; the failed half cab rolling down a bank isn't found), and the
+    push rule has never seen a real early push.
+  - Tests: API image 88 pass (23 skip), worker image 104/104 (8 new
+    synthetic, 5 new real-clip); ruff clean.
+
 - **Docs restructured (2026-10-07).** The README is trimmed to what the
   app is, the sneak peek, a small "how it works" diagram, status, stack and
   quick-start/deploy pointers. Depth moved into `docs/`:
@@ -811,7 +846,7 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
      FK, migration `0006`) *(verified)*
    - 4d ✅ Discover (precomputed rankings + team score history) *(verified)*
 5. ✅ Terraform + GitHub Actions → deploy to AWS *(live, verified)*
-6. 🔶 Replace the stub with the real steeze analyzer — sub-phases:
+6. ✅ Replace the stub with the real steeze analyzer *(done for the MVP)* — sub-phases:
    - 6a ✅ worker image split + ffprobe/transcode/thumbnail + `processed_key`
      (migration `0008`) *(live, verified in prod)*
    - 6b ✅ YOLOX-Tiny + zoomed board pass, IoU tracker, local ground estimate,
@@ -823,7 +858,7 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
      - a follow-cam bail.
 
      A multi-trick line is still wanted.
-   - 6c 🔶 MediaPipe pose, six subscores, confidence gate, averaging landed
+   - 6c ✅ MediaPipe pose, six subscores, confidence gate, averaging landed
      tricks, `steeze-v0-uncalibrated`, raw per-trick measurements stored.
      Milestones:
      - 6c-1 ✅ Stage B: 60fps windowed decode, pose ("full" model), board
@@ -837,8 +872,8 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
        its receives *before* the claim lands in the DLQ and leaves its clip
        `queued` forever, which the last-receive give-up doesn't cover
        *(live, verified in prod)*
-   - 6d 🔶 calibration against hand-judged clips → `steeze-v1`, split in
-     two (decided with the user 2026-10-17):
+   - 6d ✅ calibration against real clips, split in two (decided with the
+     user 2026-10-17):
      - 6d-1 ✅ tooling, no clips needed: `judgments.toml` (all six
        subscores per landed trick; the clip score is their average, not
        entered), `make calibrate` (`app/analyzer/calibrate.py`: cached
@@ -846,16 +881,13 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
        error, proposed constants), `app/rescore.py` + the manual
        `.github/workflows/rescore.yml` job (dry run unless *apply*)
        *(built, verified locally)*
-     - 6d-2 ⬜ with the user's clips: verdicts first, the push rule, fit,
-       `steeze-v1`, prod rescore.
-     The **push rule** (asked for 2026-10-15): a foot put
-     down to push too soon after landing should lower roll-away, not turn
-     a landed trick into "no landed trick detected" or a bail, which is
-     what a push inside the landed check's 0.1–0.6s span does today. Key
-     on the *same* foot staying on the board with the board riding along
-     (the bail had neither foot on in 9/16 frames, but read "both on" for
-     its first 100ms). Needs a real early-push clip to build and test
-     against; see docs/components/analyzer.md, Known limits.
+     - 6d-2 ✅ the MVP pass over the user's 7 clips: verdict fixes, the
+       **push rule** (asked for 2026-10-15: a foot down to push too soon
+       after landing costs roll-away, not the landing),
+       `steeze-v0.2-uncalibrated` *(see Current state)*
+     - later, not blocking: fit the constants to hand-judged scores →
+       `steeze-v1`, prod rescore (the Rescore job); check the push rule
+       against a real early-push clip.
 7. ⬜ Weekly analysis quota + paid subscriptions (Free 5/wk, Plus $3.99
    25/wk, Pro $7.99 75/wk; Stripe), profile customization later — planned
    in `docs/subscriptions.md` (2026-10-15). Its "before step 7" spend

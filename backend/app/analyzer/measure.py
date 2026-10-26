@@ -27,7 +27,9 @@ Per subscore, the measurements, and when they're n/a (None):
   per torso length. n/a with too little pose in the air.
 - **Catch**: `catch_ms` / `catch_frac`, how long before touch-down both
   feet were back on the board, skipping partial board boxes
-  (PARTIAL_BOARD). n/a when the feet never left the board (an ollie).
+  (PARTIAL_BOARD). n/a when the feet never left the board (an ollie), or
+  the "airtime" is too long to be all air (MAX_CATCH_AIRTIME_MS: a grind,
+  slide or ramp).
 
 Measured on the tripod kickflip before choosing these (docs/components/
 analyzer.md, Subscores, as built (6c-3)). Board-box geometry is only
@@ -79,6 +81,11 @@ SEPARATION_STANCE = 0.12
 # board instead of reading as both feet off. A kickflip turns the board
 # about its long axis, so its length doesn't really shrink like that.
 PARTIAL_BOARD = 0.6
+# Longer "airtime" than this isn't all air (6d-2): it includes time on an
+# obstacle or a ramp, where the stance widens on the board, not in a flick.
+# Grinds, a boardslide and an ollie over a pyramid read 1033-1567ms and
+# scored a catch of 62-100; the kickflip is 400ms. Catch is n/a there.
+MAX_CATCH_AIRTIME_MS = 950
 
 MIN_AIR_POSE_FRAMES = 3
 
@@ -246,7 +253,7 @@ def _catch(obs: TrickObservation, t0: float, t1: float) -> dict:
         "air_stance_spread": _r(spread),
         "partial_boards": len(samples) - len(whole),
     }
-    if not separated:
+    if not separated or t1 - t0 > MAX_CATCH_AIRTIME_MS:
         return out | {"catch_ms": None, "catch_frac": None}
     # The last run of on-board samples before touch-down; caught at
     # touch-down itself if the last judged sample was still off.
@@ -261,11 +268,15 @@ def _catch(obs: TrickObservation, t0: float, t1: float) -> dict:
     }
 
 
-def measure(obs: TrickObservation, touchdown_ms: float, clip_end_ms: float) -> dict:
+def measure(
+    obs: TrickObservation, touchdown_ms: float, clip_end_ms: float, early_push: bool = False
+) -> dict:
     """Every raw measurement for one trick, JSON-ready (floats, bools, None).
-    `touchdown_ms` is the landed check's (Stage B's, else Stage A's)."""
+    `touchdown_ms` is the landed check's (Stage B's, else Stage A's), and
+    `early_push` its push rule (landed.PUSH_MAX_NEITHER): a foot put down to
+    push inside the landed span, which caps roll-away like a foot down."""
     t0, t1 = air_span(obs)
-    return (
+    return {"early_push": early_push} | (
         _pop(obs, t0, t1)
         | _stability(obs, touchdown_ms)
         | _rollaway(obs, touchdown_ms, clip_end_ms)

@@ -182,3 +182,33 @@ def test_calibrate_runs_on_the_real_clips(tmp_path, capsys):
     assert "agree on landed vs not: 2/2" in out.out
     assert calibrate.main(["--clips", str(tmp_path)]) == 0
     assert capsys.readouterr().err.count("from cache") == 2
+
+
+# --- the 6d-2 clips: ledges, a ramp, 30fps, a long line ---------------------------
+# The user's notes on each are in test_video_details.md next to the clips.
+
+NEW_CLIPS = [
+    # (clip, the pop it should find (s), outcome, steeze range)
+    ("30fps_follow_side_cam_ollie_gap_landed_with_runup.mov", 3.1, "landed", (70, 90)),
+    ("30fps_follow_cam_ollie_success.mov", 1.3, "landed", (60, 85)),  # from behind, a pyramid
+    ("30fps_successful_boardslide_to_half_cab_fail.MOV", 0.7, "landed", (55, 80)),
+    ("60fps_follow_side_cam_5050_ledge_success.mov", 2.3, "landed", (55, 75)),
+    # The user calls it a fail: he lost the grind, came down on the board and
+    # stepped off. That reads as a landing with a push (known limit: the
+    # analyzer can't see trick intent), so it scores lowest via roll-away.
+    ("60fps_follow_side_cam_nose_grind_ledge_fail.mov", 3.57, "landed", (40, 60)),
+]
+
+
+@pytest.mark.parametrize("name,pop_s,outcome,steeze", NEW_CLIPS)
+def test_new_clips(tmp_path, name, pop_s, outcome, steeze):
+    res = _pipeline(tmp_path, name)
+    tricks = res.details()["tricks"]
+    [t] = [t for t in tricks if abs(t["pop_ms"] / 1000 - pop_s) <= 0.3]
+    assert t["outcome"] == outcome
+    assert tricks[0]["pop_ms"] >= 300  # nothing found in the clip's opening moment
+    assert steeze[0] <= res.steeze_score <= steeze[1]
+    if "nose_grind" in name:
+        assert t["landing"]["pushed"] and t["subscores"]["roll_away"] <= 40
+    if "5050" in name or "boardslide" in name or "pyramid" in name or "ollie_success" in name:
+        assert t["subscores"]["catch"] is None  # no flip: n/a

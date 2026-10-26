@@ -17,8 +17,10 @@ Setup and day-to-day commands are in the
 tiers are in [subscriptions.md](subscriptions.md).
 
 **Current state:** steps 1–5 are done and live in AWS. Step 6 (the real
-analyzer) is in progress: 6a through 6c-3 are live, so clips get real
-(uncalibrated) scores. 6d, calibration, is next.
+analyzer) is done for the MVP: 6a through 6d-2 are in, so clips get real
+scores from an analyzer checked on seven real clips. The scoring constants
+stay uncalibrated guesses until hand-judged scores exist (`steeze-v1`,
+not blocking).
 See the [build order](#build-order).
 
 ---
@@ -416,16 +418,17 @@ concurrency, so a spike queues instead of scaling the bill (see
 | 3 | Upload → S3 → SQS → worker with a **stubbed** analyzer | **done** |
 | 4 | Social app — feed, likes, comments, teams, discover | **done** |
 | 5 | Terraform + GitHub Actions → deploy to AWS | **done, live** |
-| 6 | Replace the stub with the real steeze analyzer | **in progress** |
+| 6 | Replace the stub with the real steeze analyzer | **done (MVP)** |
 | 6a | Worker image split, ffprobe verify + 720p transcode + thumbnail, `processed_key` (migration `0008`), worker S3 IAM + Lambda sizing, AGPL licence guard | **done, live** |
 | 6b | YOLOX-Tiny + zoomed board pass, IoU tracker, local ground estimate, Stage A pop localization, apex thumbnail, `make analyze-clip` debug video | **done, live** |
 | 6c | MediaPipe pose, six subscores, confidence gate, averaging landed tricks, `steeze-v0-uncalibrated` | **in progress** |
 | 6c-1 | Stage B: windowed 60fps decode, pose, board around the trick, refined take-off/touch-down, libEGL + pose model in the image, per-trick debug video | **live (advisory), verified in prod** |
 | 6c-2 | Landed check + confidence gate, advisory; longer Stage B window; media timings | **live (advisory), verified in prod** |
 | 6c-3 | Measurements, calibration, averaging, migration `0009`, API `analysis.tricks`, stub off, stuck-clip sweep | **live, verified in prod** |
-| 6d | Calibration against real hand-judged clips, `steeze-v1`, recalculate stored analyses | in progress |
+| 6d | Calibration against real clips | **done (MVP)** |
 | 6d-1 | The tooling: `judgments.toml`, `make calibrate` (fit + report), `app/rescore.py` + the manual `rescore.yml` job | **built, verified locally** |
-| 6d-2 | With the user's clips: verdicts checked, the push rule (an early push costs roll-away instead of failing the landing), fitted constants, `steeze-v1`, prod rescore | waits for clips |
+| 6d-2 | With the user's seven clips (ledges, a ramp, 30fps): verdicts checked and fixed, the push rule (an early push costs roll-away instead of failing the landing), `steeze-v0.2-uncalibrated` | **done (MVP)** |
+| later | Fit the constants to hand-judged scores → `steeze-v1`, prod rescore. Not blocking: waits for judged clips | |
 | 7 | Weekly analysis quota + paid subscriptions (Stripe), profile customization later — [subscriptions.md](subscriptions.md) | planned |
 
 Step 3 deliberately stubs the analyzer so that a complete, deployed, working

@@ -9,8 +9,12 @@ up, the media step (verify, transcode, thumbnail), and the steeze analyzer
 
 **Status:** media (6a), Stage A (6b), Stage B (6c-1) and the landed
 check and confidence gate (6c-2) are live. 6c-3 (measurements,
-calibration, scoring, the stub off) is live and verified in prod. The gate decides the clip's status and calibration.py
-its score; the stub only runs where `ANALYZER=stub` (the API image and CI).
+calibration, scoring, the stub off) is live and verified in prod. 6d-2,
+the MVP pass over the user's seven real clips, fixed what they showed
+(`steeze-v0.2-uncalibrated`, see [Calibration (6d)](#calibration-6d)); the
+constants are still guesses until hand-judged scores exist. The gate
+decides the clip's status and calibration.py its score; the stub only runs
+where `ANALYZER=stub` (the API image and CI).
 See the [build order](../ARCHITECTURE.md#build-order).
 
 ## What the worker does with one clip
@@ -368,6 +372,13 @@ box, i.e. the lowest foot), the **board's centre**, and the skater's
   The end was max(pop + 0.8s, landing + 0.4s) until 6c-2, which stopped
   short of the landed check's span on both real clips, then landing +
   0.8s until 6c-3 extended it for roll-away (0.6–1.2s after touch-down).
+- **6d-2:** a pop in a clip's first 0.3s, or airborne from its first
+  sample, is skipped (`MIN_LEAD_MS`): the clip starts mid-action, with no
+  take-off to judge. The nose-grind clip opens with the board thrown down
+  and hopped on, which had scored as a landed trick. And windows whose
+  airborne spans overlap merge into one (`merge_overlapping`): a grind's
+  two peaks (onto the ledge, off its end) had found the same landing and
+  scored the trick twice.
 
 **On the real clips**, also checked by eye in the debug video:
 
@@ -440,7 +451,7 @@ be on a board.
 
 | Verdict | When |
 |---|---|
-| bailed | stance > 0.45, or on the board in ≤ 30% of the judged frames |
+| bailed | stance > 0.45, or on the board in ≤ 30% of the judged frames (with the push rule, below: one-foot frames count as on, and the stance test is skipped) |
 | landed | on the board in ≥ 70% of the judged frames |
 | unclear | fewer than half the sampled frames could be judged, or in between. Reason "no landed trick detected" |
 | unclear | less than 0.4s of footage after touch-down. Reason "clip ends too soon after the landing" |
@@ -469,9 +480,27 @@ feet, in skater heights) but not used in the verdict. It does separate
 these two clips (0.05 vs 0.27), but two clips can't tell whether it holds
 up against camera motion, so it waits for more footage.
 
-**Known risk:** both clips are side-on. Filmed from the front or behind,
-the board looks short and the feet line up, which moves both the board
-span and the stance. A head-on clip is the next one to test against.
+**From behind (6d-2):** a foot counts as on the deck anywhere from the
+box's top edge (less 0.15 skater heights) to its bottom. Side-on the box
+is thin, so that's the original test. Filmed from behind or above, the box
+is tall, because the board's length runs away from the camera, and the
+nearer foot stands well below its top edge: the pyramid ollie's back foot
+was 0.16 skater heights below it, and a ridden-away landing read as a
+bail. A true head-on clip is still untested.
+
+**The push rule (6d-2, asked for by the user).** Putting a foot down to
+push too soon after landing should cost roll-away, not the landing. In a
+push one foot stays on the board, always the same one, so the judged
+frames are "both feet on" or "one foot on". A bail mostly has neither: the
+follow-cam bail had both on in 4 of 16 judged frames, one in 3, neither in
+9, and its first 100ms read "both on", so "both first, then one" alone
+isn't enough. So when the one-foot frames are all the same foot and at
+most 15% of judged frames have neither foot on (`PUSH_MAX_NEITHER`), the
+one-foot frames count as on the board, the pushing foot's wide stance
+isn't a bail, and the trick is marked `pushed`, which caps roll-away at
+`FOOT_DOWN_CAP` (40). There was no real early-push clip to build it on:
+it's tested on synthetic feet, and on the real nose-grind clip, where it
+applies (see Known limits).
 
 ### The confidence gate, as built (6c-2)
 
@@ -595,7 +624,7 @@ are stored for 6d anyway.
 | Roll-away | over 0.6–1.2s after touch-down: `rollaway_on_board_frac`, and `foot_down` (two judged samples in a row off the board, or a too-wide stance), which caps it at 40 | 0.5 → 20, 1.0 → 100 | under 0.3s of footage, or < 3 judged samples |
 | Stomp | over the first 0.2s: each foot's position along the board, and `stomp_error`, the worse foot's distance from its bolt line (0.28 / 0.72 of the board) | 0 → 100, 0.25 board lengths → 20 | board seen end-on (shorter than 0.3 skater heights) |
 | Compactness | in the air: `leg_ratio` (hip to ankle) and `arm_ratio` (hips to the farther wrist) | 1.0 → 100, 1.6 → 30; 1.2 → 100, 2.2 → 40 | too little pose in the air |
-| Catch | `catch_frac`: how much of the airtime both feet were back on the board before touch-down, skipping partial board boxes | 0 → 30, 0.7 → 100 | the feet never left the board (an ollie) |
+| Catch | `catch_frac`: how much of the airtime both feet were back on the board before touch-down, skipping partial board boxes | 0 → 30, 0.7 → 100 | the feet never left the board (an ollie), or the "airtime" is over 950ms, so it includes time on an obstacle or ramp (6d-2) |
 
 Choices made by measuring the clips first (a frame-by-frame dump of every
 candidate signal):
@@ -644,7 +673,9 @@ roll-away, and no catch (the board flipped after landing, not in the air).
 [data-model.md](data-model.md)): per trick, its times, outcome, the
 landed check's counts, the measurements and the subscores. The API shows
 the per-trick outcome, times and subscores as `analysis.tricks`
-([api.md](api.md)). The model version is `steeze-v0-uncalibrated` until 6d.
+([api.md](api.md)). The model version was `steeze-v0-uncalibrated` until
+6d-2's verdict fixes made it `steeze-v0.2-uncalibrated`; `steeze-v1` is
+the first one fitted to hand-judged scores.
 
 ### Calibration (6d)
 
@@ -652,10 +683,31 @@ the per-trick outcome, times and subscores as `analysis.tricks`
 split in two, because the judgments need clips that only get filmed now
 that the analyzer is live:
 - **6d-1 (built):** the tooling below, which needs no new clips.
-- **6d-2 (waits for clips):** check the verdicts against the user's labels
-  and fix the landed check, build the push rule (see
-  [Known limits](#known-limits)), fit the constants, ship `steeze-v1` and
-  rescore.
+- **6d-2 (done for the MVP, 2026-10-26):** the verdicts checked against
+  the user's notes on seven real clips, and fixed; the push rule built.
+  No subscores were judged, so nothing was fitted: the constants stay the
+  6c-3 guesses, and `steeze-v1` waits for judged scores (from the user or
+  from users' clips later).
+
+**The 6d-2 clips** (the user's notes are in `test_video_details.md` next
+to them; `judgments.toml` is kept in step with those notes):
+
+| Clip | Notes | Analyzer, before → after 6d-2 |
+|---|---|---|
+| Tripod kickflip (60fps) | landed, sketchy | landed 77.5 → same |
+| Follow-cam bail (60fps) | bail | bailed → same |
+| Ollie gap, follow side-on (30fps) | landed ~3.5s | landed 79.3, plus a phantom trick for the run-up at 0s → run-up skipped |
+| Ollie over a pyramid, from behind (30fps) | landed ~2.0s | **bailed** (board seen from behind) → landed 74.3 |
+| Boardslide, then a failed half cab (30fps, 10s) | slide landed; half cab fails ~9.5s | landed 73.9 with a catch scored → 68.2, catch n/a; the half cab is still missed |
+| 50-50 on a ledge, follow side-on (60fps) | landed ~3.0s | landed 64.2 → same |
+| Nose grind on a ledge, follow side-on (60fps) | **fail** ~4.2s | **scored 57.2**: the hop-on at 0s as a landed trick, the grind twice → one trick, landed with a push, 50.8 (the lowest) |
+
+What changed, each found in these clips: pops in a clip's first 0.3s are
+skipped and overlapping windows merge ([Stage A](#stage-a-as-built-6b));
+feet count as on the deck anywhere within the board box's height, and the
+push rule ([the landed check](#the-landed-check-as-built-6c-2)); catch is
+n/a over 950ms of "airtime" ([Subscores](#subscores-as-built-6c-3)). The
+nose grind is a known limit, below.
 
 **Judging.** The user records each clip in
 `backend/tests/fixtures/clips/judgments.toml`, gitignored like the clips:
@@ -710,7 +762,7 @@ report says why, with fewer than 5 points, a correlation under 0.3
 ("weak"), or a clear trend the wrong way ("flips direction", e.g. higher
 pop scoring lower, which would mean the measurement is broken).
 Foot-down tricks stay out of the roll-away fit: they score
-`FOOT_DOWN_CAP` whatever the ramp says.
+`FOOT_DOWN_CAP` whatever the ramp says, and so do pushes (6d-2).
 
 **Shipping it:** paste the reviewed constants, bump `MODEL_VERSION` to
 `steeze-v1`, deploy, then rescore.
@@ -772,30 +824,32 @@ failure.
   lands lower than they took off. `MAX_AIRTIME_MS` is only a backstop.
 - **A shaky handheld clip** may need real camera-shake cancelling. Neither
   test clip has it.
-- **Every subscore ramp is anchored on one landed clip** (6c-3). The
-  ollie case for catch (n/a when the feet never leave the board), a
-  foot-down landing and a head-on stomp are all untested against real
-  footage; the user's next clips (head-on landing, multi-trick line,
-  foot-down) come after the analyzer ships.
+- **The subscore ramps are still guesses** (6c-3), anchored on one
+  landed clip; 6d-2 had seven clips but no judged scores to fit. A true
+  head-on clip, a real early push, a foot-down landing and a multi-trick
+  line on flat ground are still untested.
+- **Trick intent isn't visible.** The analyzer judges whether the skater
+  came down on the board and rode; it can't know what trick was meant.
+  The nose grind the user calls a fail lost the grind halfway, came down
+  on the board, and stepped off a foot at a time. That reads as a
+  landing with a push, so it's scored, lowest of the set (50.8, roll-away
+  20). Tricks are named after analysis, so the user can still leave it
+  unposted.
+- **Ramps and banks distort the timing.** On the pyramid the ollie's
+  landing reads as ~2.6s (reaching flat ground) instead of ~2.0s, and
+  its pop and compactness include the ramp. Rolling down a bank toward the
+  camera hides a pop: the failed half cab at ~9.3s isn't found at all. A
+  missed *failed* trick changes no score.
+- **A trick near the clip's end** shows up as "clip ends too soon after
+  the landing" (stepping off at the end, rolling off after a gap). It
+  never affects the score.
 - **Roll-away doesn't measure speed** (see
   [Subscores, as built](#subscores-as-built-6c-3)), and almost any landed
   trick rides away on the board, so it separates little until a
   foot-down clip exists.
-- **An early push can fail a landed trick.** Putting a foot down to push
-  too soon after landing (to catch balance or keep speed) should cost
-  roll-away, and from 0.6s after touch-down it does: a foot down caps
-  roll-away at 40. But a push *inside* the landed check's span (0.1–0.6s)
-  takes one foot off the board there. On the board under 70% of the
-  frames makes the trick unclear ("no landed trick detected"), and a
-  pushing foot off for over half the span pushes the median stance past
-  0.45, which reads as a bail. Measured on the two clips, per judged
-  frame in that span: the kickflip had both feet on in 19/19; the bail had
-  both on in 4, one in 3, neither in 9. The bail's first 100ms read as
-  both feet on, so "landed on both feet first" alone can't tell a push
-  from a bail. The planned rule: a push keeps the *same* foot on the board
-  throughout, with the board riding along, and almost never has neither
-  foot on. It waits for a real early-push clip to build and test it
-  against (decided with the user, 2026-10-15).
+- **The push rule has never seen a real early push** (6d-2): it was built
+  on synthetic feet and the nose grind's step-off. A real push clip should
+  be the first thing to check it against.
 
 ### The flywheel
 

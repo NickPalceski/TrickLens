@@ -123,7 +123,7 @@ poster frame's CDN URL.
 
 ```json
 {
-  "model_version": "steeze-v0-uncalibrated",
+  "model_version": "steeze-v0.2-uncalibrated",
   "confidence": "0.92",
   "steeze_breakdown": {"pop": 77.0, "landing_stability": 81.2, "roll_away": 100.0,
                        "stomp": 61.1, "compactness": 65.8, "catch": 80.0},

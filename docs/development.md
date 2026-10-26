@@ -266,7 +266,7 @@ curl -X PATCH "localhost:8000/clips/$clip_id/score-inclusion" \
 What the worker does with the clip, and what `video_url` / `thumb_url`
 point at, is in the [analyzer doc](components/analyzer.md). Since 6c-3 the
 `worker` container scores with the real analyzer (`model_version:
-steeze-v0-uncalibrated`), so a clip with no skater or no landed trick comes
+steeze-v0.2-uncalibrated`), so a clip with no skater or no landed trick comes
 back `unanalyzable` with the gate's reason, and `analysis.tricks` says what
 happened to each trick. Only `make test` (API image) still uses the stub,
 which fails ~10% of clips on purpose (`model_version: stub-v1`).

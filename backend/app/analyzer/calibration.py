@@ -11,7 +11,7 @@ when). A clip's breakdown averages each subscore over its *landed* tricks,
 skipping the ones where it's n/a, and its steeze score is the mean of the
 breakdown's non-null subscores.
 
-**Every constant is a guess** (hence `steeze-v0-uncalibrated`), anchored
+**Every constant is a guess** (hence `-uncalibrated`), anchored
 on one landed clip: the tripod kickflip, which its skater calls sketchy,
 so it should land mid-range rather than near 100. See
 docs/components/analyzer.md, Subscores, as built (6c-3). 6d tunes these
@@ -21,7 +21,10 @@ constants with `make calibrate` (calibrate.py) against hand-judged clips.
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-MODEL_VERSION = "steeze-v0-uncalibrated"
+# v0.2 (6d-2): the MVP's verdict fixes (boards from behind, the push rule,
+# no pops at a clip's start, merged windows, no catch on obstacles). Still
+# uncalibrated: v1 is the first set fitted to hand-judged scores.
+MODEL_VERSION = "steeze-v0.2-uncalibrated"
 
 SUBSCORES = ("pop", "landing_stability", "roll_away", "stomp", "compactness", "catch")
 
@@ -33,7 +36,9 @@ TORSO_SWAY_DEG = (2.0, 100.0, 15.0, 20.0)
 # (0.62). Its hips settled within 50ms and its torso barely swayed.
 ARM_FLAIL = (0.2, 100.0, 0.8, 20.0)  # p90-p10 of arm_ratio over 0.1-0.6s
 ROLLAWAY_ON_BOARD = (0.5, 20.0, 1.0, 100.0)
-FOOT_DOWN_CAP = 40.0  # roll-away can't score above this with a foot down
+# Roll-away can't score above this with a foot down after the landed span,
+# or a push inside it (landed.py's push rule: pushing too soon after landing).
+FOOT_DOWN_CAP = 40.0
 STOMP_ERROR = (0.0, 100.0, 0.25, 20.0)  # board lengths off the bolt line
 LEG_RATIO = (1.0, 100.0, 1.6, 30.0)  # hip-ankle per torso length: tucked → straight
 ARM_RATIO = (1.2, 100.0, 2.2, 40.0)  # farther wrist from the hips per torso length
@@ -86,7 +91,7 @@ def subscores(m: Mapping[str, Any], ramps: Mapping[str, Ramp] | None = None) -> 
             for key, ramp_name in comps
         ]
         out[name] = _mean(parts)
-    if out["roll_away"] is not None and m.get("foot_down"):
+    if out["roll_away"] is not None and (m.get("foot_down") or m.get("early_push")):
         out["roll_away"] = min(out["roll_away"], FOOT_DOWN_CAP)
     return {k: None if v is None else round(v, 1) for k, v in out.items()}
 

@@ -19,9 +19,11 @@ from app.analyzer.localize import (  # noqa: E402
     SAMPLE_FPS,
     WINDOW_AFTER_LAND_MS,
     Signals,
+    TrickWindow,
     compute_elevation,
     find_pops,
     mean_luma,
+    merge_overlapping,
 )
 
 H = 200.0  # skater height, px
@@ -159,3 +161,28 @@ def test_mean_luma_spans_black_to_white():
     green = img.copy()
     green[:, :, 1] = 255  # BGR: green carries most of the luma
     assert mean_luma(green) == pytest.approx(0.587 * 255, abs=0.5)
+
+
+# --- 6d-2: clips that start mid-action, grinds ---------------------------------
+
+
+def test_a_pop_at_the_very_start_of_the_clip_is_skipped():
+    """The nose-grind clip opens with the board thrown down and hopped on:
+    airborne from the first sample, no take-off to judge."""
+    t = _t(4)
+    feet = _bump(t, 100, 250, 0.3 * H) + _bump(t, 2500, 250, 0.3 * H)
+    board = _bump(t, 100, 250, 0.25 * H) + _bump(t, 2500, 250, 0.25 * H)
+    [w] = find_pops(_signals(t, feet, board))
+    assert 2400 <= w.apex_ms <= 2600
+
+
+def test_overlapping_windows_merge_into_one_trick():
+    """The nose grind's two peaks (onto the ledge, off its end) found the
+    same landing; it was scored twice. Values from that clip."""
+    onto = TrickWindow(3633, 3800, 4633, 3233, 5933, 0.288)
+    off = TrickWindow(3567, 4467, 4633, 3167, 5933, 0.169)
+    later = TrickWindow(5500, 5933, 6167, 5100, 6387, 0.494)
+    merged, kept = merge_overlapping([onto, off, later])
+    assert (merged.pop_ms, merged.apex_ms, merged.land_ms) == (3567, 3800, 4633)
+    assert merged.peak_elevation == 0.288 and merged.start_ms == 3167
+    assert kept == later

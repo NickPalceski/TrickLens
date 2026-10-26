@@ -86,6 +86,9 @@ class AnalysisResult:
                         "judged": c.judged,
                         "on_board": c.on_board,
                         "implausible_boards": c.implausible_boards,
+                        "one_foot": c.one_foot,
+                        "neither": c.neither,
+                        "pushed": c.pushed,
                         "stance": _num(c.stance),
                         "board_offset_range": _num(c.board_offset_range),
                     },
@@ -144,7 +147,9 @@ def analyze(processed: str, yolox_path: str, pose_path: str, label: str = "") ->
             continue
         landed = t.outcome == Verdict.LANDED
         try:
-            measurements[i] = measure.measure(t.obs, t.landing.touchdown_ms, info.duration_ms)
+            measurements[i] = measure.measure(
+                t.obs, t.landing.touchdown_ms, info.duration_ms, t.landing.pushed
+            )
             if landed:
                 subscores[i] = calibration.subscores(measurements[i])
         except Exception:

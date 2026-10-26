@@ -231,3 +231,51 @@ def test_a_crashed_trick_and_a_bail_fail_as_analysis_failed():
 def test_every_trick_crashing_fails_as_analysis_failed_even_in_the_dark():
     v = gate.assess_clip(_stage_a(1, brightness=10.0), [None], CLIP_END)
     assert v.failure_reason == ANALYSIS_FAILED and v.confidence == 0.0
+
+
+# --- 6d-2: boards seen from behind, the push rule --------------------------------
+
+
+def _foot_at(o, rows, points, x, y):
+    for p, (dx, dy) in zip(points, ((0, -10), (-6, -4), (8, 0)), strict=True):
+        o.pose.image[rows, p] = (x + dx, y + dy, 0.9)
+
+
+def _span_rows(o, lo, hi):
+    return np.flatnonzero((o.pose.t_ms >= TOUCHDOWN + lo) & (o.pose.t_ms <= TOUCHDOWN + hi))
+
+
+def test_a_board_seen_from_behind_still_has_the_feet_on_its_deck():
+    """From behind the box is tall and the nearer foot stands well below its
+    top edge (the pyramid ollie: 0.16 skater heights)."""
+    tall = Detection(SKATEBOARD, 0.8, 240, DECK_Y - 0.4 * H, 330, DECK_Y + 10)
+    c = landed.check_landing(_obs(board=tall), CLIP_END)
+    assert c.verdict == landed.Verdict.LANDED and c.on_board == c.judged
+
+
+def test_an_early_push_is_a_landing_not_a_bail():
+    """The back foot goes down to push from 0.3s, the front foot stays on."""
+    o = _obs()
+    _foot_at(o, _span_rows(o, 300, 600), landed.RIGHT, 260 + 0.9 * H, DECK_Y + 30)
+    c = landed.check_landing(o, CLIP_END)
+    assert c.pushed and c.one_foot > 0 and c.neither == 0
+    assert c.stance > landed.MAX_STANCE  # would have been a bail without the rule
+    assert c.verdict == landed.Verdict.LANDED
+
+
+def test_feet_taking_turns_off_the_board_is_not_a_push():
+    o = _obs()
+    _foot_at(o, _span_rows(o, 100, 350), landed.LEFT, 100, DECK_Y + 30)
+    _foot_at(o, _span_rows(o, 350, 600), landed.RIGHT, 500, DECK_Y + 30)
+    c = landed.check_landing(o, CLIP_END)
+    assert not c.pushed and c.verdict != landed.Verdict.LANDED
+
+
+def test_mostly_neither_foot_on_is_still_a_bail():
+    """The follow-cam bail's pattern: both on briefly, then neither."""
+    o = _obs()
+    _foot_at(o, _span_rows(o, 160, 600), landed.LEFT, 100, DECK_Y + 30)
+    _foot_at(o, _span_rows(o, 220, 600), landed.RIGHT, 500, DECK_Y + 30)
+    c = landed.check_landing(o, CLIP_END)
+    assert not c.pushed and c.neither > c.judged * landed.PUSH_MAX_NEITHER
+    assert c.verdict == landed.Verdict.BAILED

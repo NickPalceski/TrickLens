@@ -358,7 +358,7 @@
             "{{prod_clip_id}}"
           ]
         },
-        "description": "Re-send every few seconds until status is no longer queued/analyzing. The very first run can take ~10\u201330s longer than locally (Lambda cold-starts the big worker image). Once it's analyzed, the Test Results tab shows the 6a checks, and video_url/thumb_url are saved for steps 9\u201310. Since 6c-3 the score is the real analyzer's (model_version steeze-v0-uncalibrated): the kickflip should come back analyzed with a six-subscore breakdown, and the bail unanalyzable with \"no landed trick detected\". Both pass; the console shows each trick's outcome and subscores."
+        "description": "Re-send every few seconds until status is no longer queued/analyzing. The very first run can take ~10\u201330s longer than locally (Lambda cold-starts the big worker image). Once it's analyzed, the Test Results tab shows the 6a checks, and video_url/thumb_url are saved for steps 9\u201310. Since 6c-3 the score is the real analyzer's (model_version steeze-..., not stub-v1): the kickflip should come back analyzed with a six-subscore breakdown, and the bail unanalyzable with \"no landed trick detected\". Both pass; the console shows each trick's outcome and subscores."
       },
       "event": [
         {
@@ -379,7 +379,7 @@
               "const a = d.analysis || {};",
               "const reason = a.failure_reason;",
               "pm.test('6a media pipeline accepted the file', () => pm.expect(MEDIA_FAILURES).to.not.include(reason));",
-              "pm.test('scored by the real analyzer, not the stub', () => pm.expect(a.model_version).to.eql('steeze-v0-uncalibrated'));",
+              "pm.test('scored by the real analyzer, not the stub', () => pm.expect(a.model_version).to.match(/^steeze-/));",
               "pm.test('analysis.tricks lists what it found', () => pm.expect(a.tricks).to.be.an('array').that.is.not.empty);",
               "(a.tricks || []).forEach((t, i) => console.log('trick ' + (i + 1) + ': ' + t.outcome + ' (' + t.takeoff_ms + '-' + t.touchdown_ms + 'ms, confidence ' + t.confidence + ')', t.subscores || ''));",
               "if (d.status === 'analyzed') {",
