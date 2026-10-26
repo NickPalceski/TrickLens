@@ -876,8 +876,61 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
     run-together accessible names, focus scrolling under the phone tab
     bar (`scroll-padding`).
 
-**Not done yet:** frontend phases F3 (upload and team flows) and F4 (real
-Cognito, live API, hosting).
+- **Frontend phase F3 (upload and team flows) done (2026-10-26)**, on the
+  mock API with a simulated worker (docs/components/frontend.md, Screens).
+  - Decided with the user (2026-10-26): tricks are named **after**
+    analysis, one name per analyzed trick in clip order (bails included),
+    relying on `clip_tricks.position`, so tag *i* names
+    `analysis.tricks[i]`; an "Analyze the clip" switch (on by default) lets
+    a clip skip analysis, posting with no score and tricks named up front;
+    no captions in this project; upload visibility left off for now.
+  - Upload: file checks (type, ≤30s), record on phones, presigned PUT with
+    XHR progress, In progress list. `/upload/:clipId`: polling stepper, then
+    per-trick naming with a jump-to-trick button, team (your teams only),
+    score inclusion, publish (tricks → team → inclusion → publish). Your
+    upload plays from the local file for the session.
+  - Teams: list and invites, three-step create (founders by exact
+    username), forming view and founding accept/decline, live team page
+    (follow, join by policy, leave, owner/admin member menu, invites, join
+    requests, team clips), owner settings with typed-name delete.
+  - New **proposed** routes (mock-only, `queries/proposed.ts`): `analyze`
+    on `POST /clips`, `GET /users/me/drafts`, `GET /users/me/teams`,
+    `GET /teams/{slug}/clips`, `GET /teams/{slug}/join-requests/mine`.
+  - The API stores trick names lowercased; the mocks now do too and the UI
+    capitalizes them (`formatTrickName`).
+  - Verified: `make web-check` green (66 tests, 57 in the web app); the
+    running app driven in a browser with a real WebM clip through upload →
+    analyzing → review → named tricks, plus the team screens, at 1440px and
+    390px in both themes, no console errors or overflow. Fixed along the
+    way: the mock "S3" needed a CORS preflight answer, a `.danger` class
+    collision styled the remove-member menu item like the danger zone,
+    stretched join-request avatars, and the review hid the naming form
+    below an auto-opened breakdown.
+
+- **Reports (2026-10-26)**, added to F3 at the user's request, options all
+  chosen by the user (docs/components/frontend.md, Reports):
+  - "Report a problem with this analysis" on the review step and the
+    couldn't-score screen: a checklist that fits the result, which trick,
+    which subscores and too high/low, a note, and a consent checkbox (off
+    by default) to keep and watch the video. After sending: a "Report sent"
+    confirmation, then back to the clip as it was; it never blocks
+    publishing.
+  - "Report a bug" at `/report-bug`, signed in or out: header bug icon,
+    Settings Help card, login/signup link, and every error message (which
+    it quotes). Sends app version, browser, window size, theme, listed on
+    the page.
+  - Both are **proposed** routes (`POST /clips/{id}/analysis-reports`,
+    `POST /bug-reports`). Reports must never go to GitHub (the repo is
+    public); F4 adds a `reports` table and `make reports`.
+  - A real bug caught by a React warning: the report dialog sat inside the
+    publish `<form>`, so sending a report also submitted the publish form
+    (it would have published a fully named clip). Fixed: the report link is
+    outside the form, `Dialog` renders in a portal, and the report form
+    stops its submit event; the test names every trick and asserts nothing
+    was published. 64 web tests, 73 total.
+
+**Not done yet:** frontend phase F4 (real Cognito, live API, the proposed
+routes on the backend including a `reports` table, hosting).
 
 ## Build order
 
@@ -950,7 +1003,8 @@ F. 🔶 Web app, a **parallel track** (decided with the user 2026-10-15),
      API client, MSW mock API, CI
    - F2 ✅ auth screens (mocked), feed + comments, Discover, clip detail,
      profiles
-   - F3 ⬜ upload → publish flow, team flow
+   - F3 ✅ upload → publish flow (per-trick tagging, analysis on/off),
+     team flow
    - F4 ⬜ real Cognito, live API, presigned uploads, hosting + deploy
      (waits for 6c, which is now done)
 

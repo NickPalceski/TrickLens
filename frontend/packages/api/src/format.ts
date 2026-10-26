@@ -44,3 +44,19 @@ export function formatClipTime(ms: number): string {
   const m = Math.floor(total / 60);
   return `${m}:${(total - m * 60).toFixed(1).padStart(4, '0')}`;
 }
+
+/**
+ * A trick name for display. The API stores names lowercased
+ * (`canonical_name`: "kickflip"), so this capitalizes the first word and
+ * writes stance prefixes in capitals: "kickflip" → "Kickflip",
+ * "fs 180" → "FS 180".
+ */
+export function formatTrickName(name: string): string {
+  const upper = new Set(['fs', 'bs']);
+  return name
+    .split(' ')
+    .map((w, i) =>
+      upper.has(w.toLowerCase()) ? w.toUpperCase() : i === 0 ? w.charAt(0).toUpperCase() + w.slice(1) : w,
+    )
+    .join(' ');
+}

@@ -40,12 +40,23 @@ export function TrickTimeline({ tricks, durationMs }: { tricks: AnalyzedTrick[];
 
 /**
  * Every trick the analyzer found, in clip order. Landed tricks expand to
- * their own breakdown. The analyzer doesn't name tricks and nothing matches
- * them to the skater's tags (backend AnalyzedTrickOut), so rows are numbered.
+ * their own breakdown. The analyzer doesn't name tricks; the skater's tags
+ * name them when there's one tag per analyzed trick (tags are stored in clip
+ * order, `clip_tricks.position`, and the upload flow tags each trick in
+ * turn), otherwise rows are numbered.
  */
-export function TrickBreakdown({ tricks }: { tricks: AnalyzedTrick[] }) {
+export function TrickBreakdown({
+  tricks,
+  names,
+  openFirst = true,
+}: {
+  tricks: AnalyzedTrick[];
+  names?: string[];
+  /** Start with the first landed trick's breakdown open. */
+  openFirst?: boolean;
+}) {
   const firstLanded = tricks.findIndex(isLanded);
-  const [open, setOpen] = useState<number | null>(firstLanded >= 0 ? firstLanded : null);
+  const [open, setOpen] = useState<number | null>(openFirst && firstLanded >= 0 ? firstLanded : null);
   const baseId = useId();
 
   return (
@@ -70,7 +81,7 @@ export function TrickBreakdown({ tricks }: { tricks: AnalyzedTrick[] }) {
             >
               <span className={styles.trickIndex}>{i + 1}</span>
               <span className={styles.trickName}>
-                Trick {i + 1}
+                {names?.[i] ?? `Trick ${i + 1}`}
                 <span className={styles.trickMeta}>
                   {outcomeChip(t)}
                   {t.takeoff_ms !== null && t.takeoff_ms !== undefined && (

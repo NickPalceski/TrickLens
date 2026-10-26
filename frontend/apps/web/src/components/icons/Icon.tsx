@@ -59,7 +59,33 @@ const paths = {
     </>
   ),
   chevronRight: <path d="M9 6l6 6-6 6" />,
+  upload: (
+    <>
+      <path d="M12 16V4M6 10l6-6 6 6" />
+      <path d="M4 20h16" />
+    </>
+  ),
+  camera: (
+    <>
+      <path d="M3 8a1 1 0 011-1h3l2-3h6l2 3h3a1 1 0 011 1v11a1 1 0 01-1 1H4a1 1 0 01-1-1z" />
+      <circle cx="12" cy="13" r="4" />
+    </>
+  ),
+  dots: (
+    <>
+      <circle cx="5" cy="12" r="1.2" />
+      <circle cx="12" cy="12" r="1.2" />
+      <circle cx="19" cy="12" r="1.2" />
+    </>
+  ),
   chevronDown: <path d="M6 9l6 6 6-6" />,
+  bug: (
+    <>
+      <rect x="7" y="7" width="10" height="13" rx="5" />
+      <path d="M12 11v9M9 4l1.5 3M15 4l-1.5 3M3 12h4M17 12h4M4 18l3-2M20 18l-3-2M4 7l3 2M20 7l-3 2" />
+    </>
+  ),
+  flag: <path d="M5 21V4M5 4h11l-2 4 2 4H5" />,
   play: <path d="M8 5v14l11-7z" fill="currentColor" stroke="none" />,
   back: <path d="M15 18l-6-6 6-6" />,
   check: <path d="M20 6L9 17l-5-5" />,

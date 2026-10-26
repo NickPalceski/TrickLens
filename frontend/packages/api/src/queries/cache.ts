@@ -34,7 +34,8 @@ export function patchClip(queryClient: QueryClient, id: string, fn: ClipFn) {
           root === 'feed' ||
           root === 'discover' ||
           (root === 'clips' && leaf === undefined) ||
-          leaf === 'clips'
+          leaf === 'clips' ||
+          leaf === 'drafts'
         );
       },
     },

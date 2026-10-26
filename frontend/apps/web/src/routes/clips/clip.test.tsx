@@ -21,8 +21,13 @@ describe('clip detail', () => {
     expect(screen.getByText('2 of 3 landed')).toBeInTheDocument();
     expect(screen.getByText(/Averaged over the 2 landed tricks/)).toBeInTheDocument();
 
-    const tricks = screen.getAllByRole('button', { name: /Trick \d/ });
-    expect(tricks).toHaveLength(3);
+    // One tag per analyzed trick, so the rows are named by the tags, in order.
+    const tricks = screen.getAllByRole('button').filter((b) => b.hasAttribute('aria-expanded'));
+    expect(tricks.map((b) => b.textContent)).toEqual([
+      expect.stringContaining('Kickflip'),
+      expect.stringContaining('Heelflip'),
+      expect.stringContaining('Ollie'),
+    ]);
     expect(within(tricks[1] as HTMLElement).getByText('Bailed')).toBeInTheDocument();
     expect(within(tricks[1] as HTMLElement).getByText('Not scored')).toBeInTheDocument();
 

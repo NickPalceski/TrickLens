@@ -49,6 +49,7 @@ function AuthFrame({
   switchTo: { text: string; to: string; label: string };
   children: ReactNode;
 }) {
+  const location = useLocation();
   return (
     <div className={styles.frame}>
       <Hero {...hero} />
@@ -59,7 +60,15 @@ function AuthFrame({
             {switchTo.label}
           </Link>
         </p>
-        <div className={styles.formWrap}>{children}</div>
+        <div className={styles.formWrap}>
+          {children}
+          <p className={styles.trouble}>
+            Having trouble?{' '}
+            <Link className="link" to="/report-bug" state={{ from: location.pathname }}>
+              Report a bug
+            </Link>
+          </p>
+        </div>
         <p className={`mono ${styles.foot}`}>© TrickLens · clips in, steeze out</p>
       </div>
     </div>

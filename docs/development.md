@@ -425,9 +425,24 @@ every API call from the mock (see
 - **Discover:** switch Top scores / Most active; on a phone-width window,
   the Clips/Teams switch.
 - **Profiles:** follow `@destinyfoster`; edit your setup.
+- **Upload:** pick any MP4, MOV or WebM up to 30s (the browser has to be
+  able to read its length). The "Prototype: what the analyzer finds" picker
+  decides the result: pick *Three-trick line*, wait ~6s through queued and
+  analyzing, then name each trick (the ▶ buttons jump your video to it) and
+  publish. Try *Couldn't score*, and turning "Analyze the clip" off to name
+  tricks up front.
+- **Teams:** accept or decline the founding invite to Ledge Lords; on
+  Downtown Skaters (you own it) promote Leo, approve a join request, open
+  Team settings; ask to join Westside Ledge Club; join Night Shift; create
+  a team with `marcosandoval` and `leotran` as founders.
+- **Reports:** on a clip's review step, "Report a problem with this
+  analysis" (tick something, send, and you're back to publishing); the bug
+  icon in the header opens "Report a bug". Mock reports go nowhere: they're
+  kept in the tab's mock state.
 - **Settings:** Light, Dark, Match system.
 
-Mock state (likes, follows, comments, edits) lasts until the page reloads.
+Mock state (likes, follows, comments, edits, uploads, teams) lasts until
+the page reloads, per browser tab.
 `VITE_API_MODE=live` in `frontend/apps/web/.env.local` points it at the
 real API, but sign-in stays mocked until phase F4 wires Cognito, so live
 mode only works once that lands.

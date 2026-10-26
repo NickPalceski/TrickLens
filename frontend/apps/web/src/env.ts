@@ -5,3 +5,6 @@
 export const apiMode: 'mock' | 'live' = import.meta.env.VITE_API_MODE === 'live' ? 'live' : 'mock';
 
 export const apiUrl: string = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+
+/** Which build this is, sent with reports. Set VITE_APP_VERSION (e.g. the git SHA) when deploying (F4). */
+export const appVersion: string = import.meta.env.VITE_APP_VERSION ?? 'prototype';

@@ -13,6 +13,7 @@ export {
   formatCount,
   formatScore,
   formatTimeAgo,
+  formatTrickName,
   toNumber,
 } from './format.ts';
 export { patchClip } from './queries/cache.ts';
@@ -26,7 +27,48 @@ export {
 export { useAddComment, useComments, useDeleteComment } from './queries/comments.ts';
 export { type DiscoverSort, useDiscoverClips, useDiscoverTeams } from './queries/discover.ts';
 export { keys } from './queries/keys.ts';
-export { useUserClips } from './queries/proposed.ts';
+export {
+  type AnalysisProblem,
+  type AnalysisReportCreate,
+  type BugReportCreate,
+  type MyJoinRequest,
+  type ProposedClipCreate,
+  type ReportCreated,
+  useCreateClip,
+  useMyDrafts,
+  useMyJoinRequest,
+  useMyTeams,
+  useReportAnalysis,
+  useReportBug,
+  useTeamClips,
+  useUserClips,
+} from './queries/proposed.ts';
+export {
+  useAnswerInvite,
+  useAnswerJoinRequest,
+  useCreateTeam,
+  useDeleteTeam,
+  useInviteMember,
+  useJoinRequests,
+  useJoinTeam,
+  useMyInvites,
+  useRemoveMember,
+  useSetMemberRole,
+  useTeam,
+  useTeamMembers,
+  useToggleTeamFollow,
+  useUpdateTeam,
+  useWithdrawJoin,
+} from './queries/teams.ts';
+export {
+  IN_PROGRESS,
+  type PublishChoices,
+  uploadToStorage,
+  useClipProgress,
+  useCompleteClip,
+  usePublishClip,
+  useTagTricks,
+} from './queries/upload.ts';
 export {
   type ProfileEdit,
   type ProfileFields,

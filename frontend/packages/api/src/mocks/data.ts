@@ -1,7 +1,7 @@
 // Sample data for the mock API: the same people, teams and numbers as the
 // design canvas. Typed against the generated schema, so it can't drift from
 // what the real API returns. `seed()` builds a fresh copy; db.ts mutates it.
-import type { AnalysisOut, ClipOut, CommentOut, TeamBrief, UserBrief, UserMe, UserPublic } from '../types.ts';
+import type { AnalysisOut, ClipOut, CommentOut, TeamBrief, UserBrief, UserPublic } from '../types.ts';
 
 const HOUR = 3_600_000;
 const ago = (hours: number) => new Date(Date.now() - hours * HOUR).toISOString();
@@ -226,7 +226,8 @@ function clip(s: ClipSeed): ClipOut {
   const scored = s.values ?? null;
   const tricks = (Array.isArray(s.trick) ? s.trick : [s.trick]).map((name, i) => ({
     id: `${s.id.slice(0, -2)}t${i}`,
-    canonical_name: name,
+    // The API stores trick names lowercased (canonical_name).
+    canonical_name: name.toLowerCase(),
   }));
   const status = s.status ?? 'published';
   return {
@@ -486,29 +487,26 @@ export const teamRankings: TeamRanking[] = [
   { team: teams.bowlRats, score: '81.70', score_delta: '0.90' },
 ];
 
-export interface MockState {
-  people: typeof people;
-  clips: ClipOut[];
-  comments: CommentOut[];
-  /** Teams the signed-in user follows (their clips reach the feed). */
-  followedTeams: Set<string>;
-}
-
-/** A fresh copy of every mutable record. */
-export function seed(): MockState {
-  return {
-    people: structuredClone(people),
-    clips: seedClips(),
-    comments: seedComments(),
-    followedTeams: new Set([teams.downtown.id]),
-  };
-}
-
 export const ME_USERNAME = 'juliavance';
 export const ME_EMAIL = 'julia@westlot.co';
 
-/** The signed-in user as GET /users/me returns it, from the current state. */
-export function meFrom(state: MockState): UserMe {
-  const { followed: _, ...p } = state.people[ME_USERNAME] as (typeof people)[string];
-  return { ...p, email: ME_EMAIL, followed_by_me: false };
+export type MockPerson = (typeof people)[string];
+
+/** Fresh copies of the seed records; db.ts owns the live state. */
+export const seedPeople = () => structuredClone(people);
+export { brief, seedClips, seedComments };
+
+/** What the simulated worker decides for an upload (the prototype's outcome picker). */
+export type MockOutcome = 'single' | 'line' | 'failed';
+
+/** The analysis the simulated worker writes for each outcome, like the real worker's shape. */
+export function simulatedAnalysis(outcome: MockOutcome): AnalysisOut {
+  if (outcome === 'line') return structuredClone(lineAnalysis);
+  if (outcome === 'failed') return structuredClone(failedAnalysis);
+  return singleTrick([81, 77, 86, 70, 75, 84], 1300, '0.88');
+}
+
+/** The clip score the worker stores: the mean of the breakdown's subscores. */
+export function scoreOf(analysis: AnalysisOut): string | null {
+  return analysis.steeze_breakdown ? average(Object.values(analysis.steeze_breakdown)) : null;
 }

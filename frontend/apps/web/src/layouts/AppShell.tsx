@@ -1,5 +1,5 @@
 import { useMe } from '@tricklens/api';
-import { Link, NavLink, Outlet } from 'react-router';
+import { Link, NavLink, Outlet, useLocation } from 'react-router';
 import { Icon, type IconName } from '../components/icons/Icon.tsx';
 import { Avatar } from '../components/ui/Avatar.tsx';
 import { Logo } from '../components/ui/Logo.tsx';
@@ -24,6 +24,7 @@ const tabClass = ({ isActive }: { isActive: boolean }) => `${styles.tab} ${isAct
  */
 export function AppShell() {
   const { data: me } = useMe();
+  const location = useLocation();
   const name = me?.display_name ?? me?.username ?? '';
 
   return (
@@ -42,6 +43,15 @@ export function AppShell() {
         </nav>
 
         <div className={styles.account}>
+          <NavLink
+            to="/report-bug"
+            state={{ from: location.pathname }}
+            className={navClass}
+            aria-label="Report a bug"
+            title="Report a bug"
+          >
+            <Icon name="bug" />
+          </NavLink>
           <NavLink to="/settings" className={navClass} aria-label="Settings">
             <Icon name="gear" />
           </NavLink>

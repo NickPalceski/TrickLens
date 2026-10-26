@@ -5,6 +5,7 @@ import {
   useId,
   useState,
 } from 'react';
+import { Link, useLocation } from 'react-router';
 import { Icon } from '../icons/Icon.tsx';
 import { Button } from './Button.tsx';
 import styles from './ui.module.css';
@@ -219,6 +220,29 @@ export function Switch({
   );
 }
 
+/** A checkbox with a label and optional explanation. */
+export function Checkbox({
+  label,
+  description,
+  checked,
+  onChange,
+}: {
+  label: ReactNode;
+  description?: ReactNode;
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className={styles.checkbox}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <span>
+        <span className={styles.checkboxLabel}>{label}</span>
+        {description && <span className={styles.help}>{description}</span>}
+      </span>
+    </label>
+  );
+}
+
 // ---- Status --------------------------------------------------------------
 
 export function Loading({ label = 'Loading' }: { label?: string }) {
@@ -232,6 +256,7 @@ export function Loading({ label = 'Loading' }: { label?: string }) {
 
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const message = error instanceof Error ? error.message : 'Something went wrong.';
+  const location = useLocation();
   return (
     <div className={styles.status} role="alert">
       <span className={styles.statusTitle}>Couldn't load this</span>
@@ -241,6 +266,9 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
           Try again
         </Button>
       )}
+      <Link className="link" to="/report-bug" state={{ from: location.pathname, error: message }}>
+        Report a bug
+      </Link>
     </div>
   );
 }

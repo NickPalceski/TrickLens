@@ -113,6 +113,13 @@
   text-align: center;
 }
 
+.trouble {
+  margin-top: 1.5rem;
+  text-align: center;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
 .textButton {
   align-self: center;
   padding: 0.25rem;

@@ -1,5 +1,5 @@
-import type { ClipOut } from '@tricklens/api';
-import { type ReactNode, useState } from 'react';
+import { type ClipOut, formatTrickName } from '@tricklens/api';
+import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { Icon } from '../icons/Icon.tsx';
 import styles from './clip.module.css';
 import { ScoreSticker } from './Score.tsx';
@@ -22,7 +22,8 @@ function Figure() {
   );
 }
 
-export const trickNames = (clip: ClipOut) => clip.tricks.map((t) => t.canonical_name).join(' · ');
+export const trickNames = (clip: ClipOut) =>
+  clip.tricks.map((t) => formatTrickName(t.canonical_name)).join(' · ');
 
 interface ClipMediaProps {
   clip: ClipOut;
@@ -34,6 +35,10 @@ interface ClipMediaProps {
   playable?: boolean;
   /** Called once when playback starts (records a view). */
   onPlay?: () => void;
+  /** Your own just-uploaded file: shown straight away as a player, instead of `clip.video_url`. */
+  src?: string;
+  /** Jump to a moment: changing `at` re-seeks even to the same `ms`. */
+  seek?: { ms: number; at: number };
   children?: ReactNode;
 }
 
@@ -49,17 +54,43 @@ export function ClipMedia({
   showTrick = true,
   playable = true,
   onPlay,
+  src,
+  seek,
   children,
 }: ClipMediaProps) {
   const [playing, setPlaying] = useState(false);
-  const hasVideo = /^(https?|blob):/.test(clip.video_url);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const url = src ?? clip.video_url;
+  const hasVideo = /^(https?|blob):/.test(url);
   const names = trickNames(clip);
+
+  // Seeking starts playback, then jumps once the video can.
+  useEffect(() => {
+    if (!seek) return;
+    setPlaying(true);
+    const v = videoRef.current;
+    if (!v) return;
+    const go = () => {
+      v.currentTime = seek.ms / 1000;
+      void v.play().catch(() => {});
+    };
+    if (v.readyState >= 1) go();
+    else v.addEventListener('loadedmetadata', go, { once: true });
+  }, [seek]);
 
   return (
     <div className={styles.media} style={{ aspectRatio: aspect }}>
-      {playing && hasVideo ? (
+      {src || (playing && hasVideo) ? (
         // biome-ignore lint/a11y/useMediaCaption: skate clips are user footage with no dialogue to caption
-        <video src={clip.video_url} poster={clip.thumb_url ?? undefined} controls autoPlay playsInline />
+        <video
+          ref={videoRef}
+          src={url}
+          poster={clip.thumb_url ?? undefined}
+          controls
+          autoPlay={!src}
+          preload="metadata"
+          playsInline
+        />
       ) : (
         <>
           {clip.thumb_url ? <img src={clip.thumb_url} alt="" /> : <Figure />}

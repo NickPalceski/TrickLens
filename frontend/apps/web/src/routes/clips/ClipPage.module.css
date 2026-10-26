@@ -90,10 +90,6 @@
 }
 
 @media (min-width: 900px) {
-  .statusFirst .right {
-    order: 0;
-  }
-
   .layout {
     flex-direction: row;
     gap: 3.5rem;
@@ -109,5 +105,9 @@
   .right {
     flex: 1 1 32rem;
     gap: 1.75rem;
+  }
+
+  .statusFirst .right {
+    order: 0;
   }
 }

@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useMe } from '@tricklens/api';
-import { useNavigate } from 'react-router';
+import { Link, useNavigate } from 'react-router';
 import { useAuth } from '../../app/auth.tsx';
 import { Button } from '../../components/ui/Button.tsx';
 import { apiMode } from '../../env.ts';
@@ -50,6 +50,16 @@ export function SettingsPage() {
             Log out
           </Button>
         </div>
+      </section>
+
+      <section className={styles.card} aria-labelledby="help">
+        <h2 id="help" className={styles.heading}>
+          Help
+        </h2>
+        <p className={styles.lead}>Something not working? Tell us and we'll look into it.</p>
+        <Link className="link" to="/report-bug" state={{ from: '/settings' }}>
+          Report a bug
+        </Link>
       </section>
 
       <section className={`${styles.card} ${styles.about}`} aria-label="About">

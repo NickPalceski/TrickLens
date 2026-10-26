@@ -69,9 +69,8 @@ progress. Media processing, trick finding, body-pose analysis, the landed
 check and real scores (six subscores, averaged over the landed tricks) are
 live. The scoring constants are uncalibrated guesses until enough
 hand-judged clips exist to tune them.
-The web app is being built alongside: log in, the feed with comments,
-Discover, clip breakdowns and profiles run on a mock API for now; upload and
-teams come next.
+The web app is built alongside, every screen from upload to teams, and runs
+on a mock API until it's wired to the live backend.
 See the [build order](docs/ARCHITECTURE.md#build-order).
 
 ## Stack

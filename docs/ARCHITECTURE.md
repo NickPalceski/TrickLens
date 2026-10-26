@@ -20,8 +20,8 @@ tiers are in [subscriptions.md](subscriptions.md).
 **Current state:** steps 1–5 are done and live in AWS. Step 6 (the real
 analyzer) is in progress: 6a through 6c-3 are live, so clips get real
 (uncalibrated) scores. 6d, calibration, is next. The web app runs as a
-parallel track: phases F1 (scaffold) and F2 (read screens) are done and run
-on a mock API.
+parallel track: phases F1–F3 (scaffold, read screens, upload and team
+flows) are done and run on a mock API; F4 wires it to the live backend.
 See the [build order](#build-order).
 
 ---
@@ -438,8 +438,8 @@ concurrency, so a spike queues instead of scaling the bill (see
 | F | Web app, a parallel track ([frontend.md](components/frontend.md#build-phases)) | **in progress** |
 | F1 | Workspace, tokens, both themes + Settings toggle, app shell, routes, typed API client, mock API, CI | **done** |
 | F2 | Auth screens (mocked), feed + comments, Discover, clip detail, profiles | **done** |
-| F3 | Upload → publish flow, team flow | |
-| F4 | Real Cognito, live API, presigned uploads, hosting + deploy | after 6c |
+| F3 | Upload → publish flow (per-trick tagging after analysis, analysis on/off), team flow, analysis and bug reports | **done** |
+| F4 | Real Cognito, live API (and the proposed routes, including a `reports` table), presigned uploads, hosting + deploy | after 6c |
 
 Step 3 deliberately stubs the analyzer so that a complete, deployed, working
 product exists before the hardest component is attempted.

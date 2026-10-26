@@ -1,6 +1,7 @@
 import {
   type ClipOut,
   formatTimeAgo,
+  formatTrickName,
   useClip,
   useMe,
   useRecordView,
@@ -10,51 +11,27 @@ import { useRef } from 'react';
 import { Link, useParams } from 'react-router';
 import { ClipActions } from '../../components/clip/ClipActions.tsx';
 import { ClipMedia } from '../../components/clip/ClipMedia.tsx';
+import { FailureCard } from '../../components/clip/FailureCard.tsx';
 import { Handle, TeamLine } from '../../components/clip/People.tsx';
 import { confidenceLabel, ScoreBlock, SubscoreBars } from '../../components/clip/Score.tsx';
 import { TrickBreakdown, TrickTimeline } from '../../components/clip/TrickBreakdown.tsx';
 import { CommentThread } from '../../components/comments/Comments.tsx';
-import { Icon } from '../../components/icons/Icon.tsx';
 import { Avatar } from '../../components/ui/Avatar.tsx';
 import { Chip, ErrorState, Loading, SectionHeading, Switch } from '../../components/ui/controls.tsx';
 import page from '../page.module.css';
 import styles from './ClipPage.module.css';
 
-/** What to try next, by failure reason (backend app/analyzer/reasons.py). */
-const TIPS: Record<string, string> = {
-  'no landed trick detected': 'Keep the board and both feet in frame through the landing.',
-  'no clean airtime found': 'Make sure the pop and the board leaving the ground are in the shot.',
-  'trick left the frame': 'Keep the whole trick in the shot, from pop to roll-away.',
-  'skater too far from camera': 'Get closer or zoom in so you fill more of the frame.',
-  'body not clearly visible': "Keep your whole body in view and don't film straight into the sun.",
-  'clip ends too soon after the landing': 'Keep filming for about a second after you roll away.',
-  'too dark': 'Film in daylight or under a strong light.',
-  'unreadable video file': 'Re-export the clip as MP4 or MOV and upload it again.',
-  'no video stream found': 'Re-export the clip as MP4 or MOV and upload it again.',
-  'clip too short': 'Upload a clip that is at least a couple of seconds long.',
-  'analysis failed': "That one's on us. Upload the clip again.",
-};
-
 function NotScored({ clip }: { clip: ClipOut }) {
-  const reason = clip.analysis?.failure_reason;
-  if (clip.status === 'unanalyzable') {
-    return (
-      <section className={`${page.card} ${styles.failed}`} aria-labelledby="failed-title">
-        <Chip tone="danger">
-          <Icon name="alert" size={12} strokeWidth={2.5} /> Couldn't score
-        </Chip>
-        <h2 id="failed-title" className={styles.failedTitle}>
-          {reason ? reason[0]?.toUpperCase() + reason.slice(1) : "We couldn't score this clip"}
-        </h2>
-        {reason && TIPS[reason] && <p>{TIPS[reason]}</p>}
-        <p className={page.note}>A clip without a score can't be published. It stays private to you.</p>
-      </section>
-    );
-  }
+  if (clip.status === 'unanalyzable') return <FailureCard clip={clip} />;
   return (
     <section className={`${page.card} ${styles.failed}`}>
       <Chip>Not published</Chip>
-      <p>This clip is still {clip.status}. Publishing comes with the upload flow (phase F3).</p>
+      <p>
+        This clip is still {clip.status === 'analyzed' ? 'waiting to be published' : clip.status}.{' '}
+        <Link className="link" to={`/upload/${clip.id}`}>
+          Continue in the upload flow
+        </Link>
+      </p>
     </section>
   );
 }
@@ -94,7 +71,18 @@ function Breakdown({ clip, own }: { clip: ClipOut; own: boolean }) {
           />
         </div>
       )}
-      {multi ? <TrickBreakdown tricks={tricks} /> : <SubscoreBars breakdown={analysis?.steeze_breakdown} />}
+      {multi ? (
+        <TrickBreakdown
+          tricks={tricks}
+          names={
+            clip.tricks.length === tricks.length
+              ? clip.tricks.map((t) => formatTrickName(t.canonical_name))
+              : undefined
+          }
+        />
+      ) : (
+        <SubscoreBars breakdown={analysis?.steeze_breakdown} />
+      )}
       <p className={`${page.note} ${styles.footnote}`}>
         Scored automatically from the clip. Tricks tagged by @{clip.author.username}.
       </p>
@@ -140,7 +128,7 @@ export function ClipPage() {
         <div className={styles.tags}>
           {c.tricks.map((t) => (
             <span key={t.id} className={styles.tag}>
-              {t.canonical_name}
+              {formatTrickName(t.canonical_name)}
             </span>
           ))}
         </div>

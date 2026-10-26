@@ -235,6 +235,32 @@ textarea.input {
   outline-offset: 2px;
 }
 
+/* ---- Checkbox ---- */
+.checkbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.625rem;
+  cursor: pointer;
+}
+
+.checkbox input {
+  flex-shrink: 0;
+  width: 1.125rem;
+  height: 1.125rem;
+  margin: 0.1875rem 0 0;
+  accent-color: var(--primary);
+}
+
+.checkbox > span {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.checkboxLabel {
+  color: var(--ink);
+}
+
 /* ---- Status: loading, error, empty ---- */
 .status {
   display: flex;
