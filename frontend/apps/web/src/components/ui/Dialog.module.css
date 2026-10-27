@@ -1,0 +1,82 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: var(--scrim);
+}
+
+.dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  max-height: 92dvh;
+  border-radius: var(--radius-sheet) var(--radius-sheet) 0 0;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.header {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1rem 0.875rem 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.title {
+  font-size: 1.25rem;
+}
+
+.close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.close:hover {
+  color: var(--ink);
+}
+
+.body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 1.25rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 900px) {
+  .overlay {
+    justify-content: center;
+    align-items: center;
+    padding: 2rem;
+  }
+
+  .dialog {
+    width: 100%;
+    max-width: 34rem;
+    max-height: calc(100dvh - 4rem);
+    border-radius: var(--radius-sheet);
+  }
+
+  .body {
+    padding: 1.5rem;
+  }
+}

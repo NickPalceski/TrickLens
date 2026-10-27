@@ -42,6 +42,25 @@ jobs:
       - name: licence check (no AGPL in the worker image)
         run: make licenses
 
+      # The frontend's API types (frontend/packages/api) are generated from
+      # this API's OpenAPI spec and committed. A backend change that alters
+      # the spec without regenerating them fails here, not at runtime.
+      - name: frontend API types match the API (fix with `make web-types`)
+        run: make web-types && git diff --exit-code frontend/packages/api
+
       - name: docker compose logs (on failure)
         if: failure()
         run: docker compose logs
+
+  # The web app (frontend/), in the same `web` container developers use, so
+  # CI needs no Node setup of its own. Independent of the backend job.
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: make init
+        run: make init
+
+      - name: lint, API-type drift, typecheck, tests, build
+        run: make web-check

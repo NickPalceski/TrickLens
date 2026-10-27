@@ -15,7 +15,7 @@ the docs that cover what changed, as part of the same change:
 
 - **The component doc** in `docs/components/` for the part you touched
   (`api.md`, `analyzer.md`, `data-model.md`, `services.md`,
-  `infrastructure.md`), **including its Mermaid diagram** if the change
+  `infrastructure.md`, `frontend.md`), **including its Mermaid diagram** if the change
   alters the structure it shows (a new module, table, route group,
   resource, or flow step).
 - **`docs/ARCHITECTURE.md`** when the change is cross-cutting: the overview
@@ -64,6 +64,18 @@ alters behaviour but leaves the docs stale is incomplete.
 - **IDs**: UUID primary keys on anything user-facing (IDs appear in public
   URLs; sequential integers leak counts and allow enumeration).
 - **Migrations**: schema changes always ship with an Alembic migration.
+- **API changes → `make web-types`**: the frontend's API types
+  (`frontend/packages/api/openapi.json` + `src/schema.ts`) are generated
+  from the backend's OpenAPI spec and committed. Any change to a route or
+  schema must run `make web-types` and commit the result in the same
+  change, or CI's backend job fails. Never hand-edit `schema.ts`.
+- **Frontend colors and fonts come only from `@tricklens/tokens`** (CSS
+  variables like `var(--ink)`), never literals in components, so both
+  themes and the future native app stay in sync. See
+  docs/components/frontend.md, Design tokens.
+- **Frontend tooling runs only in the `web` container** (`make web-*`);
+  no machine needs Node. Package versions are pinned exactly, and pnpm
+  refuses anything published less than 14 days ago.
 
 ## Environment
 
@@ -75,7 +87,8 @@ the Cognito dev pool (copy `COGNITO_USER_POOL_ID`/`COGNITO_CLIENT_ID` into the
 new `.env`, or re-run `cognito-bootstrap.sh` — it finds the existing pool by
 name instead of duplicating it) and, optionally, the same AWS CLI access
 key. Postgres/LocalStack state is throwaway container state either way;
-`make up` rebuilds it from nothing on all three.
+`make up` rebuilds it from nothing on all three. `frontend/node_modules` is
+per-clone too (`make web-install`, or just `make up`, recreates it).
 
 ### Windows/WSL2
 
@@ -117,6 +130,23 @@ can live anywhere.
   system service — is also on the machine. See the gotcha below.
 
 ### Gotchas already hit — do not rediscover these
+
+- **`corepack pnpm` doesn't put `pnpm` on PATH**, so any package script
+  that calls `pnpm` (the workspace root's `check`, `dev`, `types`) failed
+  with `sh: pnpm: not found` inside the `web` container. Fixed by the
+  service's entrypoint, which runs `corepack enable --install-directory
+  /tmp/bin` first (the directory must exist, or corepack fails with
+  `ENOENT`). Use plain `pnpm` in the container, never `corepack pnpm`.
+- **The API sends Decimal fields as JSON strings** (`"steeze_score":
+  "79.50"`), because pydantic serializes `Decimal` that way. The generated
+  types say `string`. Parse with `toNumber`/`formatScore`/`formatAverage`
+  from `@tricklens/api`, never `Number()` in a component.
+- **Newer library majors than you might expect** (2026-10): React Router 8,
+  Vite 8, Vitest 5, MSW 3, pnpm 11. Check a package's `.d.ts` before
+  assuming an API: MSW 3 renamed `onUnhandledRequest` to
+  `onUnhandledFrame`, and Biome 2.5 replaced `rules.recommended` with
+  `rules.preset`. TypeScript stays on 5.9 because `openapi-typescript`
+  only supports 5.x.
 
 - **Postgres enums in Alembic.** If you create an enum explicitly *and*
   reference the same object in `create_table()`, SQLAlchemy emits `CREATE
@@ -369,7 +399,8 @@ scores, stub off, stuck-clip sweep) is live and verified in prod. 6d-1
 (calibration tooling) and 6d-2 (the MVP pass over the user's seven real
 clips: verdict fixes, the push rule) are done, so step 6 is done for the
 MVP. Fitting the constants to hand-judged scores (`steeze-v1`) is a later,
-non-blocking improvement. Next: step 7.**
+non-blocking improvement. Next: step 7, and
+frontend phase F4.**
 Running locally:
 
 ```bash
@@ -781,8 +812,7 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
     requesting an increase to 1000.
 
 - **Step 6d-2 (the MVP pass over real clips)** done (2026-10-26), on
-  `main` (the shared checkout is on the `frontend` branch, where another
-  agent works; 6d-2 was built in a separate `main` worktree):
+  `main`, then merged with the frontend branch's F1–F3 (2026-10-27):
   - The user's notes for 7 clips are in `test_video_details.md` next to
     them (they found the TOML layout awkward); `judgments.toml` is kept in
     step with those notes by hand, outcomes and rough pop times only. No
@@ -838,9 +868,113 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   anchor verified. Code comments now cite docs by file and heading instead
   of `§` numbers. The documentation rule above was updated to match.
 
-**Not done yet:** no frontend code in this repo (a visual prototype exists as
-a separate Artifact canvas, outside the repo — now covers auth/profile/
-upload/clip-status *and* the 4c team flows above, added in the same session).
+- **Frontend phase F1 (scaffold) done (2026-10-15)**, a parallel track
+  decided with the user (docs/components/frontend.md, Build phases). The
+  design was approved first on the design canvas, a claude.ai artifact
+  ("TrickLens Login Directions", outside the repo): desktop and phone
+  artboards for every screen, light and dark. Palette Light Yellow
+  `#FEF0B6` (scores) / Light Azure `#BBD3E0` (selection, social) / Dark
+  Gray Brown `#472F26` (ink, primary actions); fonts Bricolage Grotesque,
+  Barlow, DM Mono.
+  - `frontend/` is a pnpm workspace: `apps/web` (React 19 + Vite 8 +
+    React Router 8 + TanStack Query), `packages/tokens`,
+    `packages/api` (generated types, `openapi-fetch` client, hooks, MSW
+    mocks). React Native (Expo) goes in `apps/mobile` later and shares
+    `api` + `tokens`, not screens.
+  - Runs in the `web` Compose service (`node:24-alpine`, port 3000, as the
+    host user) against the MSW mock API by default; auth is a mock
+    session signed in as `@juliavance`.
+  - Built so far: AppShell (top nav on desktop, bottom tabs under 900px),
+    every route, Light/Dark/Match-system theming with a pre-paint script,
+    the Settings page. Other screens are placeholders naming their
+    artboards.
+  - Verified: `make web-check` green (Biome, schema drift, typecheck, 15
+    tests, production build); the running dev server screenshotted at
+    1440px and 390px in both themes with no console errors or overflow.
+    CI has a new `web` job plus an OpenAPI drift check in the backend job.
+  - Known API gaps for F2/F3 (frontend.md, Known gaps): no endpoint lists
+    a user's clips; the design's upload visibility and tag-at-upload
+    don't match the API.
+
+- **Frontend phase F2 (read screens) done (2026-10-16)**, still on mock
+  data; the user asked to build around the API gaps until the backend is at
+  MVP and keep them noted (docs/components/frontend.md, Known gaps).
+  - Screens: log in and sign up (with Cognito's password rules and the
+    emailed-code step the design lacked), feed + comments (side panel on
+    desktop, modal bottom sheet on phones), clip detail (single,
+    multi-trick, couldn't-score, the owner's score-inclusion switch),
+    Discover (sort and tab in the URL), own and other profiles with
+    Follow, edit profile.
+  - `@tricklens/api` gained hooks for every F2 route, `patchClip` (one
+    clip updated in every cached list), and a stateful mock backend
+    (`mocks/db.ts`) that follows the API's rules and resets per test.
+  - Gaps are built around, not faked into the API: profiles call a
+    **proposed** `GET /users/{username}/clips` that only the mock answers
+    (`queries/proposed.ts`); captions, avatar upload, a user's teams and
+    team levels are left out of the UI until the API has them.
+  - Verified: `make web-check` green (45 tests, 36 in the web app); the
+    running dev server screenshotted on every F2 screen at 1440px and
+    390px, light and dark, no console errors or overflow. Fixed along the
+    way: a reply landing in a folded thread, retrying 404s, ranked cards'
+    run-together accessible names, focus scrolling under the phone tab
+    bar (`scroll-padding`).
+
+- **Frontend phase F3 (upload and team flows) done (2026-10-26)**, on the
+  mock API with a simulated worker (docs/components/frontend.md, Screens).
+  - Decided with the user (2026-10-26): tricks are named **after**
+    analysis, one name per analyzed trick in clip order (bails included),
+    relying on `clip_tricks.position`, so tag *i* names
+    `analysis.tricks[i]`; an "Analyze the clip" switch (on by default) lets
+    a clip skip analysis, posting with no score and tricks named up front;
+    no captions in this project; upload visibility left off for now.
+  - Upload: file checks (type, ≤30s), record on phones, presigned PUT with
+    XHR progress, In progress list. `/upload/:clipId`: polling stepper, then
+    per-trick naming with a jump-to-trick button, team (your teams only),
+    score inclusion, publish (tricks → team → inclusion → publish). Your
+    upload plays from the local file for the session.
+  - Teams: list and invites, three-step create (founders by exact
+    username), forming view and founding accept/decline, live team page
+    (follow, join by policy, leave, owner/admin member menu, invites, join
+    requests, team clips), owner settings with typed-name delete.
+  - New **proposed** routes (mock-only, `queries/proposed.ts`): `analyze`
+    on `POST /clips`, `GET /users/me/drafts`, `GET /users/me/teams`,
+    `GET /teams/{slug}/clips`, `GET /teams/{slug}/join-requests/mine`.
+  - The API stores trick names lowercased; the mocks now do too and the UI
+    capitalizes them (`formatTrickName`).
+  - Verified: `make web-check` green (66 tests, 57 in the web app); the
+    running app driven in a browser with a real WebM clip through upload →
+    analyzing → review → named tricks, plus the team screens, at 1440px and
+    390px in both themes, no console errors or overflow. Fixed along the
+    way: the mock "S3" needed a CORS preflight answer, a `.danger` class
+    collision styled the remove-member menu item like the danger zone,
+    stretched join-request avatars, and the review hid the naming form
+    below an auto-opened breakdown.
+
+- **Reports (2026-10-26)**, added to F3 at the user's request, options all
+  chosen by the user (docs/components/frontend.md, Reports):
+  - "Report a problem with this analysis" on the review step and the
+    couldn't-score screen: a checklist that fits the result, which trick,
+    which subscores and too high/low, a note, and a consent checkbox (off
+    by default) to keep and watch the video. After sending: a "Report sent"
+    confirmation, then back to the clip as it was; it never blocks
+    publishing.
+  - "Report a bug" at `/report-bug`, signed in or out: header bug icon,
+    Settings Help card, login/signup link, and every error message (which
+    it quotes). Sends app version, browser, window size, theme, listed on
+    the page.
+  - Both are **proposed** routes (`POST /clips/{id}/analysis-reports`,
+    `POST /bug-reports`). Reports must never go to GitHub (the repo is
+    public); F4 adds a `reports` table and `make reports`.
+  - A real bug caught by a React warning: the report dialog sat inside the
+    publish `<form>`, so sending a report also submitted the publish form
+    (it would have published a fully named clip). Fixed: the report link is
+    outside the form, `Dialog` renders in a portal, and the report form
+    stops its submit event; the test names every trick and asserts nothing
+    was published. 64 web tests, 73 total.
+
+**Not done yet:** step 7 (quota + subscriptions), frontend phase F4 (real
+Cognito, live API, the proposed routes on the backend including a
+`reports` table, hosting).
 
 ## Build order
 
@@ -904,8 +1038,20 @@ upload/clip-status *and* the 4c team flows above, added in the same session).
    throttles into the DLQ); the account's Lambda limit was 10, and the
    user is requesting 1000 through Service Quotas
 
+F. 🔶 Web app, a **parallel track** (decided with the user 2026-10-15),
+   not gated on step 6: built as a mock-data prototype until wiring.
+   - F1 ✅ workspace, tokens, themes + Settings, app shell, routes, typed
+     API client, MSW mock API, CI
+   - F2 ✅ auth screens (mocked), feed + comments, Discover, clip detail,
+     profiles
+   - F3 ✅ upload → publish flow (per-trick tagging, analysis on/off),
+     team flow
+   - F4 ⬜ real Cognito, live API, presigned uploads, hosting + deploy
+     (waits for 6c, which is now done)
+
 Steps are sequential. Do not start a step before the previous one's
-acceptance criteria pass.
+acceptance criteria pass. The frontend track (F) is the exception: its
+phases are sequential among themselves but run alongside steps 6–7.
 
 ## Decisions (short form — full reasoning in docs/ARCHITECTURE.md and the component docs)
 

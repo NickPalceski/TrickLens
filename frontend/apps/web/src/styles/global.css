@@ -1,0 +1,129 @@
+/* Base styles. Every color comes from a token variable defined by
+   @tricklens/tokens (injected in main.tsx), so both themes work everywhere. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Keep anything scrolled into view (focus, links to a section) clear of the
+     sticky header and, on phones, the fixed tab bar (layouts/AppShell). */
+  scroll-padding-top: calc(3.5rem + env(safe-area-inset-top, 0px));
+  scroll-padding-bottom: calc(4.375rem + env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 900px) {
+  html {
+    scroll-padding-top: 4.5rem;
+    scroll-padding-bottom: 0;
+  }
+}
+
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  text-wrap: balance;
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+img,
+video {
+  max-width: 100%;
+  display: block;
+}
+
+::selection {
+  background: var(--sel);
+  color: var(--on-sel);
+}
+
+:focus-visible {
+  outline: 3px solid var(--sel);
+  outline-offset: 2px;
+}
+
+/* Type helpers, matching the design canvas. */
+.display {
+  font-family: var(--font-display);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+.label {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.link {
+  color: var(--link);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    /* biome-ignore lint/complexity/noImportantStyles: reduced motion has to beat every component's own transition */
+    transition-duration: 0.01ms !important;
+    /* biome-ignore lint/complexity/noImportantStyles: same as above, for animations */
+    animation-duration: 0.01ms !important;
+  }
+}

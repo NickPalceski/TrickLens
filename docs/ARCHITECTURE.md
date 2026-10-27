@@ -10,6 +10,7 @@ open a component's own doc for its internals:
 | Data model: tables, relations, migrations | [components/data-model.md](components/data-model.md) |
 | Services: the AWS seam, config, logging | [components/services.md](components/services.md) |
 | Infrastructure + CI/CD: AWS resources, Terraform, pipelines | [components/infrastructure.md](components/infrastructure.md) |
+| Frontend: the React web app, design tokens, mock API | [components/frontend.md](components/frontend.md) |
 
 Setup and day-to-day commands are in the
 [development guide](development.md); deploying is in the
@@ -20,7 +21,9 @@ tiers are in [subscriptions.md](subscriptions.md).
 analyzer) is done for the MVP: 6a through 6d-2 are in, so clips get real
 scores from an analyzer checked on seven real clips. The scoring constants
 stay uncalibrated guesses until hand-judged scores exist (`steeze-v1`,
-not blocking).
+not blocking). The web app runs as a parallel track: phases F1–F3
+(scaffold, read screens, upload and team flows) are done and run on a mock
+API; F4 wires it to the live backend.
 See the [build order](#build-order).
 
 ---
@@ -40,7 +43,7 @@ See the [build order](#build-order).
 
 ```mermaid
 flowchart LR
-    client(["Client<br/>web app (planned) · Postman · curl"])
+    client(["Client<br/>web app (frontend/, mock API until F4) · Postman · curl"])
     cognito["Cognito<br/>sign up · log in"]
 
     subgraph aws ["AWS"]
@@ -209,6 +212,7 @@ id-token-for-client.
 | Worker | SQS poll loop (`python -m app.worker`) | Lambda (`app.worker.lambda_handler`), SQS event-source mapping |
 | Rankings + stuck-clip sweep | `make rankings` / `make sweep` on demand | One Lambda on an EventBridge schedule runs both |
 | Images | `backend/Dockerfile`, `backend/Dockerfile.worker` | The same two images, from ECR |
+| Web app | Vite dev server on :3000 (`web` service), mock API by default | Not deployed yet (F4: static files on S3 + CloudFront) |
 
 No application code branches on the environment: `AWS_ENDPOINT_URL` is the
 whole local↔cloud seam for S3 and SQS, and Compose runs the exact images
@@ -236,6 +240,10 @@ component:
 - **Subscriptions (planned):** weekly scored-clip quota, Free / Plus /
   Pro tiers and prices, only scored clips spend a credit →
   [subscriptions.md](subscriptions.md)
+- **Frontend:** a React + Vite static web app for desktop and phone
+  browsers; a native app later shares logic and tokens, not screens; MSW
+  mock API until the backend is wired in →
+  [frontend.md](components/frontend.md#why-this-stack)
 - **Infrastructure:** broad deploy role, migrations before deploy, no
   canary, two ECR repos, SQS timings, Terraform state bootstrap →
   [infrastructure.md](components/infrastructure.md#infrastructure-decisions)
@@ -430,6 +438,11 @@ concurrency, so a spike queues instead of scaling the bill (see
 | 6d-2 | With the user's seven clips (ledges, a ramp, 30fps): verdicts checked and fixed, the push rule (an early push costs roll-away instead of failing the landing), `steeze-v0.2-uncalibrated` | **live, verified in prod** |
 | later | Fit the constants to hand-judged scores → `steeze-v1`, prod rescore. Not blocking: waits for judged clips | |
 | 7 | Weekly analysis quota + paid subscriptions (Stripe), profile customization later — [subscriptions.md](subscriptions.md) | planned |
+| F | Web app, a parallel track ([frontend.md](components/frontend.md#build-phases)) | **in progress** |
+| F1 | Workspace, tokens, both themes + Settings toggle, app shell, routes, typed API client, mock API, CI | **done** |
+| F2 | Auth screens (mocked), feed + comments, Discover, clip detail, profiles | **done** |
+| F3 | Upload → publish flow (per-trick tagging after analysis, analysis on/off), team flow, analysis and bug reports | **done** |
+| F4 | Real Cognito, live API (and the proposed routes, including a `reports` table), presigned uploads, hosting + deploy | next (6c is done) |
 
 Step 3 deliberately stubs the analyzer so that a complete, deployed, working
 product exists before the hardest component is attempted.

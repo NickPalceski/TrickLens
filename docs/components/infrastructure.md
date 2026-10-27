@@ -101,7 +101,7 @@ commands.
 ```mermaid
 flowchart LR
     subgraph ci ["ci.yml: every push and PR"]
-        t1["_test.yml<br/>ruff · API tests ·<br/>worker tests · licence check"]
+        t1["_test.yml<br/>ruff · API tests ·<br/>worker tests · licence check ·<br/>web check"]
         plan["terraform plan<br/>(PRs from this repo)<br/>comments the plan on the PR"]
         t1 --> plan
     end
@@ -129,7 +129,11 @@ flowchart LR
   commands a developer runs locally (`make init`, ruff, `make test`,
   `make test-worker`, `make licenses`) against real Postgres and LocalStack
   under Docker Compose, rather than re-describing the stack as Actions
-  `services:` containers.
+  `services:` containers. The backend job also fails if the API's OpenAPI
+  spec changed without `make web-types`. A second, independent `web` job
+  runs `make web-check` (lint, API-type drift, typecheck, tests, build) in
+  the same `web` container developers use, so CI needs no Node setup. See
+  [frontend](frontend.md#tests).
 - **`ci.yml`** runs the tests on every push and PR. On a PR from a branch
   of this repo (not a fork), it also runs `terraform plan` with the
   read-only role and comments the plan on the PR.

@@ -1,0 +1,80 @@
+.page {
+  max-width: 72rem;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.headButtons {
+  display: flex;
+  gap: 0.625rem;
+}
+
+.error {
+  margin-bottom: 1rem;
+  padding: 0.625rem 0.875rem;
+  border-radius: var(--radius-md);
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.columns {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 1.125rem;
+  padding: 1.25rem;
+  min-width: 0;
+}
+
+.cardTitle {
+  font-size: 1.25rem;
+}
+
+.photo {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4375rem;
+}
+
+.choiceLabel {
+  font-weight: 600;
+  font-size: 0.8125rem;
+  color: var(--ink-2);
+}
+
+.pairs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+@media (min-width: 900px) {
+  .columns {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 1.5rem;
+  }
+
+  .card {
+    flex: 1 1 24rem;
+    padding: 1.75rem;
+  }
+}

@@ -1,0 +1,512 @@
+/* ---- Media ---- */
+.media {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(160deg, var(--media-a), var(--media-b));
+}
+
+.media video,
+.media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.figure {
+  position: absolute;
+  left: 50%;
+  top: 54%;
+  transform: translate(-50%, -50%);
+  width: 32%;
+  max-width: 8rem;
+  color: var(--figure);
+}
+
+.play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.playCircle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 50%;
+  /* Fixed brand brown over the video in both themes. */
+  background: color-mix(in srgb, var(--brown) 60%, transparent);
+  color: var(--yellow);
+  backdrop-filter: blur(4px);
+}
+
+.sampleNote {
+  position: absolute;
+  left: 50%;
+  bottom: 3.5rem;
+  transform: translateX(-50%);
+  max-width: calc(100% - 2rem);
+  padding: 0.375rem 0.75rem;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--brown) 85%, transparent);
+  color: var(--yellow);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+.trickTag {
+  position: absolute;
+  left: 0.75rem;
+  bottom: 0.75rem;
+  max-width: calc(100% - 1.5rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.3125rem 0.75rem;
+  border-radius: var(--radius-pill);
+  border: 1px solid color-mix(in srgb, var(--yellow) 35%, transparent);
+  background: var(--brown);
+  color: var(--yellow);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.sticker {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  padding: 0.375rem 0.75rem 0.4375rem;
+  border-radius: 12px;
+  background: var(--yellow);
+  color: var(--brown);
+  text-align: center;
+  transform: rotate(2deg);
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--brown) 25%, transparent);
+}
+
+.stickerNum {
+  display: block;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 2rem;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.stickerLabel {
+  display: block;
+  margin-top: 0.125rem;
+  font-family: var(--font-mono);
+  font-size: 0.5rem;
+  letter-spacing: 0.14em;
+}
+
+.smallScore {
+  position: absolute;
+  bottom: 0.5rem;
+  right: 0.5rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--yellow);
+  color: var(--brown);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.smallScore.muted {
+  background: var(--surface);
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+/* ---- Subscores ---- */
+.strip {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.625rem;
+  margin: 0;
+  padding: 0;
+}
+
+.strip dt {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.strip dd {
+  margin: 0;
+}
+
+.bar {
+  height: 5px;
+  margin: 0.3125rem 0;
+  border-radius: var(--radius-pill);
+  background: var(--track);
+  overflow: hidden;
+}
+
+.barFill {
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--fill);
+}
+
+.barNa {
+  background: repeating-linear-gradient(90deg, var(--track) 0 4px, transparent 4px 8px);
+}
+
+.num {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.na {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--faint);
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+  gap: 1.125rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bars.tight {
+  gap: 0.625rem;
+}
+
+.barRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 0.4375rem;
+}
+
+.barLabel {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.barLabel.off {
+  color: var(--faint);
+}
+
+.bars .bar {
+  height: 8px;
+  margin: 0;
+}
+
+.bars.tight .bar {
+  height: 6px;
+}
+
+.note {
+  margin-top: 0.4375rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* ---- Score block ---- */
+.scoreBlock {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
+}
+
+.bigScore {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.375rem;
+}
+
+.bigNum {
+  padding: 0.125rem 0.875rem;
+  border-radius: var(--radius-xl);
+  background: var(--yellow);
+  color: var(--brown);
+  font-family: var(--font-display);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+}
+
+.outOf {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.375rem;
+  color: var(--muted);
+}
+
+/* ---- Actions ---- */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 2.25rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.action:hover,
+.action[aria-pressed="true"] {
+  color: var(--ink);
+}
+
+.action[aria-pressed="true"] svg {
+  fill: currentColor;
+}
+
+.static {
+  cursor: default;
+}
+
+.share {
+  margin-left: auto;
+}
+
+/* ---- Post card ---- */
+.post {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  padding: 1rem 0 1.5rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.postPad {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  padding: 0 1rem;
+}
+
+.postMedia {
+  padding: 0 0.5rem;
+}
+
+.who {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.whoText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1875rem;
+}
+
+.handle {
+  font-weight: 600;
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.handle:hover {
+  text-decoration: underline;
+}
+
+.when {
+  margin-left: 0.5rem;
+  font-size: 0.8125rem;
+  color: var(--faint);
+  text-decoration: none;
+}
+
+.when:hover {
+  color: var(--ink);
+}
+
+.team {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4375rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ink-2);
+  text-decoration: none;
+}
+
+.teamMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--yellow);
+  color: var(--brown);
+  font-family: var(--font-display);
+  font-weight: 800;
+}
+
+.commentsLink {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--link);
+  font-size: 0.875rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+@media (min-width: 900px) {
+  .post {
+    padding: 0 0 2rem;
+  }
+
+  .postPad,
+  .postMedia {
+    padding: 0;
+  }
+}
+
+/* ---- Tricks (multi-trick lines) ---- */
+.tricks {
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--line);
+  background: var(--surface);
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.trick + .trick {
+  border-top: 1px solid var(--line);
+}
+
+.trickHead {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.125rem;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.trickHead[aria-expanded="true"] {
+  background: var(--panel);
+}
+
+.trickIndex {
+  width: 1.25rem;
+  font-family: var(--font-display);
+  font-weight: 800;
+  color: var(--faint);
+}
+
+.trickName {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 1.0625rem;
+}
+
+.trickMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 400;
+  color: var(--faint);
+}
+
+.trickBody {
+  padding: 0.25rem 1.125rem 1.25rem 3.375rem;
+  background: var(--panel);
+}
+
+.timeline {
+  position: relative;
+  height: 6px;
+  margin: 0.875rem 0 0.5rem;
+  border-radius: var(--radius-pill);
+  background: var(--track);
+}
+
+.mark {
+  position: absolute;
+  top: 50%;
+  width: 0.875rem;
+  height: 0.875rem;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  transform: translate(-50%, -50%);
+  background: var(--sel);
+}
+
+.mark.bad {
+  background: var(--danger);
+}
+
+.legend {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.legend i {
+  width: 0.625rem;
+  height: 0.625rem;
+  border-radius: 50%;
+  background: var(--sel);
+}
+
+.legend i.bad {
+  background: var(--danger);
+}

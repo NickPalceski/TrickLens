@@ -70,6 +70,8 @@ landed check and real scores (six subscores, averaged over the landed
 tricks), checked on real clips including ledge tricks. The scoring
 constants are uncalibrated guesses until enough hand-judged clips exist to
 tune them.
+The web app is built alongside, every screen from upload to teams, and runs
+on a mock API until it's wired to the live backend.
 See the [build order](docs/ARCHITECTURE.md#build-order).
 
 ## Stack
@@ -83,7 +85,7 @@ See the [build order](docs/ARCHITECTURE.md#build-order).
 | Compute | AWS Lambda (container images) |
 | Infra | Terraform, GitHub Actions, ECR |
 | Local dev | Docker Compose + LocalStack |
-| Frontend | Not built yet (planned: Next.js) |
+| Frontend | React + TypeScript (Vite), TanStack Query, pnpm workspace; React Native (Expo) later |
 
 ## Run it locally
 
@@ -96,7 +98,8 @@ make up      # build + start everything
 make health  # verify every dependency is reachable
 ```
 
-Then open <http://localhost:8000/docs>. One more one-time step, the Cognito
+Then open <http://localhost:3000> for the web app and
+<http://localhost:8000/docs> for the API. One more one-time step, the Cognito
 dev pool, plus every command, the tests and step-by-step API walkthroughs,
 are in the [**development guide**](docs/development.md).
 
@@ -115,6 +118,10 @@ backend/
   tests/            API + worker test suites
   Dockerfile        API image
   Dockerfile.worker worker image (ffmpeg + CV stack + model weights)
+frontend/
+  apps/web/         the web app (React + Vite), desktop and phone layouts
+  packages/api/     generated API types, typed client, query hooks, mocks
+  packages/tokens/  design tokens shared with the future native app
 infra/              Terraform
 .github/workflows/  CI and deploy pipelines
 docs/               architecture, component docs, guides

@@ -1,0 +1,13 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Supply-chain guard: never install a version published less than 14 days
+# ago (in minutes). A freshly hijacked release is usually caught and pulled
+# within that window.
+minimumReleaseAge: 20160
+
+# The store lives inside frontend/ (gitignored) so it sits on the same
+# filesystem as node_modules inside the `web` container, which lets pnpm
+# hard-link instead of copy, and survives container restarts.
+storeDir: .pnpm-store

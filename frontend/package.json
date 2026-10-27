@@ -1,0 +1,23 @@
+{
+  "name": "tricklens-frontend",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.28.3",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @tricklens/web dev",
+    "build": "pnpm --filter @tricklens/web build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "biome check .",
+    "fmt": "biome check --write .",
+    "types": "pnpm --filter @tricklens/api types",
+    "check": "biome ci . && pnpm --filter @tricklens/api types:check && pnpm -r typecheck && pnpm -r test && pnpm build"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "typescript": "5.9.3"
+  }
+}

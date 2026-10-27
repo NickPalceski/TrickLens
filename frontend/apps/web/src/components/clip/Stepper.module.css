@@ -1,0 +1,141 @@
+/* Phones: a vertical list with a connecting line. Desktop: a row. */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: var(--faint);
+}
+
+.step + .step::before {
+  content: "";
+  position: absolute;
+  left: calc(0.75rem - 1px);
+  bottom: 100%;
+  width: 2px;
+  height: 0.75rem;
+  background: var(--line);
+}
+
+.done + .step::before,
+.done + .done::before {
+  background: var(--sel);
+}
+
+.dot {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 50%;
+  border: 1.5px dashed var(--border);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+}
+
+.label {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.9375rem;
+}
+
+.done,
+.current {
+  color: var(--ink);
+}
+
+.done .dot {
+  border: none;
+  background: var(--sel);
+  color: var(--on-sel);
+}
+
+.current .dot {
+  border: none;
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.failed {
+  color: var(--danger);
+}
+
+.failed .dot {
+  border: none;
+  background: var(--danger);
+  color: var(--bg);
+}
+
+.skipped .label {
+  text-decoration: line-through;
+}
+
+.spin {
+  width: 0.75rem;
+  height: 0.75rem;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (min-width: 900px) {
+  .steps {
+    flex-direction: row;
+    gap: 0;
+    max-width: 52rem;
+  }
+
+  .step {
+    flex: 1;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .step:last-child {
+    flex: 0 0 auto;
+  }
+
+  /* Phone connectors off; each step draws a line from its dot to the next step. */
+  .step + .step::before {
+    display: none;
+  }
+
+  .step:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    top: calc(1.125rem - 1.5px);
+    left: 2.75rem;
+    right: 0.5rem;
+    height: 3px;
+    border-radius: var(--radius-pill);
+    background: var(--line);
+  }
+
+  .done:not(:last-child)::after {
+    background: var(--sel);
+  }
+
+  .dot {
+    width: 2.25rem;
+    height: 2.25rem;
+  }
+}

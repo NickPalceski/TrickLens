@@ -133,5 +133,32 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # ---------------------------------------------------------------------
+  # The web app (frontend/, React + Vite) on http://localhost:3000.
+  # Plain Node image, no build: the repo is bind-mounted and Vite serves it
+  # with hot reload, so no machine needs Node installed. Runs as the host
+  # user (HOST_UID/HOST_GID, exported by the Makefile) so node_modules and
+  # anything pnpm writes into frontend/ isn't root-owned. Talks to mocks by
+  # default (VITE_API_MODE in frontend/apps/web/.env); independent of the
+  # backend services. See docs/components/frontend.md.
+  # ---------------------------------------------------------------------
+  web:
+    image: node:24-alpine
+    working_dir: /app
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    environment:
+      HOME: /tmp
+      COREPACK_HOME: /app/.corepack
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
+      PATH: /tmp/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "3000:3000"
+    # Puts the `pnpm` shim (version pinned by frontend/package.json's
+    # packageManager) on PATH first, so package scripts can call `pnpm` too.
+    entrypoint: ["sh", "-c", "mkdir -p /tmp/bin && corepack enable --install-directory /tmp/bin && exec \"$$@\"", "--"]
+    command: ["sh", "-c", "pnpm install --frozen-lockfile && pnpm dev"]
+
 volumes:
   pgdata:

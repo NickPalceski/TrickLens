@@ -148,7 +148,10 @@ poster frame's CDN URL.
   `details` (stub analyses before 6c-3, media failures, *analysis
   failed*).
 - `analysis.tricks` is not `ClipOut.tricks`: those are the user's tags.
-  The analyzer never names a trick, and nothing matches the two up.
+  The analyzer never names a trick. The web app tags one trick per analyzed
+  trick, in order, so tag *i* names `analysis.tricks[i]` when the counts
+  match (tags keep their order in `clip_tricks.position`); see
+  [frontend.md](frontend.md#tagging-tricks).
 - The raw measurements behind the subscores stay in `analyses.details`
   ([data-model.md](data-model.md)); they're internal units, not API.
 

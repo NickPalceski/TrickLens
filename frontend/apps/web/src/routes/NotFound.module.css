@@ -1,0 +1,38 @@
+.page {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 1.5rem max(1rem, env(safe-area-inset-right, 0px)) 2rem max(1rem, env(safe-area-inset-left, 0px));
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.title {
+  font-size: 2.25rem;
+}
+
+.summary {
+  color: var(--muted);
+  max-width: 36rem;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1.25rem;
+  border-radius: var(--radius-xl);
+  border: 1.5px dashed var(--border);
+  background: var(--panel);
+  color: var(--ink-2);
+}
+
+@media (min-width: 900px) {
+  .page {
+    padding: 2.5rem 3rem 3rem;
+  }
+
+  .title {
+    font-size: 2.75rem;
+  }
+}

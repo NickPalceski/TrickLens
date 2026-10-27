@@ -846,7 +846,9 @@ failure.
   missed *failed* trick changes no score.
 - **A trick near the clip's end** shows up as "clip ends too soon after
   the landing" (stepping off at the end, rolling off after a gap). It
-  never affects the score.
+  never affects the score, but it is an entry in `analysis.tricks`, which
+  the web app asks the skater to name (see
+  [frontend.md, Known gaps](frontend.md#known-gaps-between-the-design-and-the-api)).
 - **Roll-away doesn't measure speed** (see
   [Subscores, as built](#subscores-as-built-6c-3)), and almost any landed
   trick rides away on the board, so it separates little until a

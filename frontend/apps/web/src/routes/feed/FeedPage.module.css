@@ -1,0 +1,29 @@
+.layout {
+  display: flex;
+  justify-content: center;
+  gap: 3rem;
+}
+
+.feed {
+  width: 100%;
+  max-width: 34rem;
+  min-width: 0;
+}
+
+/* The phone sheet positions itself; this wrapper only matters on desktop. */
+.panel {
+  display: contents;
+}
+
+@media (min-width: 900px) {
+  .feed {
+    flex: 0 1 30rem;
+  }
+
+  .withPanel .panel {
+    display: block;
+    flex: 0 1 28rem;
+    min-width: 0;
+    padding-top: 6.25rem;
+  }
+}
