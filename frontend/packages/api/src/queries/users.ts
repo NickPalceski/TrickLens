@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { expectOk, unwrap } from '../client.ts';
 import { useApi } from '../context.tsx';
 import type { components } from '../schema.ts';
@@ -20,6 +20,22 @@ export function useUser(username: string) {
   return useQuery({
     queryKey: keys.user(username),
     queryFn: async () => unwrap(await api.GET('/users/{username}', { params: { path: { username } } })),
+  });
+}
+
+/** A user's published clips (GET /users/{username}/clips), newest first, for the profile grid. */
+export function useUserClips(username: string) {
+  const api = useApi();
+  return useInfiniteQuery({
+    queryKey: keys.userClips(username),
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }) =>
+      unwrap(
+        await api.GET('/users/{username}/clips', {
+          params: { path: { username }, query: { limit: 12, cursor: pageParam } },
+        }),
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
   });
 }
 

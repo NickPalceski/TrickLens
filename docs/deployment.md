@@ -51,6 +51,25 @@ minutes). The job uses the `ALEMBIC_DATABASE_URL` secret, like the migrate
 job, and no AWS role. Locally the same thing is `make rescore`
 (`make rescore ARGS=--apply` to write).
 
+## Reading reports
+
+The app's analysis and bug reports are rows in prod's `reports` table
+(see the [development guide](development.md#reading-reports) for what
+they hold). Read them from your own machine, never from a GitHub Actions
+job: the repo is public, and so are its job logs.
+
+```bash
+ALEMBIC_DATABASE_URL='postgresql+psycopg://…neon…/neondb?sslmode=require' \
+  make reports ARGS="--days 7"
+```
+
+The URL is the same one as the `ALEMBIC_DATABASE_URL` GitHub secret (the
+Neon console's connection string, with the `psycopg` driver). Don't paste
+the output anywhere public either: bug reports carry usernames and browser
+details, and an analysis report's note is the skater's own words. A shared
+video's key is under `processed/` in the media bucket, which is kept (only
+`raw/` expires).
+
 ## Checking a deploy end to end (Postman)
 
 A green pipeline only proves `/health/deep` passes. To prove a clip really
@@ -229,10 +248,58 @@ TF_VAR_database_url="$DATABASE_URL" TF_VAR_budget_email="you@example.com" \
 
 Done for this deployment; a fresh account gets both repos in step 4 above.
 
+### Adding the domain (F4) — one-time, by hand
+
+`tricklens.com` is registered in Route 53 (its hosted zone came with the
+registration; see [infrastructure, The domain](components/infrastructure.md#the-domain)).
+Terraform adds everything on top, but the CI roles first need Route 53 and
+ACM rights, and CI can't grant itself those:
+
+1. Give the CI roles their new permissions locally, as in
+   [Fixing the CI roles](#fixing-the-ci-roles) below. The plan should show
+   exactly two in-place updates, `aws_iam_role_policy.gha_deploy` and
+   `aws_iam_role_policy.gha_plan`.
+2. Push to `main`. The deploy's `terraform apply` creates the rest:
+   - the certificate, which waits a few minutes for DNS validation;
+   - the site bucket and its CloudFront distribution;
+   - the media distribution's `media.tricklens.com` alias;
+   - `api.tricklens.com`;
+   - the DNS records, the bucket's CORS rule, and the Lambdas' new
+     `CDN_BASE_URL` and `CORS_ORIGINS`.
+
+   CloudFront changes take 5–15 minutes each, so this apply runs longer
+   than usual.
+3. Check it:
+   ```bash
+   curl -s https://api.tricklens.com/health/deep   # 200, every check green
+   dig +short media.tricklens.com                  # CloudFront addresses
+   curl -sI https://www.tricklens.com | grep -i location   # https://tricklens.com/
+   ```
+   `https://tricklens.com` itself answers with an error until the web app
+   is first deployed, which comes with wiring it to the live API.
+
 ## Fixing the CI roles
 
 A fix to a CI role's own trust policy or permissions can't go through CI,
-because CI can't assume the broken role. Apply it locally:
+because CI can't assume the broken role. Apply it locally, as an AWS
+identity that can change IAM roles and read Route 53: the `tricklens-admin`
+IAM user (`AdministratorAccess`, CLI only, `export
+AWS_PROFILE=tricklens-admin`; reactivate its access key in IAM first, and
+deactivate it again after), not the `tricklens-dev` user the app's local
+tooling uses, with the same two
+variables the deploy passes (`DATABASE_URL` and `BUDGET_EMAIL`, the
+GitHub secrets' values). Terraform asks for them even when targeting, but
+a targeted apply doesn't touch what they feed:
+
+```bash
+make tf-init
+export TF_VAR_database_url='…' TF_VAR_budget_email='…'
+terraform -chdir=infra plan \
+  -target=aws_iam_role.gha_deploy -target=aws_iam_role.gha_plan \
+  -target=aws_iam_role_policy.gha_deploy -target=aws_iam_role_policy.gha_plan
+```
+
+If the plan shows only those, apply the same targets:
 
 ```bash
 terraform -chdir=infra apply \

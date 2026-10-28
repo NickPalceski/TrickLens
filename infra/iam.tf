@@ -256,8 +256,31 @@ data "aws_iam_policy_document" "gha_deploy_policy" {
       "ssm:ListTagsForResource",
       "ssm:AddTagsToResource",
       "ssm:RemoveTagsFromResource",
+      # The domain's certificate (F4, infra/domain.tf).
+      "acm:*",
     ]
     resources = ["*"]
+  }
+  # The domain's DNS (F4, infra/domain.tf). Reads account-wide (the zone
+  # lookup lists zones, and record changes are polled through GetChange),
+  # writes only in tricklens.com's own hosted zone. No zone create/delete:
+  # the zone belongs to the domain registration, not to Terraform.
+  statement {
+    sid = "Route53Read"
+    actions = [
+      "route53:ListHostedZones",
+      "route53:ListHostedZonesByName",
+      "route53:GetHostedZone",
+      "route53:ListResourceRecordSets",
+      "route53:ListTagsForResource",
+      "route53:GetChange",
+    ]
+    resources = ["*"]
+  }
+  statement {
+    sid       = "Route53WriteOwnZone"
+    actions   = ["route53:ChangeResourceRecordSets"]
+    resources = [data.aws_route53_zone.main.arn]
   }
   statement {
     sid       = "TerraformStateLock"
@@ -287,7 +310,7 @@ data "aws_iam_policy_document" "gha_plan_policy" {
       "ecr:Describe*", "ecr:List*", "ecr:GetLifecyclePolicy",
       "lambda:Get*", "lambda:List*",
       "apigateway:GET",
-      "cloudfront:Get*", "cloudfront:List*",
+      "cloudfront:Get*", "cloudfront:List*", "cloudfront:DescribeFunction",
       # s3:Get*, not s3:GetBucket* — reading an aws_s3_bucket also calls
       # GetLifecycleConfiguration/GetEncryptionConfiguration/
       # GetReplicationConfiguration/GetAccelerateConfiguration, none of
@@ -301,6 +324,8 @@ data "aws_iam_policy_document" "gha_plan_policy" {
       "iam:GetRole", "iam:GetRolePolicy", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies",
       "iam:GetOpenIDConnectProvider",
       "ssm:DescribeParameters", "ssm:GetParameter", "ssm:ListTagsForResource",
+      "acm:Describe*", "acm:List*", "acm:Get*",
+      "route53:Get*", "route53:List*",
       "sts:GetCallerIdentity",
     ]
     resources = ["*"]

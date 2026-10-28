@@ -219,7 +219,14 @@ async def clip_out(
         source_fps=clip.source_fps,
         steeze_score=clip.steeze_score,
         published_at=clip.published_at,
-        tricks=[TrickOut.model_validate(ct.trick) for ct in clip.clip_tricks],
+        tricks=[
+            TrickOut(
+                id=ct.trick.id,
+                canonical_name=ct.trick.canonical_name,
+                analysis_index=ct.analysis_index,
+            )
+            for ct in clip.clip_tricks
+        ],
         analysis=analysis_out(latest) if latest else None,
         like_count=like_count,
         comment_count=comment_count,
@@ -227,6 +234,7 @@ async def clip_out(
         liked_by_me=liked_by_me,
         team=team_brief(clip.team) if clip.team else None,
         score_included=clip.score_included,
+        analyze=clip.analyze,
         created_at=clip.created_at,
     )
 

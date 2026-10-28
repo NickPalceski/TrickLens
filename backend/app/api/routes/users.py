@@ -8,14 +8,20 @@ authenticated call after signing up, choosing the public `username` at that
 point.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentClaims, CurrentUser, DbSession, OptionalUser
-from app.api.serializers import user_public
+from app.api.listing import PAGE_MAX, clip_page
+from app.api.serializers import team_out, user_public
+from app.models.clip import Clip
+from app.models.enums import ClipStatus
 from app.models.social import Follow
+from app.models.team import Team, TeamMember
 from app.models.user import Profile, User
+from app.schemas.clip import FeedPage
+from app.schemas.team import TeamOut
 from app.schemas.user import ProfileOut, ProfileUpdate, UserCreate, UserMe, UserPublic, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -83,10 +89,55 @@ async def update_profile(body: ProfileUpdate, user: CurrentUser, db: DbSession) 
     return ProfileOut.model_validate(profile)
 
 
+@router.get("/me/drafts")
+async def list_my_drafts(
+    user: CurrentUser,
+    db: DbSession,
+    limit: int = Query(20, ge=1, le=PAGE_MAX),
+    cursor: str | None = None,
+) -> FeedPage:
+    """Your clips that aren't published yet (uploading, queued, analyzing,
+    ready, or couldn't be scored), newest first, so one left mid-analysis
+    can be found again."""
+    stmt = select(Clip).where(Clip.user_id == user.id, Clip.status != ClipStatus.PUBLISHED)
+    return await clip_page(stmt, Clip.created_at, db, user, limit, cursor)
+
+
+@router.get("/me/teams")
+async def list_my_teams(user: CurrentUser, db: DbSession) -> list[TeamOut]:
+    """Teams you're a member of, with your role (`my_role`), by name. A team
+    you own that's still forming is included (`founded: false`); one you're
+    only invited to found isn't, since you're not a member yet (that's
+    GET /teams/invites/mine)."""
+    teams = await db.scalars(
+        select(Team)
+        .join(TeamMember, TeamMember.team_id == Team.id)
+        .where(TeamMember.user_id == user.id)
+        .order_by(func.lower(Team.name), Team.id)
+    )
+    return [await team_out(t, db, viewer=user) for t in teams]
+
+
 @router.get("/{username}")
 async def read_public(username: str, db: DbSession, viewer: OptionalUser) -> UserPublic:
     user = await _by_username(username, db)
     return await user_public(user, db, viewer=viewer)
+
+
+@router.get("/{username}/clips")
+async def list_user_clips(
+    username: str,
+    db: DbSession,
+    viewer: OptionalUser,
+    limit: int = Query(20, ge=1, le=PAGE_MAX),
+    cursor: str | None = None,
+) -> FeedPage:
+    """A user's published clips, newest first, keyset-paginated like the
+    feed. Clips taken out of their average (`score_included: false`) are
+    listed too; the profile marks them."""
+    user = await _by_username(username, db)
+    stmt = select(Clip).where(Clip.user_id == user.id, Clip.status == ClipStatus.PUBLISHED)
+    return await clip_page(stmt, Clip.published_at, db, viewer, limit, cursor)
 
 
 @router.post("/{username}/follow", status_code=status.HTTP_201_CREATED)

@@ -7,6 +7,7 @@ point at it, so `get_current_user`'s DB lookup is exercised for real.
 """
 
 import uuid
+from decimal import Decimal
 
 import httpx
 import pytest
@@ -18,6 +19,8 @@ from app.api.routes import clips as clips_routes
 from app.config import get_settings
 from app.db import SessionLocal
 from app.main import app
+from app.models.clip import Analysis, Clip
+from app.models.enums import ClipStatus
 from app.models.user import User
 
 # Explicit, not just relying on pyproject.toml's default: app.db's engine is
@@ -61,9 +64,10 @@ def _reachable_from_container(url: str) -> str:
     return url
 
 
-async def _create_and_upload(client: httpx.AsyncClient) -> dict:
+async def _create_and_upload(client: httpx.AsyncClient, **extra) -> dict:
     resp = await client.post(
-        "/clips", json={"content_type": "video/mp4", "duration_ms": 5000, "source_fps": 60}
+        "/clips",
+        json={"content_type": "video/mp4", "duration_ms": 5000, "source_fps": 60} | extra,
     )
     assert resp.status_code == 201, resp.text
     body = resp.json()
@@ -167,3 +171,107 @@ async def test_other_users_draft_is_invisible(authed_client):
     app.dependency_overrides[deps.get_current_claims] = _other_claims
     resp = await authed_client.get(f"/clips/{clip['id']}")
     assert resp.status_code == 404
+
+
+
+async def test_clip_without_analysis_is_tagged_up_front_and_never_scored(
+    authed_client, monkeypatch
+):
+    """`analyze: false` (F4): tags go on from creation, the worker only
+    transcodes (the stub here: the API image has no ffmpeg), and the clip
+    becomes `analyzed` with no score and no analysis."""
+    queue = _CapturingQueue()
+    monkeypatch.setattr(clips_routes, "get_queue", lambda: queue)
+
+    clip = await _create_and_upload(authed_client, analyze=False)
+    clip_id = clip["id"]
+    assert clip["analyze"] is False
+
+    resp = await authed_client.post(f"/clips/{clip_id}/tricks", json={"tricks": ["Ollie"]})
+    assert resp.status_code == 200, "a clip without analysis can be tagged while still a draft"
+    resp = await authed_client.post(
+        f"/clips/{clip_id}/tricks", json={"tricks": [{"name": "Ollie", "analysis_index": 0}]}
+    )
+    assert resp.status_code == 422, "nothing was analyzed, so no analysis_index fits"
+
+    resp = await authed_client.post(f"/clips/{clip_id}/complete")
+    assert resp.json()["status"] == "queued", "still queued: the worker transcodes it"
+    resp = await authed_client.post(f"/clips/{clip_id}/publish")
+    assert resp.status_code == 409, "not publishable until the worker is done"
+
+    await worker._process_message(queue.sent[0])
+
+    body = (await authed_client.get(f"/clips/{clip_id}")).json()
+    assert body["status"] == "analyzed"
+    assert body["analysis"] is None
+    assert body["steeze_score"] is None
+    assert [t["canonical_name"] for t in body["tricks"]] == ["ollie"]
+
+    resp = await authed_client.post(f"/clips/{clip_id}/publish")
+    assert resp.status_code == 200, resp.text
+
+
+async def _analyzed_clip_with(client: httpx.AsyncClient, outcomes: list[str]) -> str:
+    """An analyzed clip of the test user's whose analysis found these
+    tricks, inserted directly (the stub always finds one)."""
+    me = (await client.get("/users/me")).json()
+    async with SessionLocal() as db:
+        clip = Clip(
+            user_id=uuid.UUID(me["id"]),
+            s3_key=f"raw/{uuid.uuid4()}.mp4",
+            status=ClipStatus.ANALYZED,
+            steeze_score=Decimal("75.0"),
+        )
+        db.add(clip)
+        await db.flush()
+        tricks = [
+            {"outcome": o, "pop_ms": 1000 * i, "land_ms": 1000 * i + 400, "confidence": 0.9}
+            for i, o in enumerate(outcomes)
+        ]
+        db.add(
+            Analysis(
+                clip_id=clip.id,
+                model_version="test",
+                confidence=Decimal("0.9"),
+                details={"schema": 1, "tricks": tricks},
+            )
+        )
+        await db.commit()
+        return str(clip.id)
+
+
+async def test_tags_name_analyzed_tricks_and_can_skip_one(authed_client):
+    """A step-off at the end comes back as an analyzed "trick" (6d-2). The
+    skater names the real ones by index and leaves it untagged."""
+    clip_id = await _analyzed_clip_with(
+        authed_client, ["landed", "bailed", "clip ends too soon after the landing"]
+    )
+    url = f"/clips/{clip_id}/tricks"
+
+    resp = await authed_client.post(
+        url,
+        json={
+            "tricks": [
+                {"name": "Kickflip", "analysis_index": 0},
+                {"name": "Heelflip", "analysis_index": 1},
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert [(t["canonical_name"], t["analysis_index"]) for t in resp.json()["tricks"]] == [
+        ("kickflip", 0),
+        ("heelflip", 1),
+    ]
+    # Still stored after the request's session is gone (see the viewonly gotcha).
+    body = (await authed_client.get(f"/clips/{clip_id}")).json()
+    assert [t["analysis_index"] for t in body["tricks"]] == [0, 1]
+
+    out_of_range = {"tricks": [{"name": "Ollie", "analysis_index": 3}]}
+    assert (await authed_client.post(url, json=out_of_range)).status_code == 422
+    twice = {"tricks": [{"name": "A", "analysis_index": 0}, {"name": "B", "analysis_index": 0}]}
+    assert (await authed_client.post(url, json=twice)).status_code == 422
+
+    # Plain names still work, tagging by position (the pre-F4 behaviour).
+    resp = await authed_client.post(url, json={"tricks": ["Ollie"]})
+    assert resp.status_code == 200
+    assert resp.json()["tricks"][0]["analysis_index"] is None

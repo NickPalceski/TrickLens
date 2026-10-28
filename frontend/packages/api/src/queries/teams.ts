@@ -1,4 +1,10 @@
-import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  type QueryClient,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { expectOk, unwrap } from '../client.ts';
 import { useApi } from '../context.tsx';
 import type { TeamCreate, TeamOut, TeamRole, TeamUpdate } from '../types.ts';
@@ -19,6 +25,49 @@ export function useTeam(slug: string) {
   return useQuery({
     queryKey: keys.team(slug),
     queryFn: async () => unwrap(await api.GET('/teams/{slug}', path(slug))),
+  });
+}
+
+/**
+ * Teams you're a member of (GET /users/me/teams), with your role
+ * (`my_role`), forming ones you own included. The Teams tab, and "Tag to a
+ * team" before publishing, which may only offer your own teams.
+ */
+export function useMyTeams() {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.myTeams,
+    queryFn: async () => unwrap(await api.GET('/users/me/teams')),
+  });
+}
+
+/** A team's published clips (GET /teams/{slug}/clips), newest first. */
+export function useTeamClips(slug: string, enabled = true) {
+  const api = useApi();
+  return useInfiniteQuery({
+    queryKey: keys.teamClips(slug),
+    enabled,
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }) =>
+      unwrap(
+        await api.GET('/teams/{slug}/clips', {
+          params: { path: { slug }, query: { limit: 12, cursor: pageParam } },
+        }),
+      ),
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+  });
+}
+
+/**
+ * Whether you've asked to join (GET /teams/{slug}/join-requests/mine).
+ * `TeamOut` doesn't say, so without it "Request sent" wouldn't survive a reload.
+ */
+export function useMyJoinRequest(slug: string, enabled = true) {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.myJoinRequest(slug),
+    enabled,
+    queryFn: async () => unwrap(await api.GET('/teams/{slug}/join-requests/mine', path(slug))),
   });
 }
 

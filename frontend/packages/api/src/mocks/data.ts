@@ -228,6 +228,8 @@ function clip(s: ClipSeed): ClipOut {
     id: `${s.id.slice(0, -2)}t${i}`,
     // The API stores trick names lowercased (canonical_name).
     canonical_name: name.toLowerCase(),
+    // Seeded like tags from before F4, named by position.
+    analysis_index: null,
   }));
   const status = s.status ?? 'published';
   return {
@@ -252,6 +254,7 @@ function clip(s: ClipSeed): ClipOut {
     liked_by_me: s.liked ?? false,
     team: s.team ?? null,
     score_included: s.scoreIncluded ?? true,
+    analyze: true,
     created_at: ago(s.hoursAgo + 0.1),
   };
 }
@@ -497,12 +500,25 @@ export const seedPeople = () => structuredClone(people);
 export { brief, seedClips, seedComments };
 
 /** What the simulated worker decides for an upload (the prototype's outcome picker). */
-export type MockOutcome = 'single' | 'line' | 'failed';
+export type MockOutcome = 'single' | 'line' | 'stepoff' | 'failed';
 
 /** The analysis the simulated worker writes for each outcome, like the real worker's shape. */
 export function simulatedAnalysis(outcome: MockOutcome): AnalysisOut {
   if (outcome === 'line') return structuredClone(lineAnalysis);
   if (outcome === 'failed') return structuredClone(failedAnalysis);
+  if (outcome === 'stepoff') {
+    // A landed trick, then stepping off at the very end of the clip, which
+    // the analyzer lists as a second "trick" it couldn't judge.
+    const a = singleTrick([78, 74, 62, 70, 72, null], 1300, '0.86');
+    a.tricks.push({
+      outcome: 'clip ends too soon after the landing',
+      takeoff_ms: 4200,
+      touchdown_ms: 4500,
+      confidence: 0.5,
+      subscores: null,
+    });
+    return a;
+  }
   return singleTrick([81, 77, 86, 70, 75, 84], 1300, '0.88');
 }
 

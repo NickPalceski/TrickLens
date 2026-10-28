@@ -31,3 +31,11 @@ export type JoinPolicy = Schemas['JoinPolicy'];
 export type TeamRole = Schemas['TeamRole'];
 export type ClipCreate = Schemas['ClipCreate'];
 export type ClipCreateOut = Schemas['ClipCreateOut'];
+export type TrickTag = Schemas['TrickOut'];
+export type TrickTagIn = Schemas['TrickTagIn'];
+export type MyJoinRequest = Schemas['MyJoinRequestOut'];
+export type AnalysisReportCreate = Schemas['AnalysisReportCreate'];
+/** What a skater can say is wrong with an analysis (the report form's checklist). */
+export type AnalysisProblem = NonNullable<AnalysisReportCreate['problems']>[number];
+export type BugReportCreate = Schemas['BugReportCreate'];
+export type ReportCreated = Schemas['ReportCreated'];

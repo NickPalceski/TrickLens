@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { mockData } from '@tricklens/api/mocks';
+import { mockData, mockState } from '@tricklens/api/mocks';
 import { HttpResponse, http } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
 import { renderApp } from '../../test/render.tsx';
@@ -70,6 +70,36 @@ describe('upload', () => {
     expect(screen.getByRole('link', { name: 'Downtown Skaters' })).toBeInTheDocument();
   });
 
+  it('leaves out a step-off at the end as not a trick', async () => {
+    const { user, router } = await startUpload();
+    await user.click(screen.getByRole('radio', { name: 'Ends with a step-off' }));
+    await user.click(screen.getByRole('button', { name: 'Upload clip' }));
+
+    await user.type(await screen.findByLabelText('Trick 1'), 'Kickflip');
+    // The analyzer's second "trick" is the step-off: pre-ticked, so it has no name field.
+    expect(screen.getByRole('checkbox', { name: /^Not a trick, number 2/ })).toBeChecked();
+    expect(screen.queryByLabelText('Trick 2')).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /^Not a trick, number 1/ })).not.toBeChecked();
+
+    await user.click(screen.getByRole('button', { name: 'Publish clip' }));
+    await waitFor(() => expect(router.state.location.pathname).toMatch(/^\/clips\/a2/));
+    const clipId = router.state.location.pathname.split('/').at(-1);
+    expect(mockState().clips.find((c) => c.id === clipId)?.tricks).toEqual([
+      expect.objectContaining({ canonical_name: 'kickflip', analysis_index: 0 }),
+    ]);
+    // The clip page shows the one trick, not a two-trick breakdown.
+    expect(await screen.findByRole('heading', { name: 'Steeze breakdown' })).toBeInTheDocument();
+  });
+
+  it('asks for at least one trick when every row is marked not a trick', async () => {
+    const { user } = await startUpload();
+    await user.click(screen.getByRole('radio', { name: 'Ends with a step-off' }));
+    await user.click(screen.getByRole('button', { name: 'Upload clip' }));
+    await user.click(await screen.findByRole('checkbox', { name: /^Not a trick, number 1/ }));
+    await user.click(screen.getByRole('button', { name: 'Publish clip' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Name at least one trick.');
+  });
+
   it('can skip analysis: name the tricks up front and post without a score', async () => {
     const { user, router } = await startUpload();
     await user.click(screen.getByRole('switch', { name: /Analyze the clip/ }));
@@ -135,5 +165,6 @@ const analyzingClip = {
   view_count: 0,
   liked_by_me: false,
   score_included: true,
+  analyze: true,
   created_at: new Date().toISOString(),
 };

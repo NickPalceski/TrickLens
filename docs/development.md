@@ -165,6 +165,7 @@ The **id token**, not the access token, is the bearer credential, so
 | `make rankings` | Rebuild Discover rankings + team score snapshots | `docker compose run --rm api python -m app.rankings` |
 | `make calibrate` | Run the analyzer on your hand-judged clips (`tests/fixtures/clips/judgments.toml`) and print a report with proposed `calibration.py` constants (6d) | `docker compose run --rm --no-deps --user "$(id -u):$(id -g)" worker python -m app.analyzer.calibrate` |
 | `make rescore` | Dry run: which stored scores the current `calibration.py` would change (`ARGS=--apply` writes them) | `docker compose run --rm api python -m app.rescore` |
+| `make reports` | Read the analysis and bug reports sent from the app (`ARGS="--kind bug --days 7"`, `ARGS="--id <uuid>"` for one in full); see [Reading reports](#reading-reports) | `docker compose run --rm -e ALEMBIC_DATABASE_URL api python -m app.reports` |
 | `make sweep` | Fail clips stuck `queued`/`analyzing` for over 2h ("analysis failed"); prod runs it on every rankings tick | `docker compose run --rm api python -m app.sweep` |
 | `make tf-init` / `tf-plan` / `tf-apply` | Terraform against prod (see the [deployment guide](deployment.md)) | `terraform -chdir=infra ...` |
 | `make web` | Start just the web app on :3000 | `docker compose up -d web` |
@@ -261,10 +262,13 @@ curl -X POST "localhost:8000/clips/$clip_id/complete" -H "Authorization: Bearer 
 # 4. Poll until the worker (docker compose logs -f worker) is done
 curl "localhost:8000/clips/$clip_id" -H "Authorization: Bearer $ID_TOKEN"
 
-# 5. Once "analyzed": tag it, optionally tag a team, and publish
+# 5. Once "analyzed": tag it, optionally tag a team, and publish.
+#    analysis_index says which of analysis.tricks a name is for; an
+#    analyzed trick you leave out (a step-off at the end) isn't shown.
+#    Plain names ("tricks": ["kickflip"]) still work, tagging by position.
 curl -X POST "localhost:8000/clips/$clip_id/tricks" \
   -H "Authorization: Bearer $ID_TOKEN" -H "Content-Type: application/json" \
-  -d '{"tricks": ["kickflip"]}'
+  -d '{"tricks": [{"name": "kickflip", "analysis_index": 0}]}'
 
 # optional — only while "analyzed", and only for a team you're on; null clears it
 curl -X PATCH "localhost:8000/clips/$clip_id/team" \
@@ -286,6 +290,35 @@ steeze-v0.2-uncalibrated`), so a clip with no skater or no landed trick comes
 back `unanalyzable` with the gate's reason, and `analysis.tricks` says what
 happened to each trick. Only `make test` (API image) still uses the stub,
 which fails ~10% of clips on purpose (`model_version: stub-v1`).
+
+**Posting without analysis:** add `"analyze": false` to step 1's body.
+The clip can then be tagged straight away, still goes through `queued` and
+`analyzing` while the worker transcodes it, and ends `analyzed` with
+`analysis: null` and no score.
+
+**Your other lists:** `GET /users/me/drafts` (everything you haven't
+published), `GET /users/me/teams`, `GET /users/{username}/clips` and
+`GET /teams/{slug}/clips` (published clips, keyset-paginated like the
+feed).
+
+### Reading reports
+
+The web app's "Report a problem with this analysis" and "Report a bug"
+land in the `reports` table (`POST /clips/{id}/analysis-reports`,
+`POST /bug-reports`, see the [API doc](components/api.md#reports)).
+`make reports` prints the newest 20, one short block each:
+
+```bash
+make reports                                   # newest 20, both kinds
+make reports ARGS="--kind analysis --days 7"   # last week's analysis reports
+make reports ARGS="--id <uuid>"                # one report in full, as JSON
+```
+
+An analysis report shows the problems ticked, which trick, the note, the
+analysis it was about (model version, score or reason), and the processed
+video's key only if the skater agreed to share it. For prod, see the
+[deployment guide](deployment.md#reading-reports). Reports never go to
+GitHub, including its issues and Actions logs: the repo is public.
 
 ### Seeing what the analyzer saw
 
@@ -429,8 +462,9 @@ every API call from the mock (see
   able to read its length). The "Prototype: what the analyzer finds" picker
   decides the result: pick *Three-trick line*, wait ~6s through queued and
   analyzing, then name each trick (the ▶ buttons jump your video to it) and
-  publish. Try *Couldn't score*, and turning "Analyze the clip" off to name
-  tricks up front.
+  publish. *Ends with a step-off* shows the "Not a trick" box pre-ticked
+  on the second row. Try *Couldn't score*, and turning "Analyze the clip"
+  off to name tricks up front.
 - **Teams:** accept or decline the founding invite to Ledge Lords; on
   Downtown Skaters (you own it) promote Leo, approve a join request, open
   Team settings; ask to join Westside Ledge Club; join Night Shift; create

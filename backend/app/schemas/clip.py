@@ -23,19 +23,24 @@ class ClipCreate(BaseModel):
     content_type: str
     duration_ms: int = Field(gt=0, le=30_000)  # clips are capped at 30s
     source_fps: int = Field(gt=0, le=240)
+    # False skips the analyzer (F4): the worker only transcodes, the clip
+    # becomes `analyzed` with no score, and its tricks can be tagged right
+    # away. See app/models/clip.py.
+    analyze: bool = True
 
 
 class TrickOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: uuid.UUID
     canonical_name: str
+    # Which entry of `analysis.tricks` this tag names, or null (a clip
+    # posted without analysis, or tagged before F4: then tag i names entry i).
+    analysis_index: int | None = None
 
 
 class AnalyzedTrickOut(BaseModel):
     """One trick the analyzer found in the clip (6c-3), in clip order. Not
     the user's trick tags (`ClipOut.tricks`): the analyzer never names a
-    trick, and nothing matches the two up."""
+    trick. A tag says which of these it names with `analysis_index`."""
 
     # `landed`, `bailed`, or why it couldn't be judged ("trick left the
     # frame", "analysis failed for this trick", ...). Only landed tricks
@@ -93,6 +98,8 @@ class ClipOut(BaseModel):
     # unlike `team`, this stays editable via PATCH /clips/{id}/score-inclusion
     # even after publishing (see app/models/clip.py).
     score_included: bool = True
+    # False when the skater skipped analysis at upload (F4).
+    analyze: bool = True
     created_at: datetime
 
 
@@ -124,17 +131,36 @@ class ClipScoreInclusionUpdate(BaseModel):
     included: bool
 
 
-class TagTricksRequest(BaseModel):
-    """Body for POST /clips/{id}/tricks. Plain names for now — get-or-create
-    against `tricks`, no fuzzy/alias matching yet (see docs/components/
-    data-model.md's design notes)."""
+class TrickTagIn(BaseModel):
+    """One tag: a trick name, and which analyzed trick it names."""
 
-    tricks: list[str] = Field(min_length=1, max_length=5)
+    name: str
+    # Index into the clip's `analysis.tricks`. Null when the clip has no
+    # analysis, or to tag by position alone (the pre-F4 behaviour).
+    analysis_index: int | None = Field(default=None, ge=0)
+
+
+class TagTricksRequest(BaseModel):
+    """Body for POST /clips/{id}/tricks, replacing any earlier tags, in line
+    order. Each item is a plain name or a `TrickTagIn`; an analyzed trick
+    left out (one the skater says isn't a trick) simply isn't tagged.
+    Names are get-or-create against `tricks`, no fuzzy/alias matching yet
+    (see docs/components/data-model.md's design notes)."""
+
+    tricks: list[str | TrickTagIn] = Field(min_length=1, max_length=5)
 
     @field_validator("tricks")
     @classmethod
-    def _validate_tricks(cls, v: list[str]) -> list[str]:
-        cleaned = [t.strip() for t in v]
-        if any(not (1 <= len(t) <= 60) for t in cleaned):
+    def _validate_tricks(cls, v: list[str | TrickTagIn]) -> list[TrickTagIn]:
+        tags = [
+            TrickTagIn(name=t.strip())
+            if isinstance(t, str)
+            else TrickTagIn(name=t.name.strip(), analysis_index=t.analysis_index)
+            for t in v
+        ]
+        if any(not (1 <= len(t.name) <= 60) for t in tags):
             raise ValueError("each trick name must be 1-60 characters")
-        return cleaned
+        indexes = [t.analysis_index for t in tags if t.analysis_index is not None]
+        if len(indexes) != len(set(indexes)):
+            raise ValueError("each analyzed trick can be tagged once")
+        return tags

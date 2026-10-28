@@ -15,7 +15,7 @@ WORKER_TESTS := tests/test_media.py tests/test_analyzer_detect.py \
 	tests/test_analyzer_real_clips.py
 
 .PHONY: help init up down clean logs ps health migrate revision shell psql fmt test test-worker \
-	licenses analyze-clip calibrate rescore rankings sweep \
+	licenses analyze-clip calibrate rescore rankings sweep reports \
 	tf-init tf-plan tf-apply \
 	web web-install web-test web-check web-fmt web-types
 
@@ -89,6 +89,9 @@ calibrate: ## Tune calibration.py against your hand-judged clips (tests/fixtures
 
 rescore: ## Dry run: list stored scores that the current calibration.py would change (add ARGS=--apply to write)
 	docker compose run --rm api python -m app.rescore $(ARGS)
+
+reports: ## Read the analysis and bug reports sent from the app (ARGS=--kind bug, --days 7, --id <uuid>; prod: docs/deployment.md)
+	docker compose run --rm -e ALEMBIC_DATABASE_URL api python -m app.reports $(ARGS)
 
 sweep: ## Fail clips stuck queued/analyzing for over 2h (on demand; runs with every rankings tick in prod, 6c-3)
 	docker compose run --rm api python -m app.sweep

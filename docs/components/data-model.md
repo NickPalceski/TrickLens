@@ -1,7 +1,7 @@
 # Data model
 
 Postgres schema behind everything: users, clips and their analyses, the
-social graph, teams, and the Discover snapshots. SQLAlchemy models live in
+social graph, teams, the Discover snapshots, and reports from the app. SQLAlchemy models live in
 `backend/app/models/`, migrations in `backend/alembic/versions/`.
 
 ← Back to the [architecture overview](../ARCHITECTURE.md).
@@ -33,6 +33,8 @@ erDiagram
     users |o--o{ clip_views : "views"
     clips ||--o| clip_rankings : "this week's snapshot"
     teams ||--o{ team_score_history : "snapshots"
+    users |o--o{ reports : "sends"
+    clips |o--o{ reports : "reported"
 
     users {
         uuid id PK
@@ -59,6 +61,7 @@ erDiagram
         enum status "clip_status"
         uuid team_id FK "nullable"
         bool score_included
+        bool analyze "false: posted without a score"
         string s3_key "raw upload"
         string processed_key "720p transcode"
         string thumb_key
@@ -86,6 +89,7 @@ erDiagram
         uuid clip_id PK, FK
         int position PK
         uuid trick_id FK
+        int analysis_index "which analyzed trick, nullable"
     }
     follows {
         uuid id PK
@@ -144,6 +148,16 @@ erDiagram
         decimal score
         timestamptz captured_at
     }
+    reports {
+        uuid id PK
+        enum kind "analysis/bug"
+        uuid user_id FK "nullable: signed out"
+        uuid clip_id FK "nullable"
+        jsonb body "what the person sent"
+        jsonb analysis "server's snapshot"
+        bool share_video "consent"
+        timestamptz created_at
+    }
 ```
 
 The tables fall into four groups:
@@ -160,9 +174,11 @@ The tables fall into four groups:
 - **Discover snapshots:** `clip_rankings` (rebuilt wholesale) and
   `team_score_history` (append-only), both written by `app/rankings.py`
   (see the [API doc](api.md#feed-and-discover)).
+- **Reports** (F4): `reports`, append-only, written by the app's two report
+  forms (see the [API doc](api.md#reports)) and read with `make reports`.
 
 Enum types: `stance`, `skate_style`, `clip_status`, `team_level`,
-`join_policy`, `team_role`, `join_request_kind`. Every enum column goes
+`join_policy`, `team_role`, `join_request_kind`, `report_kind`. Every enum column goes
 through `app.models.enums.sa_enum()` (see CLAUDE.md's gotcha on SQLAlchemy
 sending `.name` instead of `.value`).
 
@@ -179,6 +195,7 @@ sending `.name` instead of `.value`).
 | `0007` | 4d | `clip_views`, `clip_rankings`, `team_score_history` |
 | `0008` | 6a | `clips.processed_key` |
 | `0009` | 6c-3 | `analyses.details` |
+| `0010` | F4 | `clips.analyze` (server default true), `clip_tricks.analysis_index` (nullable), `reports` + `report_kind` enum |
 
 Production runs `alembic upgrade head` *before* the new code goes live, so
 every migration must be backward-compatible with the previous code (see
@@ -250,6 +267,17 @@ every migration must be backward-compatible with the previous code (see
 - **`clip_tricks`' primary key is `(clip_id, position)`, not `(clip_id,
   trick_id)`.** Position is what actually needs to be unique per clip (one
   trick per slot in a line); a trick could in principle repeat.
+- **`clip_tricks.analysis_index` says which analyzed trick a tag names**
+  (an index into the latest analysis's `details.tricks`, F4), instead of
+  relying on position. An analyzed trick no tag names is one the skater
+  said isn't a trick, typically a step-off at the end of the clip, which
+  the analyzer lists as "clip ends too soon after the landing". Null for
+  tags from before F4 and for clips posted without analysis.
+- **`reports` keeps both FKs `SET NULL`.** A report is worth keeping after
+  the clip or account it came from is gone. `body` is the validated request
+  as sent; `analysis` is the server's own snapshot of what was reported,
+  and it records the processed video's key only when `share_video` (the
+  skater's consent) is true.
 - **`follows` targets a user *or* a team, as two nullable FKs + a check
   constraint** — not an untyped `(followee_type, followee_id)` pair. The
   home feed pulls clips from followed users *and* teams, so the target

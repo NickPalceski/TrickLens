@@ -64,14 +64,15 @@ The full picture, with the key flows and design decisions, is in
 ## Status
 
 Steps 1–5 are done and **live in AWS**: auth, the full clip pipeline, the
-social features, and automated deploys. Step 6, the real analyzer, is in
+social features, and automated deploys. Step 6, the real analyzer, is
 done for the MVP: media processing, trick finding, body-pose analysis, the
 landed check and real scores (six subscores, averaged over the landed
 tricks), checked on real clips including ledge tricks. The scoring
 constants are uncalibrated guesses until enough hand-judged clips exist to
 tune them.
-The web app is built alongside, every screen from upload to teams, and runs
-on a mock API until it's wired to the live backend.
+The web app is built alongside, every screen from upload to teams. It runs
+on a mock API while it's being wired to the live backend (phase F4, under
+way: the API routes it needed are in).
 See the [build order](docs/ARCHITECTURE.md#build-order).
 
 ## Stack
@@ -83,7 +84,7 @@ See the [build order](docs/ARCHITECTURE.md#build-order).
 | Data | PostgreSQL (Neon in production), S3 + CloudFront, SQS |
 | Auth | AWS Cognito |
 | Compute | AWS Lambda (container images) |
-| Infra | Terraform, GitHub Actions, ECR |
+| Infra | Terraform, GitHub Actions, ECR, Route 53 (`tricklens.com`) |
 | Local dev | Docker Compose + LocalStack |
 | Frontend | React + TypeScript (Vite), TanStack Query, pnpm workspace; React Native (Expo) later |
 

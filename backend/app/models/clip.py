@@ -9,7 +9,17 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Numeric,
+    SmallInteger,
+    String,
+    Text,
+    func,
+    true,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -49,6 +59,13 @@ class Clip(Base, UUIDPrimaryKey, TimestampMixin):
     # shouldn't have to choose between a visually great clip and their
     # average.
     score_included: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # False when the skater turned analysis off at upload (F4). The worker
+    # still transcodes and thumbnails the clip, since raw/ expires after 7
+    # days, but doesn't score it: the clip goes to ANALYZED with no
+    # analysis row. Its tricks can be tagged from creation on.
+    analyze: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
 
     # S3 key, never a URL — see CLAUDE.md conventions. Assigned at creation,
     # before the browser has uploaded anything, so it can be presigned.
@@ -146,7 +163,13 @@ class Trick(Base, UUIDPrimaryKey):
 
 
 class ClipTrick(Base):
-    """One tagged trick on a clip, in line order."""
+    """One tagged trick on a clip, in line order.
+
+    `analysis_index` says which analyzed trick the tag names (an index into
+    the latest analysis's `details.tricks`), so an entry the skater says
+    isn't a trick (a step-off at the end of the clip) can go untagged
+    without shifting the others. Null for clips posted without analysis and
+    for tags from before F4, which relied on `position` alone."""
 
     __tablename__ = "clip_tricks"
 
@@ -157,6 +180,7 @@ class ClipTrick(Base):
     trick_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tricks.id"), nullable=False, index=True
     )
+    analysis_index: Mapped[int | None] = mapped_column(SmallInteger)
 
     clip: Mapped["Clip"] = relationship(back_populates="clip_tricks")
     trick: Mapped["Trick"] = relationship(lazy="selectin")

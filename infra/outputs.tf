@@ -2,6 +2,22 @@ output "api_invoke_url" {
   value = trimsuffix(aws_apigatewayv2_stage.default.invoke_url, "/")
 }
 
+output "api_url" {
+  value = "https://${aws_route53_record.api.fqdn}"
+}
+
+output "site_url" {
+  value = local.site_origin
+}
+
+output "site_bucket_name" {
+  value = aws_s3_bucket.site.bucket
+}
+
+output "site_distribution_id" {
+  value = aws_cloudfront_distribution.site.id
+}
+
 output "ecr_repo_url" {
   value = aws_ecr_repository.main.repository_url
 }
@@ -15,7 +31,7 @@ output "cloudfront_domain" {
 }
 
 output "cdn_base_url" {
-  value = "https://${aws_cloudfront_distribution.media.domain_name}"
+  value = local.lambda_env.CDN_BASE_URL
 }
 
 output "cognito_user_pool_id" {

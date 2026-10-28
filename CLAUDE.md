@@ -414,14 +414,15 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
   image), a `worker` (its own image since 6a, `backend/Dockerfile.worker`:
   SQS poll loop, ffmpeg media pipeline, the real analyzer since 6c-3), and a one-shot
   `migrate` service, all under Compose.
-- Schema at revision `0009`: `users` + `profiles` (step 1–2); `clips`,
+- Schema at revision `0010`: `users` + `profiles` (step 1–2); `clips`,
   `analyses`, `tricks`, `clip_tricks` (step 3, `team_id`/`score_included`
-  added in 4c, `processed_key` in 6a, `analyses.details` in 6c-3); `follows` (step 4a — two nullable FKs + XOR check,
+  added in 4c, `processed_key` in 6a, `analyses.details` in 6c-3,
+  `clips.analyze` and `clip_tricks.analysis_index` in F4); `reports` (F4); `follows` (step 4a — two nullable FKs + XOR check,
   `followee_team_id`'s FK completed in 4c); `likes`, `comments` (step 4b);
   `teams`, `team_members`, `team_join_requests` (step 4c); `clip_views`,
   `clip_rankings`, `team_score_history` (step 4d — see below). Enum types
   `stance`, `skate_style`, `clip_status`, `team_level`, `join_policy`,
-  `team_role`, `join_request_kind`.
+  `team_role`, `join_request_kind`, `report_kind`.
 - LocalStack self-provisions the `tricklens-media` bucket (CORS + 7-day
   `raw/` lifecycle rule) and the `tricklens-analysis` queue with a DLQ.
 - A real Cognito dev pool (`scripts/cognito-bootstrap.sh`) backs auth — see
@@ -972,9 +973,71 @@ curl -s localhost:8000/health/deep    # expect 200, all four checks green
     stops its submit event; the test names every trick and asserts nothing
     was published. 64 web tests, 73 total.
 
-**Not done yet:** step 7 (quota + subscriptions), frontend phase F4 (real
-Cognito, live API, the proposed routes on the backend including a
-`reports` table, hosting).
+- **Frontend phase F4, part 1: the proposed routes on the backend**
+  (2026-10-27), on the `frontend` branch, after the user merged F1–F3 into
+  `main`. Migration `0010`.
+  - Routes: `GET /users/{username}/clips`, `GET /teams/{slug}/clips`,
+    `GET /users/me/drafts` (all through the new `app/api/listing.py`
+    `clip_page()`, which the feed now uses too), `GET /users/me/teams`,
+    `GET /teams/{slug}/join-requests/mine` (`{pending, created_at}`).
+  - `analyze: false` on `POST /clips` (`clips.analyze`, server default
+    true): the worker still transcodes and thumbnails (raw/ expires), then
+    sets `analyzed` with no analysis row; such a clip can be tagged from
+    `draft` on. `ClipOut.analyze` echoes it.
+  - The step-off gap, decided with the user: tags carry `analysis_index`
+    (`clip_tricks.analysis_index`, nullable; `POST /clips/{id}/tricks`
+    takes plain names or `{name, analysis_index}`, unique and in range).
+    The review has a "Not a trick" box per row, pre-ticked for "clip ends
+    too soon after the landing"; untagged rows aren't shown on the clip
+    (`shownTricks` in `@tricklens/api`) and don't count toward the 5 tags.
+  - Reports: `reports` table + `report_kind`, `POST
+    /clips/{id}/analysis-reports` (own clip, analyzed/unanalyzable, server
+    snapshot of the analysis, video key only with consent), `POST
+    /bug-reports` (signed in or out, bounded fields, `extra="forbid"`, and
+    its own API Gateway route throttled at burst 5 / 1 per second).
+    `make reports` (`app/reports.py`, DB-only like rescore) reads them;
+    prod via `ALEMBIC_DATABASE_URL=… make reports` from a local machine,
+    never an Actions job (public logs).
+  - Frontend: `queries/proposed.ts` deleted, every hook on the typed
+    client; mocks follow the real routes (and a fourth mock outcome, "Ends
+    with a step-off"); the upload flow shows "Processing" for clips without
+    analysis.
+  - Verified: API image 101 pass (23 skip), worker image 104/104, ruff
+    clean on the changed files, migration `0010` round-tripped;
+    `make web-check` green (79 tests: 3 tokens, 10 api, 66 web); the
+    review step screenshotted at 1440px light and 390px dark, no console
+    errors or overflow (the mock outcome picker became wrapping pills to
+    fit four options on a phone). Not yet deployed.
+
+- **Frontend phase F4, part 2: `tricklens.com` in Terraform** (2026-10-28,
+  written, not applied). The user registered `tricklens.com` through Route
+  53 (option B, chosen 2026-10-27); its hosted zone came with the
+  registration, so `infra/domain.tf` only looks it up (never manage or
+  duplicate it: new nameservers would take the domain offline).
+  - `domain.tf`: one DNS-validated ACM cert for the apex, `www`, `api`,
+    `media`; alias records. `site.tf`: private site bucket + its own
+    CloudFront (OAC, SPA 403/404 → `index.html`, a CloudFront Function
+    301-ing `www` to the apex, managed caching + security-headers
+    policies). `api.tricklens.com` (`aws_apigatewayv2_domain_name` +
+    mapping). The media distribution gets `media.tricklens.com`, and the
+    Lambdas' `CDN_BASE_URL` goes through that DNS record. `CORS_ORIGINS` =
+    `https://tricklens.com` + `var.extra_cors_origins` (replaces
+    `var.cors_origins`). The prod media bucket gets the CORS rule for
+    presigned PUTs that only LocalStack had.
+  - CI roles (`iam.tf`): deploy gets `acm:*`, Route 53 reads, and
+    `ChangeResourceRecordSets` on this zone only; plan gets ACM/Route 53
+    reads and `cloudfront:DescribeFunction`. Applied by the user locally
+    first (2026-10-28, docs/deployment.md, Adding the domain) as a new
+    `tricklens-admin` IAM user (AdministratorAccess, CLI only, its own
+    `--profile`, key deactivated between uses), because `tricklens-dev`, the
+    only IAM user until then, can't read Route 53/SSM or change IAM. The
+    rest applies with the deploy of the merge. `terraform validate` and
+    `fmt` are clean; no full plan was run from a dev machine.
+  - The site bucket stays empty until the site deploy (with the live-API
+    wiring), so `tricklens.com` errors until then.
+
+**Not done yet:** step 7 (quota + subscriptions), the rest of frontend
+phase F4 (real Cognito, live API, the site deploy).
 
 ## Build order
 
@@ -1046,8 +1109,10 @@ F. 🔶 Web app, a **parallel track** (decided with the user 2026-10-15),
      profiles
    - F3 ✅ upload → publish flow (per-trick tagging, analysis on/off),
      team flow
-   - F4 ⬜ real Cognito, live API, presigned uploads, hosting + deploy
-     (waits for 6c, which is now done)
+   - F4 🔶 the proposed routes on the backend + reports ✅ (migration
+     `0010`); `tricklens.com` hosting + DNS + cert in Terraform (written,
+     applied with the next deploy); then real Cognito, live API, the site
+     deploy
 
 Steps are sequential. Do not start a step before the previous one's
 acceptance criteria pass. The frontend track (F) is the exception: its

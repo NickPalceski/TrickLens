@@ -82,6 +82,14 @@ class TeamJoinRequestOut(BaseModel):
     created_at: datetime
 
 
+class MyJoinRequestOut(BaseModel):
+    """GET /teams/{slug}/join-requests/mine: whether the caller has asked to
+    join (`TeamOut` doesn't say), so "Request sent" survives a reload."""
+
+    pending: bool
+    created_at: datetime | None = None  # set when pending
+
+
 class TeamInviteOut(BaseModel):
     """One pending invite — founding or not — as shown to the invited user
     on GET /teams/invites/mine."""

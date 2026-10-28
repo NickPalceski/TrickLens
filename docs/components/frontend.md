@@ -93,8 +93,9 @@ frontend/
         ├── openapi.json      snapshot of the backend spec
         ├── src/schema.ts     generated from it; never edited by hand
         ├── src/client.ts     typed fetch client + bearer token
-        ├── src/queries/      feed, clips, comments, discover, users;
-        │                     proposed.ts for routes the API lacks
+        ├── src/queries/      feed, clips, comments, discover, users,
+        │                     teams, upload, reports
+        ├── src/tricks.ts     which analyzed tricks a clip shows, named
         ├── src/subscores.ts  the six subscores' order, labels and notes
         └── src/mocks/        sample data, in-memory state, MSW handlers
 ```
@@ -178,9 +179,9 @@ How the screens map the design onto the API:
   an inline confirmation that says how many replies go with it.
 - **Clip detail**: the breakdown with what each subscore measures. A clip
   with several tricks shows the analyzer's tricks in clip order with a
-  timeline; bails aren't scored. Rows are named by the skater's tags when
-  there's one tag per analyzed trick (see [Tagging tricks](#tagging-tricks)),
-  numbered otherwise. On your own clip, a switch takes the score out
+  timeline; bails aren't scored. Rows are named by the skater's tags (see
+  [Tagging tricks](#tagging-tricks)), and one marked "Not a trick" isn't
+  shown. On your own clip, a switch takes the score out
   of your average (`PATCH /clips/{id}/score-inclusion`). Your own clip that
   couldn't be scored shows the reason and what to try next.
 - **Discover**: ranked clips by score or activity, and rising teams. Both
@@ -200,15 +201,16 @@ How the screens map the design onto the API:
 - **Upload** (F3): pick a clip (MP4, MOV or WebM, up to 30s, checked in
   the browser) or record one on a phone; drag and drop on desktop. "Analyze
   the clip" is on by default. With it off you name the tricks right away
-  and the clip posts without a score (a proposed API change, see
-  [Endpoints the API doesn't have yet](#endpoints-the-api-doesnt-have-yet)).
+  and the clip posts without a score (`analyze: false` on `POST /clips`;
+  the worker still prepares the video, shown as "Processing").
   The file goes straight to S3 with the presigned URL, with a progress bar
   (XHR, since fetch can't report upload progress). Clips you haven't
   published are listed under In progress.
 - **Clip status and review** (`/upload/:clipId`): polls the clip every 2s
-  while it's queued or analyzing, with a stepper. When it's ready: the
-  score and breakdown, then one name field per analyzed trick in clip order,
-  each with a button that jumps the video to that trick, plus "Tag to a
+  while it's queued or analyzing (or processing, with analysis off), with
+  a stepper. When it's ready: the score and breakdown, then one row per
+  analyzed trick in clip order, each with a name field, a "Not a trick"
+  box and a button that jumps the video to that trick, plus "Tag to a
   team" (your teams only) and "Include this score". Publish runs the API's
   pre-publish calls in order: tricks, team, score inclusion, publish. A
   clip that couldn't be scored shows the reason and what to change. Your
@@ -231,20 +233,30 @@ How the screens map the design onto the API:
 Decided with the user (2026-10-26): tricks are named **after** analysis,
 one name per trick the analyzer found, in the order it found them, so a
 three-trick line gets three names (bails included: name the trick you went
-for). The API already stores tags in order (`clip_tricks.position`), so
-tag *i* names `analysis.tricks[i]` whenever the counts match; the clip page
-relies on that to label its per-trick rows. With analysis off there's
-nothing to match, so the skater names 1 to 5 tricks up front. The API caps a
-clip at 5 tags, so a clip where the analyzer finds more can't be published
-yet (the review says so). The API stores names lowercased; the UI shows them
+for). Each tag says which analyzed trick it names (`analysis_index`, F4),
+so the clip page labels its per-trick rows by index (`shownTricks` in
+`@tricklens/api`).
+
+Since 6d-2 the analyzer lists every pop it finds, so a step-off or roll-off
+at the very end of a clip comes back as an extra entry reading "clip ends
+too soon after the landing". Each row therefore has a **"Not a trick"**
+box, ticked by default for that outcome (`usuallyNotATrick`). A row marked
+that way isn't tagged, doesn't count toward the 5-tag limit, and isn't
+shown on the published clip. At least one row must be named.
+
+Tags from before F4 have no index; for them, tag *i* names
+`analysis.tricks[i]` when the counts match, and the rows show unnamed
+otherwise. With analysis off there's nothing to match, so the skater names
+1 to 5 tricks up front, and they're tagged as soon as the upload completes
+(the API takes tags for such a clip at any point before publishing). The
+API caps a clip at 5 tags. It stores names lowercased; the UI shows them
 capitalized (`formatTrickName`).
 
 ## Reports
 
 Two ways to tell the TrickLens team something's wrong, added 2026-10-26
-with the user (who chose every option below). Both go to proposed API
-routes (see [Endpoints the API doesn't have yet](#endpoints-the-api-doesnt-have-yet));
-the backend half is part of F4.
+with the user (who chose every option below). Both go to API routes built
+in F4 ([API doc, Reports](api.md#reports)).
 
 **Report a problem with this analysis.** The analyzer is tuned on very few
 clips, so these reports show where it falls short on other people's
@@ -281,11 +293,13 @@ from), and sends the app version, browser, window size and theme with it,
 listed on the page under "What's sent with your report". Afterwards it
 links back to where you were.
 
-**Where reports go.** Never to GitHub: the repo is public. F4 adds a
-`reports` table (kind, user, clip, the body above, the analysis snapshot,
-`share_video`, created time), the two routes, and a way to read them
-(`make reports`, then an admin view if it's needed). A clip shared in an
-analysis report is the input `make calibrate` (6d) already understands.
+**Where reports go.** Never to GitHub: the repo is public. They're rows
+in the `reports` table (kind, user, clip, the body above, the server's
+analysis snapshot, `share_video`, created time), read with `make reports`
+([development guide](../development.md#reading-reports); prod in the
+[deployment guide](../deployment.md#reading-reports)). An admin view can
+come later if it's needed. A clip shared in an analysis report is the
+input `make calibrate` (6d) already understands.
 
 All data goes through `@tricklens/api` hooks. A like, a comment or a score
 switch updates the clip in every cached list at once (`patchClip`), so
@@ -333,40 +347,31 @@ generated schema, so it can't drift from the real API's shape.
   file, so pressing play says so.
 - Uploads go through a simulated worker: a completed upload is queued for
   1.5s, analyzing for 4.5s, then analyzed or unanalyzable (instant in
-  tests). In mock mode the upload page has a "Prototype: what the analyzer
-  finds" picker (one trick, a three-trick line, or couldn't score), so every
-  outcome can be tried. The mock's "S3" answers the browser's CORS preflight
+  tests); with analysis off, the same wait ends `analyzed` with no
+  analysis. In mock mode the upload page has a "Prototype: what the
+  analyzer finds" picker (one trick, a three-trick line, a trick that ends
+  with a step-off, or couldn't score), so every outcome can be tried. The mock's "S3" answers the browser's CORS preflight
   like the real bucket.
 
-### Endpoints the API doesn't have yet
+### Routes the frontend proposed
 
-Where a screen needs an endpoint the API lacks, the frontend calls a
-**proposed** route, shaped like the existing ones, that only the mock
-answers. It lives in `packages/api/src/queries/proposed.ts` with its own
-typed path, so nothing else changes when the backend adds it: `make
-web-types` brings it into `schema.ts` and the hook moves to the typed
-client. Currently:
+Through F3, screens that needed an endpoint the API lacked called a
+**proposed** route that only the mock answered. All of them were built in
+F4 (2026-10-27), so every hook now uses the typed client and the mock
+follows the real routes ([API doc](api.md#endpoints)):
 
-- `GET /users/{username}/clips`: a user's published clips, newest first,
-  keyset-paginated like `/feed`. Profiles use it for the clip grid.
-- `POST /clips` with `analyze: false`: skip the analyzer. `complete` then
-  moves the clip straight to `analyzed` with no analysis and no score, so
-  it can be tagged and published. The API ignores the field today.
-- `GET /users/me/drafts`: your unpublished clips, so one left mid-analysis
-  can be found again.
-- `GET /users/me/teams`: your teams with your role, for the Teams tab and
-  "Tag to a team".
-- `GET /teams/{slug}/clips`: a team's published clips.
-- `GET /teams/{slug}/join-requests/mine`: `{ pending: false }` or
-  `{ pending: true, created_at }`, so "Request sent" survives a reload
-  (`TeamOut` doesn't say).
-- `POST /clips/{clip_id}/analysis-reports`: your own clip, `analyzed` or
-  `unanalyzable`, with an analysis. Body: `problems`, `trick_index`,
-  `subscores`, `score_direction`, `note`, `share_video`, `app_version`.
-  201 `{ id, created_at }`. See [Reports](#reports).
-- `POST /bug-reports`: signed in or out. Body: `description`, `page`, and
-  `context` (`app_version`, `user_agent`, `viewport`, `theme`, `api_mode`).
-  201 `{ id, created_at }`.
+- `GET /users/{username}/clips`: a profile's clip grid.
+- `analyze` on `POST /clips` (and `ClipOut.analyze`): posting without a
+  score.
+- `GET /users/me/drafts`: the upload page's In progress list.
+- `GET /users/me/teams`: the Teams tab and "Tag to a team".
+- `GET /teams/{slug}/clips`: a team's clips.
+- `GET /teams/{slug}/join-requests/mine`: `{pending, created_at}`, so
+  "Request sent" survives a reload.
+- `analysis_index` on tags (`POST /clips/{id}/tricks`, `TrickOut`): see
+  [Tagging tricks](#tagging-tricks).
+- `POST /clips/{clip_id}/analysis-reports` and `POST /bug-reports`: see
+  [Reports](#reports).
 
 Auth is a mock too: a fake session, signed in by default as the sample user
 `@juliavance`. Phase 4 replaces it with Cognito behind the same
@@ -382,16 +387,13 @@ need nothing new from the backend; phase 4 waits until step 6c is done.
 | F1 | Workspace, tokens, fonts, both themes + Settings toggle, AppShell, routes, typed API client from OpenAPI, MSW, CI | **done** |
 | F2 | Auth screens (mocked), feed + comments, Discover, clip detail incl. multi-trick, profiles, edit profile | **done** |
 | F3 | Upload → status → review → publish (simulated worker), per-trick tagging, analysis on/off, the team flow | **done** |
-| F4 | Real Cognito auth, live API, the proposed routes on the backend (including the `reports` table and `make reports`), presigned uploads, CORS, hosting (S3 + CloudFront via Terraform) and deploy in `deploy.yml` (setting `VITE_APP_VERSION`) | next (6c is done) |
+| F4 | The proposed routes on the backend, including the `reports` table and `make reports` (**done**, 2026-10-27); hosting at `tricklens.com` (S3 + CloudFront, the media bucket's CORS for uploads, `api.tricklens.com`; **written** 2026-10-28, applied with the next deploy, see [infrastructure](infrastructure.md#the-domain)); then real Cognito auth, live API, and the site deploy in `deploy.yml` (build, upload, invalidate, setting `VITE_APP_VERSION`) | in progress |
 | later | `apps/mobile` (Expo) reusing `api` and `tokens` | |
 
 ## Known gaps between the design and the API
 
 Kept here until the backend reaches MVP. The screens are built around them:
 
-- **No endpoint lists a user's clips.** Built against the proposed
-  `GET /users/{username}/clips` (see
-  [Endpoints the API doesn't have yet](#endpoints-the-api-doesnt-have-yet)).
 - **No captions, by decision** (2026-10-26): the user doesn't plan to add
   them, so the design's captions are dropped rather than waiting on the API.
 - **No avatar upload, and usernames can't change.** Edit profile says so;
@@ -401,22 +403,10 @@ Kept here until the backend reaches MVP. The screens are built around them:
   name and slug, so Discover leaves out the level chip.
 - **Upload visibility (Public/Followers)** isn't in the API; left off the
   upload screen for now (decided 2026-10-26). Published clips are public.
-- **Skipping analysis** needs the proposed `analyze` flag; until the API
-  has it, a live upload is always analyzed.
 - **More than 5 tricks in one clip** can't be tagged (the API takes 1 to 5),
-  so such a clip can't be published.
-- **`analysis.tricks` can hold something that isn't a trick** (found at
-  the 6d-2 merge, 2026-10-27). Since 6d-2 the analyzer lists every pop it
-  finds, and a step-off or roll-off near the end of a clip comes back as an
-  extra entry reading "clip ends too soon after the landing" (the nose
-  grind's step-off, the ollie gap's roll-off). The review then asks the
-  skater to name it, and it counts toward the 5-tag limit. To settle in F4,
-  likely with a "not a trick" choice per row, which needs tags to say which
-  analyzed trick they name instead of relying on position. See
-  [analyzer.md](analyzer.md#known-limits).
+  so a clip with more than 5 real tricks can't be published. Rows marked
+  "Not a trick" don't count.
 - **No user search**: founders and invites are added by exact username.
-- **"Request sent", your teams, your drafts and team clips** all need the
-  proposed routes above.
 - **No way to delete a clip**, so one that couldn't be scored stays in In
   progress. Team slugs use underscores (`downtown_skaters`) as the API
   requires; the canvas's older desktop team screens showed a hyphen.
@@ -428,16 +418,18 @@ Kept here until the backend reaches MVP. The screens are built around them:
 - `packages/tokens`: both themes define the same tokens; the CSS covers
   the OS setting and the explicit choice.
 - `packages/api`: the real client and hooks against the mock handlers
-  (bearer token, error detail → `ApiError`), Decimal parsing.
-- `apps/web` (64 tests): the whole app in a memory router against the mock
+  (bearer token, error detail → `ApiError`), Decimal parsing, and
+  `shownTricks` (by index, by position, unmatched).
+- `apps/web` (66 tests): the whole app in a memory router against the mock
   API, one file per screen area: the shell and Settings; log-in and sign-up
   validation and the code step; the feed's order, n/a subscores, likes and
   views; comments (sheet, folded threads, replying, deleting, Escape);
   clip detail (single, multi-trick named by its tags, the score switch
   persisting, couldn't-score, not found); Discover's two sorts and the teams
   tab; profiles, follow, and editing with the API's limits; upload (file
-  checks, a line named trick by trick through to the clip page, analysis
-  off, couldn't score, In progress, the waiting state); teams (list and
+  checks, a line named trick by trick through to the clip page, a step-off
+  left out as not a trick, analysis off, couldn't score, In progress, the
+  waiting state); teams (list and
   invites, the create flow and a taken address, founding accept and
   decline, owner and admin actions, join by each policy, leave, follow,
   team clips, settings and delete); reports (an analysis report sent and

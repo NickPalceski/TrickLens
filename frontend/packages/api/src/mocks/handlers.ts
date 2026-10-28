@@ -2,11 +2,18 @@
 // the app runs its real data-fetching code against fake responses. Paths
 // match the FastAPI routes on any origin ("*/..."), so the same handlers
 // serve the browser (any VITE_API_URL) and the Node tests. Behaviour
-// mirrors the backend's rules (docs/components/api.md); routes the API
-// doesn't have yet are marked PROPOSED (docs/components/frontend.md,
-// Endpoints the API doesn't have yet).
+// mirrors the backend's rules (docs/components/api.md).
 import { delay, HttpResponse, http } from 'msw';
-import type { ClipOut, CommentOut, FeedPage, TeamCreate, TeamUpdate, UserMe } from '../types.ts';
+import type {
+  ClipOut,
+  CommentOut,
+  FeedPage,
+  MyJoinRequest,
+  TeamCreate,
+  TeamUpdate,
+  TrickTagIn,
+  UserMe,
+} from '../types.ts';
 import { ME_USERNAME, teamRankings } from './data.ts';
 import {
   clipView,
@@ -113,13 +120,13 @@ export const handlers = [
     return HttpResponse.json(p.profile);
   }),
 
-  // PROPOSED: your unpublished clips, newest first.
+  // Your unpublished clips, newest first.
   http.get('*/users/me/drafts', async ({ request }) => {
     await wait();
     return HttpResponse.json(page(draftClips(), new URL(request.url)) satisfies FeedPage);
   }),
 
-  // PROPOSED: teams you're a member of (forming ones you own included).
+  // Teams you're a member of (forming ones you own included).
   http.get('*/users/me/teams', async () => {
     await wait();
     return HttpResponse.json(
@@ -129,7 +136,7 @@ export const handlers = [
     );
   }),
 
-  // PROPOSED: a user's published clips, shaped like GET /feed.
+  // A user's published clips, shaped like GET /feed.
   http.get('*/users/:username/clips', async ({ params, request }) => {
     await wait();
     const username = String(params.username);
@@ -194,7 +201,7 @@ export const handlers = [
       content_type: string;
       duration_ms: number;
       source_fps: number;
-      analyze?: boolean;
+      analyze: boolean;
     };
     if (!CONTENT_TYPES.has(body.content_type)) return err(422, 'unsupported content type');
     if (!(body.duration_ms > 0 && body.duration_ms <= 30_000))
@@ -219,11 +226,12 @@ export const handlers = [
       liked_by_me: false,
       team: null,
       score_included: true,
+      analyze: body.analyze ?? true,
       created_at: now,
     };
     const s = getState();
     s.clips.push(clip);
-    s.uploads.set(id, { uploaded: false, analyze: body.analyze ?? true, outcome: s.nextOutcome });
+    s.uploads.set(id, { uploaded: false, outcome: s.nextOutcome });
     return HttpResponse.json({ clip, upload_url: `${MOCK_UPLOAD_ORIGIN}/raw/${id}` }, { status: 201 });
   }),
 
@@ -248,12 +256,6 @@ export const handlers = [
     if (clip.status !== 'draft') return err(409, `clip is already ${clip.status}`);
     const up = getState().uploads.get(clip.id);
     if (!up?.uploaded) return err(422, 'upload not found — PUT to the presigned URL first');
-    if (!up.analyze) {
-      // PROPOSED: with analysis off, the clip is ready to tag and publish
-      // straight away, with no score.
-      clip.status = 'analyzed';
-      return HttpResponse.json(clipView(clip));
-    }
     clip.status = 'queued';
     up.completedAt = Date.now();
     return HttpResponse.json(clipView(clip));
@@ -264,16 +266,33 @@ export const handlers = [
     const clip = ownClip(params.clipId);
     if (!clip) return notFound('clip');
     clipView(clip);
-    if (clip.status !== 'analyzed') return err(409, 'clip must be analyzed before tagging');
-    const { tricks } = (await request.json()) as { tricks: string[] };
-    const names = tricks.map((t) => t.trim());
-    if (names.length < 1 || names.length > 5 || names.some((n) => n.length < 1 || n.length > 60)) {
+    // Like the API: an analyzed clip only once analyzed; one posted without
+    // analysis any time before publishing.
+    if (clip.analyze && clip.status !== 'analyzed') return err(409, 'clip must be analyzed before tagging');
+    if (!clip.analyze && (clip.status === 'published' || clip.status === 'unanalyzable')) {
+      return err(409, `clip is already ${clip.status}`);
+    }
+    const { tricks } = (await request.json()) as { tricks: (string | TrickTagIn)[] };
+    const tags = tricks.map((t) =>
+      typeof t === 'string'
+        ? { name: t.trim(), analysis_index: null }
+        : { name: t.name.trim(), analysis_index: t.analysis_index ?? null },
+    );
+    if (tags.length < 1 || tags.length > 5 || tags.some((t) => t.name.length < 1 || t.name.length > 60)) {
       return err(422, 'tag 1 to 5 tricks, each 1-60 characters');
     }
+    const indexes = tags.flatMap((t) => (t.analysis_index === null ? [] : [t.analysis_index]));
+    if (new Set(indexes).size !== indexes.length) return err(422, 'each analyzed trick can be tagged once');
+    const analyzed = clip.analysis?.tricks.length ?? 0;
+    const bad = indexes.find((i) => i < 0 || i >= analyzed);
+    if (bad !== undefined) {
+      return err(422, `analysis_index ${bad} is out of range: the analysis found ${analyzed} trick(s)`);
+    }
     // Lowercased and in order, like the API (clip_tricks.position).
-    clip.tricks = names.map((n, i) => ({
+    clip.tricks = tags.map((t, i) => ({
       id: `${clip.id.slice(0, -2)}g${i}`,
-      canonical_name: n.toLowerCase(),
+      canonical_name: t.name.toLowerCase(),
+      analysis_index: t.analysis_index,
     }));
     return HttpResponse.json(clipView(clip));
   }),
@@ -356,7 +375,7 @@ export const handlers = [
     return HttpResponse.json(clipView(clip));
   }),
 
-  // ---- reports (PROPOSED) -------------------------------------------------
+  // ---- reports -------------------------------------------------
   http.post('*/clips/:clipId/analysis-reports', async ({ params, request }) => {
     await wait();
     const clip = ownClip(params.clipId);
@@ -492,7 +511,7 @@ export const handlers = [
     return HttpResponse.json(teamView(t), { status: 201 });
   }),
 
-  // PROPOSED: a team's published clips.
+  // A team's published clips.
   http.get('*/teams/:slug/clips', async ({ params, request }) => {
     await wait();
     const t = visibleTeam(String(params.slug));
@@ -504,13 +523,17 @@ export const handlers = [
     return HttpResponse.json(page(clips, new URL(request.url)) satisfies FeedPage);
   }),
 
-  // PROPOSED: whether you've asked to join.
+  // Whether you've asked to join.
   http.get('*/teams/:slug/join-requests/mine', async ({ params }) => {
     await wait();
     const t = visibleTeam(String(params.slug));
     if (!t) return notFound('team');
     const r = t.requests.find((x) => x.username === ME_USERNAME && x.kind === 'request');
-    return HttpResponse.json(r ? { pending: true, created_at: r.created_at } : { pending: false });
+    return HttpResponse.json(
+      (r
+        ? { pending: true, created_at: r.created_at }
+        : { pending: false, created_at: null }) satisfies MyJoinRequest,
+    );
   }),
 
   http.get('*/teams/:slug', async ({ params }) => {

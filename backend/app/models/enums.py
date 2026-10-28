@@ -93,6 +93,14 @@ class ClipStatus(StrEnum):
     PUBLISHED = "published"  # visible in feeds
 
 
+class ReportKind(StrEnum):
+    """What a `Report` is about (F4): an analysis the skater thinks is
+    wrong, or a bug in the app itself."""
+
+    ANALYSIS = "analysis"
+    BUG = "bug"
+
+
 def sa_enum(enum_cls: type[StrEnum], name: str) -> SAEnum:
     """Build the SQLAlchemy column type for one of the StrEnums above.
 

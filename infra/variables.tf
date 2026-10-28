@@ -65,10 +65,16 @@ variable "cognito_client_name" {
 
 # --- API ------------------------------------------------------------------
 
-variable "cors_origins" {
-  description = "Comma-separated allowed origins. Placeholder until step 4's frontend has a real deployed URL."
+variable "domain_name" {
+  description = "The registered domain (Route 53, hosted zone created with the registration). The web app is served at its apex; api., www. and media. hang off it (infra/domain.tf)."
   type        = string
-  default     = "http://localhost:3000"
+  default     = "tricklens.com"
+}
+
+variable "extra_cors_origins" {
+  description = "Origins allowed to call the prod API besides https://<domain_name>. Empty: a local web app talks to the local API, never prod."
+  type        = list(string)
+  default     = []
 }
 
 # --- Rankings schedule -------------------------------------------------------

@@ -31,6 +31,22 @@ resource "aws_s3_bucket_lifecycle_configuration" "media" {
   }
 }
 
+# The browser PUTs uploads straight to the bucket with a presigned URL, so
+# the bucket must allow the web app's origin. Same rule LocalStack gets
+# from scripts/localstack-init.sh, for the deployed origin instead of
+# localhost. Missing until F4, when there was no deployed web app.
+resource "aws_s3_bucket_cors_configuration" "media" {
+  bucket = aws_s3_bucket.media.id
+
+  cors_rule {
+    allowed_origins = [local.site_origin]
+    allowed_methods = ["GET", "PUT", "HEAD"]
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3000
+  }
+}
+
 resource "aws_cloudfront_origin_access_control" "media" {
   name                              = "tricklens-media-oac"
   origin_access_control_origin_type = "s3"

@@ -29,6 +29,7 @@ from app.schemas.clip import (
     ClipScoreInclusionUpdate,
     ClipTeamUpdate,
     TagTricksRequest,
+    TrickTagIn,
 )
 from app.schemas.social import CommentCreate, CommentOut, CommentPage
 from app.services.queue import get_queue
@@ -80,6 +81,7 @@ async def create_clip(body: ClipCreate, user: CurrentUser, db: DbSession) -> Cli
         s3_key=f"{PREFIX_RAW}/{clip_id}.{ext}",
         duration_ms=body.duration_ms,
         source_fps=body.source_fps,
+        analyze=body.analyze,
     )
     db.add(clip)
     await db.flush()
@@ -115,24 +117,58 @@ async def complete_clip(clip_id: uuid.UUID, user: CurrentUser, db: DbSession) ->
     return await clip_out(clip, db, user)
 
 
+# Before publishing, a clip posted without analysis can be tagged at any
+# point from creation (the skater names the tricks on the upload screen);
+# an analyzed one only once its analysis is in.
+_TAGGABLE_UNANALYZED = (
+    ClipStatus.DRAFT,
+    ClipStatus.QUEUED,
+    ClipStatus.ANALYZING,
+    ClipStatus.ANALYZED,
+)
+
+
 @router.post("/{clip_id}/tricks")
 async def tag_tricks(
     clip_id: uuid.UUID, body: TagTricksRequest, user: CurrentUser, db: DbSession
 ) -> ClipOut:
+    """Replaces the clip's tags. A tag can say which analyzed trick it names
+    (`analysis_index`); an analyzed trick nobody names is one the skater
+    says isn't a trick (docs/components/frontend.md, Tagging tricks)."""
     clip = await _get_owned(clip_id, user, db)
-    if clip.status != ClipStatus.ANALYZED:
+    if clip.analyze and clip.status != ClipStatus.ANALYZED:
         raise HTTPException(status.HTTP_409_CONFLICT, "clip must be analyzed before tagging")
+    if not clip.analyze and clip.status not in _TAGGABLE_UNANALYZED:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"clip is already {clip.status}")
+
+    tags: list[TrickTagIn] = body.tricks  # normalized by TagTricksRequest's validator
+    latest = clip.analyses[0] if clip.analyses else None
+    analyzed = len(((latest.details or {}) if latest else {}).get("tricks", []))
+    for t in tags:
+        if t.analysis_index is not None and t.analysis_index >= analyzed:
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                f"analysis_index {t.analysis_index} is out of range: "
+                f"the analysis found {analyzed} trick(s)",
+            )
 
     await db.execute(delete(ClipTrick).where(ClipTrick.clip_id == clip.id))
 
-    for position, name in enumerate(body.tricks):
-        canonical_name = name.lower()
+    for position, tag in enumerate(tags):
+        canonical_name = tag.name.lower()
         trick = await db.scalar(select(Trick).where(Trick.canonical_name == canonical_name))
         if trick is None:
             trick = Trick(canonical_name=canonical_name)
             db.add(trick)
             await db.flush()
-        db.add(ClipTrick(clip_id=clip.id, trick_id=trick.id, position=position))
+        db.add(
+            ClipTrick(
+                clip_id=clip.id,
+                trick_id=trick.id,
+                position=position,
+                analysis_index=tag.analysis_index,
+            )
+        )
 
     await db.flush()
     # clip.clip_tricks was already loaded (stale) by _get_owned's initial

@@ -12,8 +12,10 @@ locals {
     ENV                    = "prod"
     S3_BUCKET              = aws_s3_bucket.media.bucket
     SQS_ANALYSIS_QUEUE_URL = aws_sqs_queue.analysis.url
-    CDN_BASE_URL           = "https://${aws_cloudfront_distribution.media.domain_name}"
-    CORS_ORIGINS           = var.cors_origins
+    # Through the DNS record, not just the name, so the Lambdas only switch
+    # to media.tricklens.com once it resolves (infra/domain.tf).
+    CDN_BASE_URL           = "https://${aws_route53_record.media["A"].fqdn}"
+    CORS_ORIGINS           = join(",", concat([local.site_origin], var.extra_cors_origins))
     COGNITO_USER_POOL_ID   = aws_cognito_user_pool.prod.id
     COGNITO_CLIENT_ID      = aws_cognito_user_pool_client.web.id
     DATABASE_URL_SSM_PARAM = aws_ssm_parameter.database_url.name

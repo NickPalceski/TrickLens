@@ -2,7 +2,7 @@
 
 The FastAPI application: authentication, users and profiles, the clip
 lifecycle, the social features (follows, feed, likes, comments, teams,
-Discover) and health checks. Code: `backend/app/main.py`,
+Discover), reports from the app and health checks. Code: `backend/app/main.py`,
 `backend/app/api/`, `backend/app/schemas/`, `backend/app/scoring.py`.
 
 ← Back to the [architecture overview](../ARCHITECTURE.md).
@@ -14,18 +14,18 @@ flowchart LR
     client(["Client<br/>(browser, Postman, curl)"])
 
     subgraph entry ["Entrypoint"]
-        apigw["API Gateway HTTP API<br/>$default route (prod)"]
+        apigw["API Gateway HTTP API<br/>$default route + throttled<br/>POST /bug-reports (prod)"]
         mangum["lambda_handler.py<br/>Mangum adapter"]
         uvicorn["uvicorn --reload<br/>(local)"]
     end
 
     subgraph app ["FastAPI app (main.py)"]
         cors["CORS middleware"]
-        routers["Routers (api/routes/)<br/>users · clips · feed<br/>teams · discover · health"]
+        routers["Routers (api/routes/)<br/>users · clips · feed · teams<br/>discover · reports · health"]
         deps["Dependencies (api/deps.py)<br/>DbSession · CurrentUser · OptionalUser"]
         ser["Serializers (api/serializers.py)<br/>clip_out · user_public · team_out<br/>clip_engagement (batched counts)"]
         schemas["Pydantic schemas (schemas/)<br/>request + response shapes"]
-        pag["pagination.py<br/>keyset cursors"]
+        pag["listing.py + pagination.py<br/>keyset pages of clips"]
         scoring["scoring.py<br/>user / team averages"]
     end
 
@@ -55,8 +55,10 @@ flowchart LR
 
 A request goes through:
 
-1. **Entrypoint.** In production, API Gateway's single `$default` route
-   proxies everything to the API Lambda, where `lambda_handler.py`'s
+1. **Entrypoint.** In production, API Gateway's `$default` route
+   proxies everything to the API Lambda (`POST /bug-reports` has a route
+   of its own to the same Lambda, only so it can be throttled, see
+   [Reports](#reports)), where `lambda_handler.py`'s
    [Mangum](https://mangum.fastapiexpert.com/) adapter turns the Lambda
    event into an ASGI request. Locally, uvicorn serves the same app with
    hot reload. It's the same code and the same image (see
@@ -83,11 +85,12 @@ A request goes through:
 | Router | Endpoints |
 |---|---|
 | `health` | `GET /health` (liveness), `GET /health/deep` (Postgres + schema revision, S3, SQS, Cognito; 503 if any fail) |
-| `users` | `POST /users` (JIT registration), `GET/PATCH /users/me`, `PATCH /users/me/profile`, `GET /users/{username}`, `POST/DELETE /users/{username}/follow` |
+| `users` | `POST /users` (JIT registration), `GET/PATCH /users/me`, `PATCH /users/me/profile`, `GET /users/me/drafts`, `GET /users/me/teams`, `GET /users/{username}`, `GET /users/{username}/clips`, `POST/DELETE /users/{username}/follow` |
 | `clips` | `POST /clips`, `POST /clips/{id}/complete`, `GET /clips/{id}`, `POST /clips/{id}/tricks`, `PATCH /clips/{id}/team`, `PATCH /clips/{id}/score-inclusion`, `POST /clips/{id}/publish`, `POST/DELETE /clips/{id}/like`, `POST /clips/{id}/view`, `POST/GET /clips/{id}/comments`, `DELETE /clips/{id}/comments/{comment_id}` |
 | `feed` | `GET /feed` (keyset-paginated) |
-| `teams` | `POST /teams`, `GET/PATCH/DELETE /teams/{slug}`, `GET /teams/{slug}/members`, `PATCH/DELETE /teams/{slug}/members/{username}`, `POST/DELETE /teams/{slug}/join`, `GET /teams/{slug}/join-requests`, `POST /teams/{slug}/join-requests/{username}/accept\|reject`, `POST /teams/{slug}/invites`, `GET /teams/invites/mine`, `POST /teams/{slug}/invites/mine/accept\|reject`, `POST/DELETE /teams/{slug}/follow` |
+| `teams` | `POST /teams`, `GET/PATCH/DELETE /teams/{slug}`, `GET /teams/{slug}/members`, `PATCH/DELETE /teams/{slug}/members/{username}`, `POST/DELETE /teams/{slug}/join`, `GET /teams/{slug}/join-requests`, `GET /teams/{slug}/join-requests/mine`, `POST /teams/{slug}/join-requests/{username}/accept\|reject`, `POST /teams/{slug}/invites`, `GET /teams/invites/mine`, `POST /teams/{slug}/invites/mine/accept\|reject`, `POST/DELETE /teams/{slug}/follow`, `GET /teams/{slug}/clips` |
 | `discover` | `GET /discover/clips?sort=score\|engagement`, `GET /discover/teams` |
+| `reports` | `POST /clips/{id}/analysis-reports`, `POST /bug-reports` (signed in or out) |
 
 The full request/response shapes are in the interactive docs at
 `http://localhost:8000/docs` while the stack is running. Step-by-step
@@ -106,13 +109,21 @@ The clip routes move a clip through its statuses (the
 
 - `POST /clips` creates a `draft` row and returns a presigned S3 upload URL.
   The browser uploads straight to S3; the bytes never pass through the API.
+  `analyze: false` (F4) posts the clip without a score: the worker still
+  transcodes and thumbnails it (the raw upload expires after 7 days), then
+  sets `analyzed` with no analysis row. `ClipOut.analyze` echoes it.
 - `POST /clips/{id}/complete` checks the object actually landed (`head`),
   sets `queued`, commits, *then* enqueues. Committing first matters because
   the worker can receive the message before a still-open transaction would
   have committed.
 - The worker takes it from there (see the [analyzer doc](analyzer.md)).
-- `POST /clips/{id}/tricks` (only while `analyzed`) tags tricks by name. An
-  unknown name creates a `tricks` row; there's no alias matching yet.
+- `POST /clips/{id}/tricks` replaces the clip's tags, 1 to 5, in order.
+  Each is a plain name or `{name, analysis_index}`, where `analysis_index`
+  says which entry of `analysis.tricks` the tag names (unique, in range,
+  so a clip without analysis can't use it). An analyzed clip can be tagged
+  once it's `analyzed`; one posted without analysis any time before it's
+  published, so the names typed at upload go on straight away. An unknown
+  name creates a `tricks` row; there's no alias matching yet.
 - `POST /clips/{id}/publish` needs at least one tagged trick.
 
 `video_url` is the `processed/` transcode's CDN URL once the worker has made
@@ -148,9 +159,11 @@ poster frame's CDN URL.
   `details` (stub analyses before 6c-3, media failures, *analysis
   failed*).
 - `analysis.tricks` is not `ClipOut.tricks`: those are the user's tags.
-  The analyzer never names a trick. The web app tags one trick per analyzed
-  trick, in order, so tag *i* names `analysis.tricks[i]` when the counts
-  match (tags keep their order in `clip_tricks.position`); see
+  The analyzer never names a trick. A tag names one with its
+  `analysis_index` (F4), and an analyzed trick no tag names is one the
+  skater said isn't a trick (a step-off at the end of the clip). Tags from
+  before F4 have no index; for them, tag *i* names `analysis.tricks[i]` when
+  the counts match (tags keep their order in `clip_tricks.position`). See
   [frontend.md](frontend.md#tagging-tricks).
 - The raw measurements behind the subscores stay in `analyses.details`
   ([data-model.md](data-model.md)); they're internal units, not API.
@@ -173,6 +186,13 @@ not a `JOIN` on that OR condition. A join would emit a clip twice when both
 its author *and* its tagged team are followed; de-duping a joined result
 afterward is more awkward than just not producing the duplicate in the first
 place.
+
+**Every other clip list pages the same way**, through `api/listing.py`'s
+`clip_page()`: a user's published clips (`GET /users/{username}/clips`), a
+team's (`GET /teams/{slug}/clips`, published clips tagged to it), and your
+drafts (`GET /users/me/drafts`, every status but `published`, ordered by
+`created_at` since drafts have no `published_at`). The first two are
+public; clips taken out of an average are listed too.
 
 Fan-out-on-*write* (precomputed per-user timelines) is the standard answer at
 large scale, but it costs a write per follower per post and needs backfill
@@ -226,6 +246,33 @@ docker-compose.
 computed live by `app/scoring.py` (a user's: uncapped; a team's: its top 10
 clips). The rankings job uses the same functions for its snapshots, so the
 live number and the history can't drift apart.
+
+## Reports
+
+Two routes for the web app's report forms (docs/components/frontend.md,
+[Reports](frontend.md#reports)). Both write a row to `reports`
+([data model](data-model.md)) and answer `201 {id, created_at}`. Nothing
+is forwarded anywhere else, least of all GitHub issues: the repo is
+public. `make reports` reads them ([development guide](../development.md#reading-reports)).
+
+- `POST /clips/{id}/analysis-reports`: your own clip, `analyzed` or
+  `unanalyzable`, that was analyzed (404 for someone else's clip, 409 for
+  a published one or one with no analysis). The body is what the skater
+  says: `problems` (a checklist), `trick_index`, `subscores` and
+  `score_direction`, `note`, `share_video`, `app_version`. It has to say
+  something (a problem or a note), and `trick_index` must fit
+  `analysis.tricks`. The server snapshots the analysis itself (model
+  version, score, breakdown, failure reason, `details`, the tags), so a
+  later rescore can't change what was reported. Only with `share_video`
+  (the skater's consent) does the snapshot record the processed video's
+  key. Reporting never changes the clip.
+- `POST /bug-reports`: signed in or out (a broken login is a bug too). The
+  body is `description` (10 to 4000 characters), `page`, and `context`
+  (app version, user agent, window size, theme, API mode). Every field is
+  bounded and unknown fields are rejected, since anyone can call it, and
+  API Gateway throttles the route as a whole (5 burst, 1 per second;
+  [infrastructure](infrastructure.md)). A signed-in report records the
+  user.
 
 ## Engagement counts
 

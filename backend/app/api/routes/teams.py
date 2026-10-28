@@ -17,17 +17,21 @@ REQUEST -> the team's owner/admin, INVITE -> the invited user themselves.
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import CurrentUser, DbSession, OptionalUser
+from app.api.listing import PAGE_MAX, clip_page
 from app.api.serializers import team_brief, team_member_out, team_out, user_brief
-from app.models.enums import JoinPolicy, JoinRequestKind, TeamRole
+from app.models.clip import Clip
+from app.models.enums import ClipStatus, JoinPolicy, JoinRequestKind, TeamRole
 from app.models.social import Follow
 from app.models.team import TEAM_MAX_MEMBERS, Team, TeamJoinRequest, TeamMember
 from app.models.user import User
+from app.schemas.clip import FeedPage
 from app.schemas.team import (
+    MyJoinRequestOut,
     TeamCreate,
     TeamInviteCreate,
     TeamInviteOut,
@@ -285,6 +289,36 @@ async def withdraw_join_request(slug: str, me: CurrentUser, db: DbSession) -> Te
     )
     await db.flush()
     return await team_out(team, db, viewer=me)
+
+
+@router.get("/{slug}/join-requests/mine")
+async def read_my_join_request(slug: str, me: CurrentUser, db: DbSession) -> MyJoinRequestOut:
+    """Whether you've asked to join (a self-service request, not an invite),
+    so a team page can show "Request sent" after a reload. 200 either way."""
+    team = await _get_visible(slug, me, db)
+    created_at = await db.scalar(
+        select(TeamJoinRequest.created_at).where(
+            TeamJoinRequest.team_id == team.id,
+            TeamJoinRequest.user_id == me.id,
+            TeamJoinRequest.kind == JoinRequestKind.REQUEST,
+        )
+    )
+    return MyJoinRequestOut(pending=created_at is not None, created_at=created_at)
+
+
+@router.get("/{slug}/clips")
+async def list_team_clips(
+    slug: str,
+    db: DbSession,
+    viewer: OptionalUser,
+    limit: int = Query(20, ge=1, le=PAGE_MAX),
+    cursor: str | None = None,
+) -> FeedPage:
+    """The team's published clips (tagged to it before publishing), newest
+    first, keyset-paginated like the feed."""
+    team = await _get_visible(slug, viewer, db)
+    stmt = select(Clip).where(Clip.team_id == team.id, Clip.status == ClipStatus.PUBLISHED)
+    return await clip_page(stmt, Clip.published_at, db, viewer, limit, cursor)
 
 
 @router.get("/{slug}/join-requests")

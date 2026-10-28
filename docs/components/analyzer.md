@@ -30,6 +30,8 @@ flowchart TD
     probe["ffprobe: real duration + fps"]
     bad(["unanalyzable<br/>'unreadable video file' /<br/>'no video stream found' /<br/>'clip too short'"])
     tx["ffmpeg: 720p, upright,<br/>constant fps ≤ 60, ≤ 30s"]
+    noan{"clips.analyze?"}
+    ready(["analyzed, no analyses row<br/>(posted without a score)"])
     sa["Stage A: find the pops<br/>(15fps, YOLOX + tracker)"]
     sb["Stage B per trick: pose +<br/>board + take-off/touch-down<br/>(native fps)"]
     gt["Landed check per trick +<br/>confidence gate"]
@@ -42,14 +44,18 @@ flowchart TD
     msg --> claim
     claim -- no --> skip
     claim -- "yes: status = analyzing" --> mode
-    mode -- "stub" --> stub --> write
+    mode -- "stub" --> noan
     mode -- "real (worker image)" --> dl --> probe
     probe -- "bad file" --> bad
+    noan -- "true" --> stub --> write
+    noan -- "false" --> ready
     probe --> tx --> sa --> sb --> gt --> meas --> thumb
+    tx -- "analyze = false:<br/>mid-clip thumbnail" --> thumb
     sa -. "exception" .-> crash
     gt -. "exception" .-> crash
     crash --> thumb
     thumb --> up --> write
+    up -. "analyze = false" .-> ready
 ```
 
 Since 6c-3 the analyzer decides the clip's status and score (until then
@@ -132,6 +138,14 @@ analyze-clip` call it.
 Compose `worker` service). In production, an SQS event-source mapping
 invokes `app.worker.lambda_handler` once per message (`batch_size = 1`).
 The processing function is the same either way; only the trigger differs.
+
+**Clips posted without analysis** (`clips.analyze = false`, F4) go
+through the same claim and the same media steps, since the raw upload
+expires after 7 days and the clip still needs its transcode and
+thumbnail (mid-clip). The analyzer itself is skipped: the clip becomes
+`analyzed` with no `analyses` row and no score, logged as `-> analyzed
+(not analyzed, by request)`. A bad file still fails it with the media
+reason. The stub skips it the same way.
 
 **`ANALYZER=stub|real`.** The worker image (`Dockerfile.worker`) sets
 `real` itself, because it's the image that has ffmpeg and the CV stack. The
@@ -846,9 +860,10 @@ failure.
   missed *failed* trick changes no score.
 - **A trick near the clip's end** shows up as "clip ends too soon after
   the landing" (stepping off at the end, rolling off after a gap). It
-  never affects the score, but it is an entry in `analysis.tricks`, which
-  the web app asks the skater to name (see
-  [frontend.md, Known gaps](frontend.md#known-gaps-between-the-design-and-the-api)).
+  never affects the score, but it is an entry in `analysis.tricks`. Since
+  F4 the web app pre-ticks "Not a trick" for it, and tags name analyzed
+  tricks by `analysis_index`, so it's simply left untagged and isn't shown
+  on the clip (see [frontend.md, Tagging tricks](frontend.md#tagging-tricks)).
 - **Roll-away doesn't measure speed** (see
   [Subscores, as built](#subscores-as-built-6c-3)), and almost any landed
   trick rides away on the board, so it separates little until a

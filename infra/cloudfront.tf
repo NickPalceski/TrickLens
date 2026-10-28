@@ -2,6 +2,10 @@ resource "aws_cloudfront_distribution" "media" {
   enabled     = true
   comment     = "tricklens media"
   price_class = "PriceClass_100" # US/Canada/Europe only — cheapest tier, plenty for a hobby project
+  # media.tricklens.com (F4, infra/domain.tf). The default *.cloudfront.net
+  # name keeps working too, so clip URLs built before the switch still load.
+  aliases         = [local.media_domain]
+  is_ipv6_enabled = true
 
   origin {
     domain_name              = aws_s3_bucket.media.bucket_regional_domain_name
@@ -31,6 +35,8 @@ resource "aws_cloudfront_distribution" "media" {
   }
 
   viewer_certificate {
-    cloudfront_default_certificate = true # no custom domain yet — see plan's Domain decision
+    acm_certificate_arn      = aws_acm_certificate_validation.main.certificate_arn
+    ssl_support_method       = "sni-only"
+    minimum_protocol_version = "TLSv1.2_2021"
   }
 }

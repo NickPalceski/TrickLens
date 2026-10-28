@@ -5,9 +5,11 @@ import {
   formatTimeAgo,
   formatTrickName,
   SUBSCORES,
+  type TrickTagIn,
   useClipProgress,
   useMyTeams,
   usePublishClip,
+  usuallyNotATrick,
 } from '@tricklens/api';
 import { type FormEvent, useId, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router';
@@ -19,22 +21,34 @@ import { type Step, Stepper } from '../../components/clip/Stepper.tsx';
 import { TrickBreakdown, TrickTimeline } from '../../components/clip/TrickBreakdown.tsx';
 import { TrickNameInput, TrickSuggestions } from '../../components/clip/TrickNameInput.tsx';
 import { Button } from '../../components/ui/Button.tsx';
-import { Chip, ErrorState, Loading, Switch } from '../../components/ui/controls.tsx';
+import { Checkbox, Chip, ErrorState, Loading, Switch } from '../../components/ui/controls.tsx';
 import { previewUrl } from '../../lib/video.ts';
 import page from '../page.module.css';
 import styles from './ClipFlowPage.module.css';
 
 const MAX_TAGS = 5; // TagTricksRequest in the API
 
-/** Where the clip is, as steps. Analysis off skips the middle two. */
+/** Where the clip is, as steps. With analysis off, the worker only prepares the video. */
 function stepsFor(clip: ClipOut): Step[] {
-  const skipped = clip.status === 'analyzed' && !clip.analysis;
   const order = ['draft', 'queued', 'analyzing', 'analyzed'] as const;
   const at = order.indexOf(clip.status as (typeof order)[number]);
-  const step = (label: string, i: number): Step => ({
-    label,
-    kind: skipped && (i === 1 || i === 2) ? 'skipped' : i < at ? 'done' : i === at ? 'current' : 'upcoming',
-  });
+  const kind = (i: number): Step['kind'] => (i < at ? 'done' : i === at ? 'current' : 'upcoming');
+  if (!clip.analyze) {
+    const processing: Step['kind'] = at > 2 ? 'done' : at > 0 ? 'current' : 'upcoming';
+    if (clip.status === 'unanalyzable') {
+      return [
+        { label: 'Upload', kind: 'done' },
+        { label: "Couldn't process", kind: 'failed' },
+        { label: 'Published', kind: 'skipped' },
+      ];
+    }
+    return [
+      { label: 'Upload', kind: at > 0 ? 'done' : 'current' },
+      { label: 'Processing', kind: processing },
+      { label: 'Ready', kind: kind(3) },
+      { label: 'Published', kind: 'upcoming' },
+    ];
+  }
   if (clip.status === 'unanalyzable') {
     return [
       { label: 'Upload', kind: 'done' },
@@ -45,10 +59,10 @@ function stepsFor(clip: ClipOut): Step[] {
     ];
   }
   return [
-    { ...step('Upload', 0), kind: at > 0 ? 'done' : 'current' },
-    step('Queued', 1),
-    step('Analyzing', 2),
-    step('Ready', 3),
+    { label: 'Upload', kind: at > 0 ? 'done' : 'current' },
+    { label: 'Queued', kind: kind(1) },
+    { label: 'Analyzing', kind: kind(2) },
+    { label: 'Ready', kind: kind(3) },
     { label: 'Published', kind: 'upcoming' },
   ];
 }
@@ -62,6 +76,16 @@ function Waiting({ clip }: { clip: ClipOut }) {
         <Link to="/upload" className="link">
           Upload it again
         </Link>
+      </section>
+    );
+  }
+  if (!clip.analyze) {
+    return (
+      <section className={`${page.card} ${styles.card}`} aria-live="polite">
+        <h2 className={styles.cardTitle}>Preparing your video</h2>
+        <p className="muted">
+          Usually under a minute. You can leave this page; the clip waits under Upload, In progress.
+        </p>
       </section>
     );
   }
@@ -93,25 +117,47 @@ function Review({ clip, onSeek }: { clip: ClipOut; onSeek: (ms: number) => void 
   const analyzed = clip.analysis?.tricks ?? [];
   const perTrick = analyzed.length > 0;
   const tagged = clip.tricks.map((t) => formatTrickName(t.canonical_name));
+  const byIndex = clip.tricks.some((t) => t.analysis_index != null);
 
-  const [names, setNames] = useState<string[]>(() =>
-    perTrick ? analyzed.map((_, i) => tagged[i] ?? '') : tagged.length ? tagged : [''],
+  // One name per analyzed trick, found from the saved tags by index (or by
+  // position, for tags from before indexes), else empty.
+  const [names, setNames] = useState<string[]>(() => {
+    if (!perTrick) return tagged.length ? tagged : [''];
+    if (byIndex) {
+      return analyzed.map((_, i) => {
+        const t = clip.tricks.find((x) => x.analysis_index === i);
+        return t ? formatTrickName(t.canonical_name) : '';
+      });
+    }
+    return analyzed.map((_, i) => tagged[i] ?? '');
+  });
+  // Rows the skater says aren't a trick: left untagged, so they don't show
+  // or count toward the limit. A step-off at the end starts ticked.
+  const [notTrick, setNotTrick] = useState<boolean[]>(() =>
+    analyzed.map((t, i) =>
+      byIndex ? !clip.tricks.some((x) => x.analysis_index === i) : !tagged[i] && usuallyNotATrick(t),
+    ),
   );
   const [team, setTeam] = useState<string>(clip.team?.id ?? '');
   const [included, setIncluded] = useState(clip.score_included);
   const [touched, setTouched] = useState(false);
 
-  const tooMany = names.length > MAX_TAGS;
-  const missing = names.map((n) => !n.trim());
+  const named = perTrick ? names.filter((_, i) => !notTrick[i]) : names;
+  const tooMany = named.length > MAX_TAGS;
+  const noneNamed = perTrick && named.length === 0;
+  const missing = names.map((n, i) => !n.trim() && !(perTrick && notTrick[i]));
   const scored = clip.steeze_score !== null && clip.steeze_score !== undefined;
   const founded = (teams.data ?? []).filter((t) => t.founded);
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     setTouched(true);
-    if (tooMany || missing.some(Boolean)) return;
+    if (tooMany || noneNamed || missing.some(Boolean)) return;
+    const tricks: TrickTagIn[] = perTrick
+      ? names.flatMap((n, i) => (notTrick[i] ? [] : [{ name: n.trim(), analysis_index: i }]))
+      : names.map((n) => ({ name: n.trim() }));
     publish.mutate(
-      { tricks: names.map((n) => n.trim()), teamId: team || null, scoreIncluded: included },
+      { tricks, teamId: team || null, scoreIncluded: included },
       { onSuccess: (c) => navigate(`/clips/${c.id}`) },
     );
   };
@@ -135,7 +181,7 @@ function Review({ clip, onSeek }: { clip: ClipOut; onSeek: (ms: number) => void 
           {analyzed.length > 1 ? (
             <TrickBreakdown
               tricks={analyzed}
-              names={names.map((n, i) => n.trim() || `Trick ${i + 1}`)}
+              names={names.map((n, i) => (notTrick[i] ? 'Not a trick' : n.trim() || `Trick ${i + 1}`))}
               openFirst={false}
             />
           ) : (
@@ -145,7 +191,7 @@ function Review({ clip, onSeek }: { clip: ClipOut; onSeek: (ms: number) => void 
       ) : (
         <p className={styles.unscored}>Not analyzed, so no score. It posts with just your trick names.</p>
       )}
-      {clip.analysis && <ReportAnalysis clip={clip} names={names} />}
+      {clip.analyze && clip.analysis && <ReportAnalysis clip={clip} names={names} />}
 
       <form
         className={`${page.card} ${styles.card}`}
@@ -162,7 +208,10 @@ function Review({ clip, onSeek }: { clip: ClipOut; onSeek: (ms: number) => void 
             <legend className={styles.legend}>
               Name {analyzed.length === 1 ? 'the trick' : `each of the ${analyzed.length} tricks`} we found
             </legend>
-            <p className="muted">In the order they happen. Bails count too: name the trick you went for.</p>
+            <p className="muted">
+              In the order they happen. Bails count too: name the trick you went for. If one isn't a trick at
+              all (stepping off at the end, say), tick "Not a trick".
+            </p>
             <ol className={styles.trickList}>
               {analyzed.map((t, i) => (
                 <li key={`${t.takeoff_ms}-${t.outcome}`} className={styles.trickRow}>
@@ -180,19 +229,38 @@ function Review({ clip, onSeek }: { clip: ClipOut; onSeek: (ms: number) => void 
                       </button>
                     )}
                   </div>
-                  <TrickNameInput
-                    label={`Trick ${i + 1}`}
-                    value={names[i] ?? ''}
-                    onChange={(e) => setNames(names.map((n, j) => (j === i ? e.target.value : n)))}
-                    error={touched && missing[i] ? 'Name this trick.' : null}
+                  {!notTrick[i] && (
+                    <TrickNameInput
+                      label={`Trick ${i + 1}`}
+                      value={names[i] ?? ''}
+                      onChange={(e) => setNames(names.map((n, j) => (j === i ? e.target.value : n)))}
+                      error={touched && missing[i] ? 'Name this trick.' : null}
+                    />
+                  )}
+                  <Checkbox
+                    label={
+                      <>
+                        Not a trick<span className="visually-hidden">, number {i + 1}</span>
+                      </>
+                    }
+                    description={
+                      notTrick[i] ? "Left out: it won't be named or shown on the clip." : undefined
+                    }
+                    checked={notTrick[i] ?? false}
+                    onChange={(v) => setNotTrick(notTrick.map((x, j) => (j === i ? v : x)))}
                   />
                 </li>
               ))}
             </ol>
             {tooMany && (
               <p className={styles.error} role="alert">
-                We found {analyzed.length} tricks, but a clip can carry up to {MAX_TAGS} for now, so this one
-                can't be published yet.
+                That's {named.length} tricks, but a clip can carry up to {MAX_TAGS} for now. Mark the ones
+                that aren't tricks, or this clip can't be published yet.
+              </p>
+            )}
+            {touched && noneNamed && (
+              <p className={styles.error} role="alert">
+                Name at least one trick.
               </p>
             )}
           </fieldset>
@@ -248,7 +316,7 @@ function Review({ clip, onSeek }: { clip: ClipOut; onSeek: (ms: number) => void 
             Couldn't publish: {publish.error.message}
           </p>
         )}
-        <Button type="submit" block disabled={publish.isPending || tooMany}>
+        <Button type="submit" block disabled={publish.isPending}>
           {publish.isPending ? 'Publishing…' : 'Publish clip'}
         </Button>
       </form>

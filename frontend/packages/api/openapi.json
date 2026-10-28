@@ -65,8 +65,93 @@
         "title": "AnalysisOut",
         "type": "object"
       },
+      "AnalysisReportCreate": {
+        "additionalProperties": false,
+        "description": "Body for POST /clips/{clip_id}/analysis-reports. Only what the\nskater says: the server snapshots the analysis itself.",
+        "properties": {
+          "app_version": {
+            "default": "",
+            "maxLength": 40,
+            "title": "App Version",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "problems": {
+            "default": [],
+            "items": {
+              "enum": [
+                "missed_trick",
+                "extra_trick",
+                "wrong_landed",
+                "timing_off",
+                "score_off",
+                "should_have_scored",
+                "wrong_reason"
+              ],
+              "type": "string"
+            },
+            "maxItems": 7,
+            "title": "Problems",
+            "type": "array"
+          },
+          "score_direction": {
+            "anyOf": [
+              {
+                "enum": [
+                  "too_high",
+                  "too_low"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Direction"
+          },
+          "share_video": {
+            "default": false,
+            "title": "Share Video",
+            "type": "boolean"
+          },
+          "subscores": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6,
+            "title": "Subscores",
+            "type": "array"
+          },
+          "trick_index": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trick Index"
+          }
+        },
+        "title": "AnalysisReportCreate",
+        "type": "object"
+      },
       "AnalyzedTrickOut": {
-        "description": "One trick the analyzer found in the clip (6c-3), in clip order. Not\nthe user's trick tags (`ClipOut.tricks`): the analyzer never names a\ntrick, and nothing matches the two up.",
+        "description": "One trick the analyzer found in the clip (6c-3), in clip order. Not\nthe user's trick tags (`ClipOut.tricks`): the analyzer never names a\ntrick. A tag says which of these it names with `analysis_index`.",
         "properties": {
           "confidence": {
             "title": "Confidence",
@@ -127,9 +212,86 @@
         "title": "AnalyzedTrickOut",
         "type": "object"
       },
+      "BugContext": {
+        "additionalProperties": false,
+        "description": "Sent automatically with a bug report, and listed to the person on\nthe form before they send it.",
+        "properties": {
+          "api_mode": {
+            "maxLength": 10,
+            "title": "Api Mode",
+            "type": "string"
+          },
+          "app_version": {
+            "maxLength": 40,
+            "title": "App Version",
+            "type": "string"
+          },
+          "theme": {
+            "maxLength": 20,
+            "title": "Theme",
+            "type": "string"
+          },
+          "user_agent": {
+            "maxLength": 500,
+            "title": "User Agent",
+            "type": "string"
+          },
+          "viewport": {
+            "maxLength": 20,
+            "title": "Viewport",
+            "type": "string"
+          }
+        },
+        "required": [
+          "app_version",
+          "user_agent",
+          "viewport",
+          "theme",
+          "api_mode"
+        ],
+        "title": "BugContext",
+        "type": "object"
+      },
+      "BugReportCreate": {
+        "additionalProperties": false,
+        "description": "Body for POST /bug-reports, signed in or out.",
+        "properties": {
+          "context": {
+            "$ref": "#/components/schemas/BugContext"
+          },
+          "description": {
+            "maxLength": 4000,
+            "title": "Description",
+            "type": "string"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page"
+          }
+        },
+        "required": [
+          "description",
+          "context"
+        ],
+        "title": "BugReportCreate",
+        "type": "object"
+      },
       "ClipCreate": {
         "description": "Body for POST /clips. duration_ms/source_fps are read off the\nbrowser's <video> element, so a draft has something to show. The worker\noverwrites both with ffprobe's values (6a).",
         "properties": {
+          "analyze": {
+            "default": true,
+            "title": "Analyze",
+            "type": "boolean"
+          },
           "content_type": {
             "title": "Content Type",
             "type": "string"
@@ -184,6 +346,11 @@
                 "type": "null"
               }
             ]
+          },
+          "analyze": {
+            "default": true,
+            "title": "Analyze",
+            "type": "boolean"
           },
           "author": {
             "$ref": "#/components/schemas/UserBrief"
@@ -578,6 +745,32 @@
         "title": "JoinPolicy",
         "type": "string"
       },
+      "MyJoinRequestOut": {
+        "description": "GET /teams/{slug}/join-requests/mine: whether the caller has asked to\njoin (`TeamOut` doesn't say), so \"Request sent\" survives a reload.",
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "pending": {
+            "title": "Pending",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "pending"
+        ],
+        "title": "MyJoinRequestOut",
+        "type": "object"
+      },
       "ProfileOut": {
         "properties": {
           "bearings": {
@@ -774,6 +967,26 @@
         "title": "ProfileUpdate",
         "type": "object"
       },
+      "ReportCreated": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "created_at"
+        ],
+        "title": "ReportCreated",
+        "type": "object"
+      },
       "SkateStyle": {
         "enum": [
           "vert",
@@ -792,11 +1005,18 @@
         "type": "string"
       },
       "TagTricksRequest": {
-        "description": "Body for POST /clips/{id}/tricks. Plain names for now \u2014 get-or-create\nagainst `tricks`, no fuzzy/alias matching yet (see docs/components/\ndata-model.md's design notes).",
+        "description": "Body for POST /clips/{id}/tricks, replacing any earlier tags, in line\norder. Each item is a plain name or a `TrickTagIn`; an analyzed trick\nleft out (one the skater says isn't a trick) simply isn't tagged.\nNames are get-or-create against `tricks`, no fuzzy/alias matching yet\n(see docs/components/data-model.md's design notes).",
         "properties": {
           "tricks": {
             "items": {
-              "type": "string"
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/components/schemas/TrickTagIn"
+                }
+              ]
             },
             "maxItems": 5,
             "minItems": 1,
@@ -1171,6 +1391,17 @@
       },
       "TrickOut": {
         "properties": {
+          "analysis_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Index"
+          },
           "canonical_name": {
             "title": "Canonical Name",
             "type": "string"
@@ -1186,6 +1417,32 @@
           "canonical_name"
         ],
         "title": "TrickOut",
+        "type": "object"
+      },
+      "TrickTagIn": {
+        "description": "One tag: a trick name, and which analyzed trick it names.",
+        "properties": {
+          "analysis_index": {
+            "anyOf": [
+              {
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Index"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "TrickTagIn",
         "type": "object"
       },
       "UserBrief": {
@@ -1532,6 +1789,53 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/bug-reports": {
+      "post": {
+        "description": "Signed in or out (a broken login is a bug too). Signed in, the report\nrecords who sent it, so we can follow up. API Gateway throttles this\nroute on its own (infra/api_gateway.tf), since anyone can call it.",
+        "operationId": "report_bug_bug_reports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BugReportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Report Bug",
+        "tags": [
+          "reports"
+        ]
+      }
+    },
     "/clips": {
       "post": {
         "operationId": "create_clip_clips_post",
@@ -1624,6 +1928,65 @@
         "summary": "Read Clip",
         "tags": [
           "clips"
+        ]
+      }
+    },
+    "/clips/{clip_id}/analysis-reports": {
+      "post": {
+        "description": "Your own clip, analyzed or couldn't be scored. Never changes the\nscore or the clip's status. The server snapshots the analysis as it is\nnow; with `share_video`, the snapshot also records the processed\nvideo's key (the transcode under processed/ isn't deleted, unlike the\nraw upload).",
+        "operationId": "report_analysis_clips__clip_id__analysis_reports_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "clip_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Clip Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisReportCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Report Analysis",
+        "tags": [
+          "reports"
         ]
       }
     },
@@ -2123,6 +2486,7 @@
     },
     "/clips/{clip_id}/tricks": {
       "post": {
+        "description": "Replaces the clip's tags. A tag can say which analyzed trick it names\n(`analysis_index`); an analyzed trick nobody names is one the skater\nsays isn't a trick (docs/components/frontend.md, Tagging tricks).",
         "operationId": "tag_tricks_clips__clip_id__tricks_post",
         "parameters": [
           {
@@ -2699,6 +3063,82 @@
         ]
       }
     },
+    "/teams/{slug}/clips": {
+      "get": {
+        "description": "The team's published clips (tagged to it before publishing), newest\nfirst, keyset-paginated like the feed.",
+        "operationId": "list_team_clips_teams__slug__clips_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Team Clips",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
     "/teams/{slug}/follow": {
       "delete": {
         "operationId": "unfollow_team_teams__slug__follow_delete",
@@ -3069,6 +3509,54 @@
           }
         ],
         "summary": "List Join Requests",
+        "tags": [
+          "teams"
+        ]
+      }
+    },
+    "/teams/{slug}/join-requests/mine": {
+      "get": {
+        "description": "Whether you've asked to join (a self-service request, not an invite),\nso a team page can show \"Request sent\" after a reload. 200 either way.",
+        "operationId": "read_my_join_request_teams__slug__join_requests_mine_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MyJoinRequestOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Read My Join Request",
         "tags": [
           "teams"
         ]
@@ -3461,6 +3949,73 @@
         ]
       }
     },
+    "/users/me/drafts": {
+      "get": {
+        "description": "Your clips that aren't published yet (uploading, queued, analyzing,\nready, or couldn't be scored), newest first, so one left mid-analysis\ncan be found again.",
+        "operationId": "list_my_drafts_users_me_drafts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List My Drafts",
+        "tags": [
+          "users"
+        ]
+      }
+    },
     "/users/me/profile": {
       "patch": {
         "operationId": "update_profile_users_me_profile_patch",
@@ -3502,6 +4057,37 @@
           }
         ],
         "summary": "Update Profile",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/me/teams": {
+      "get": {
+        "description": "Teams you're a member of, with your role (`my_role`), by name. A team\nyou own that's still forming is included (`founded: false`); one you're\nonly invited to found isn't, since you're not a member yet (that's\nGET /teams/invites/mine).",
+        "operationId": "list_my_teams_users_me_teams_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TeamOut"
+                  },
+                  "title": "Response List My Teams Users Me Teams Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List My Teams",
         "tags": [
           "users"
         ]
@@ -3549,6 +4135,82 @@
           }
         ],
         "summary": "Read Public",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/{username}/clips": {
+      "get": {
+        "description": "A user's published clips, newest first, keyset-paginated like the\nfeed. Clips taken out of their average (`score_included: false`) are\nlisted too; the profile marks them.",
+        "operationId": "list_user_clips_users__username__clips_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "title": "Username",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List User Clips",
         "tags": [
           "users"
         ]

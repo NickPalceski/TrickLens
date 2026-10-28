@@ -2,6 +2,7 @@ import {
   type ClipOut,
   formatTimeAgo,
   formatTrickName,
+  shownTricks,
   useClip,
   useMe,
   useRecordView,
@@ -39,7 +40,8 @@ function NotScored({ clip }: { clip: ClipOut }) {
 function Breakdown({ clip, own }: { clip: ClipOut; own: boolean }) {
   const setIncluded = useSetScoreIncluded();
   const analysis = clip.analysis;
-  const tricks = analysis?.tricks ?? [];
+  const shown = shownTricks(clip);
+  const tricks = shown.map((s) => s.trick);
   const landed = tricks.filter((t) => t.outcome === 'landed').length;
   const multi = tricks.length > 1;
 
@@ -75,8 +77,8 @@ function Breakdown({ clip, own }: { clip: ClipOut; own: boolean }) {
         <TrickBreakdown
           tricks={tricks}
           names={
-            clip.tricks.length === tricks.length
-              ? clip.tricks.map((t) => formatTrickName(t.canonical_name))
+            shown.every((s) => s.name !== undefined)
+              ? shown.map((s) => formatTrickName(s.name ?? ''))
               : undefined
           }
         />
@@ -108,7 +110,7 @@ export function ClipPage() {
 
   const c = clip.data;
   const own = c.author.id === me?.id;
-  const tricks = c.analysis?.tricks ?? [];
+  const tricks = shownTricks(c).map((s) => s.trick);
   const when = c.published_at ?? c.created_at;
   const scored = c.status === 'published' || c.status === 'analyzed';
 

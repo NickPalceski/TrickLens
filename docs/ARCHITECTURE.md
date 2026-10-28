@@ -23,7 +23,9 @@ scores from an analyzer checked on seven real clips. The scoring constants
 stay uncalibrated guesses until hand-judged scores exist (`steeze-v1`,
 not blocking). The web app runs as a parallel track: phases F1–F3
 (scaffold, read screens, upload and team flows) are done and run on a mock
-API; F4 wires it to the live backend.
+API; F4 wires it to the live backend, and has started with the routes the
+web app proposed (lists, posting without analysis, tags that name an
+analyzed trick, reports).
 See the [build order](#build-order).
 
 ---
@@ -46,10 +48,11 @@ flowchart LR
     client(["Client<br/>web app (frontend/, mock API until F4) · Postman · curl"])
     cognito["Cognito<br/>sign up · log in"]
 
-    subgraph aws ["AWS"]
-        api["API<br/>FastAPI on Lambda<br/>behind API Gateway"]
+    subgraph aws ["AWS (tricklens.com: Route 53 + ACM)"]
+        site["Web app<br/>S3 + CloudFront<br/>tricklens.com"]
+        api["API<br/>FastAPI on Lambda<br/>behind API Gateway<br/>api.tricklens.com"]
         s3[("S3<br/>raw/ · processed/ · thumbs/")]
-        cdn["CloudFront"]
+        cdn["CloudFront<br/>media.tricklens.com"]
         sqs[["SQS<br/>analysis queue + DLQ"]]
         worker["Worker + analyzer<br/>Lambda (own image)<br/>ffmpeg · YOLOX · MediaPipe"]
         rank["Rankings<br/>Lambda, every 30 min"]
@@ -58,6 +61,7 @@ flowchart LR
     db[("Postgres<br/>Neon in prod")]
     gha["GitHub Actions<br/>test → build → migrate →<br/>terraform apply → smoke test"]
 
+    client -- "loads the app" --> site
     client -- "id token" --> cognito
     client -- "HTTPS + bearer token" --> api
     client -- "upload (presigned PUT)" --> s3
@@ -85,7 +89,8 @@ flowchart LR
 | **Cognito** | Identity | Never store passwords; email verification and reset come free | [Auth flow](#auth-flow) |
 | **EventBridge** | Scheduler | Triggers the rankings rebuild | [infrastructure.md](components/infrastructure.md) |
 | **Terraform + GitHub Actions** | Infrastructure as code, CI/CD | Reproducible, reviewable, and the emergency "stop all billing" button | [infrastructure.md](components/infrastructure.md) |
-| **Web app** | UI | *Not built yet.* Planned: Next.js on Vercel. A visual prototype exists outside the repo | — |
+| **Web app** | UI, desktop and phone browsers | A React + Vite single-page app, static files on S3 behind its own CloudFront at `tricklens.com` (F4). Runs on a mock API until wired to the live one | [frontend.md](components/frontend.md) |
+| **Route 53 + ACM** | `tricklens.com` and its certificate | One stable name for the site, API and media; a later phone app's links need it | [infrastructure.md](components/infrastructure.md#the-domain) |
 
 ---
 
@@ -103,7 +108,7 @@ sequenceDiagram
     participant W as Worker
     participant DB as Postgres
 
-    U->>API: POST /clips {content_type, duration, fps}
+    U->>API: POST /clips {content_type, duration, fps, analyze}
     API->>DB: insert clip (draft)
     API-->>U: clip + presigned upload URL
     U->>S3: PUT video to raw/ (direct, not via the API)
@@ -115,10 +120,11 @@ sequenceDiagram
     W->>DB: claim: status = analyzing
     W->>S3: download raw/, upload processed/ + thumbs/
     W->>DB: analyses row, status = analyzed (or unanalyzable + reason)
+    Note over W,DB: analyze = false: transcode + thumbnail only,<br/>status = analyzed with no analyses row
     loop until terminal status
         U->>API: GET /clips/{id}
     end
-    U->>API: POST /clips/{id}/tricks (tag)
+    U->>API: POST /clips/{id}/tricks (a name per analyzed trick, by index)
     U->>API: POST /clips/{id}/publish
     API->>DB: status = published
 ```
@@ -141,11 +147,12 @@ stateDiagram-v2
     draft --> queued: POST /complete (upload verified)
     queued --> analyzing: worker claims it
     analyzing --> analyzing: lease expired, reclaimed on redelivery
-    analyzing --> analyzed: scored
+    analyzing --> analyzed: scored, or transcoded only (analyze = false)
     analyzing --> unanalyzable: bad file or failed gate (specific reason)
     analyzing --> unanalyzable: analyzer crashed, or runs kept dying ("analysis failed")
     queued --> unanalyzable: stuck over 2h, swept ("analysis failed")
     analyzed --> analyzed: tag tricks / team / score inclusion
+    note right of draft: analyze = false — tricks can be tagged<br/>from draft on, the worker only transcodes
     analyzed --> published: POST /publish (≥1 trick tagged)
     published --> published: like, comment, view, score inclusion
     unanalyzable --> [*]
@@ -212,7 +219,8 @@ id-token-for-client.
 | Worker | SQS poll loop (`python -m app.worker`) | Lambda (`app.worker.lambda_handler`), SQS event-source mapping |
 | Rankings + stuck-clip sweep | `make rankings` / `make sweep` on demand | One Lambda on an EventBridge schedule runs both |
 | Images | `backend/Dockerfile`, `backend/Dockerfile.worker` | The same two images, from ECR |
-| Web app | Vite dev server on :3000 (`web` service), mock API by default | Not deployed yet (F4: static files on S3 + CloudFront) |
+| Web app | Vite dev server on :3000 (`web` service), mock API by default | `tricklens.com`: S3 + CloudFront, created in F4; the deploy that fills it comes with the live-API wiring |
+| Names | `localhost` ports | `tricklens.com`, `api.`, `media.` (`www.` redirects), Route 53 |
 
 No application code branches on the environment: `AWS_ENDPOINT_URL` is the
 whole local↔cloud seam for S3 and SQS, and Compose runs the exact images
@@ -398,9 +406,11 @@ code (disabling its telemetry doesn't stop them).
 | ECR | 500MB free 12mo, then $0.10/GB-mo | ~$0.40 before 6a; more with the worker image (its big layers only change when `requirements*.txt` or the Dockerfile does, so most deploys add just the small `app/` layer) |
 | Neon | Free tier | $0 |
 | SSM Parameter Store | SecureString parameters + API calls at this volume, always free | $0 |
+| Route 53 | No free tier | $0.50/mo for the hosted zone, plus the domain itself (~$15/yr, billed yearly) |
+| ACM | Public certificates are free | $0 |
 | DynamoDB (Terraform locks) | On-demand billing, negligible request volume | $0 |
 | S3 (Terraform state) | A few KB, well under the free tier | $0 |
-| **Total** | | **~$0.60/mo** |
+| **Total** | | **~$1.10/mo**, plus ~$15/yr for the domain |
 
 Controls: S3 lifecycle rule expiring `raw/` drafts after 7 days, ECR lifecycle
 policies keeping the last 5 images per repo, CloudWatch Logs retention
@@ -442,7 +452,7 @@ concurrency, so a spike queues instead of scaling the bill (see
 | F1 | Workspace, tokens, both themes + Settings toggle, app shell, routes, typed API client, mock API, CI | **done** |
 | F2 | Auth screens (mocked), feed + comments, Discover, clip detail, profiles | **done** |
 | F3 | Upload → publish flow (per-trick tagging after analysis, analysis on/off), team flow, analysis and bug reports | **done** |
-| F4 | Real Cognito, live API (and the proposed routes, including a `reports` table), presigned uploads, hosting + deploy | next (6c is done) |
+| F4 | The proposed routes on the backend, `reports` + `make reports` (migration `0010`), done; then real Cognito, live API, presigned uploads, hosting on a custom domain + deploy | **in progress** |
 
 Step 3 deliberately stubs the analyzer so that a complete, deployed, working
 product exists before the hardest component is attempted.

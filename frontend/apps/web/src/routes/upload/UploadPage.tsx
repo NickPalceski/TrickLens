@@ -13,7 +13,7 @@ import { trickNames } from '../../components/clip/ClipMedia.tsx';
 import { TrickNameInput, TrickSuggestions } from '../../components/clip/TrickNameInput.tsx';
 import { Icon } from '../../components/icons/Icon.tsx';
 import { Button } from '../../components/ui/Button.tsx';
-import { Chip, SectionHeading, Segmented, Switch } from '../../components/ui/controls.tsx';
+import { Chip, Pills, SectionHeading, Switch } from '../../components/ui/controls.tsx';
 import { apiMode } from '../../env.ts';
 import { ACCEPTED_TYPES, MAX_DURATION_MS, readVideoDuration, rememberPreview } from '../../lib/video.ts';
 import page from '../page.module.css';
@@ -23,10 +23,11 @@ import styles from './UploadPage.module.css';
 const ASSUMED_FPS = 30;
 const MAX_TAGS = 5; // TagTricksRequest in the API
 
-type Outcome = 'single' | 'line' | 'failed';
+type Outcome = 'single' | 'line' | 'stepoff' | 'failed';
 const OUTCOMES = [
   { value: 'single', label: 'One trick' },
   { value: 'line', label: 'Three-trick line' },
+  { value: 'stepoff', label: 'Ends with a step-off' },
   { value: 'failed', label: "Couldn't score" },
 ] as const;
 
@@ -35,6 +36,9 @@ interface Picked {
   url: string;
   durationMs: number;
 }
+
+const statusLabel = (c: ClipOut) =>
+  !c.analyze && (c.status === 'queued' || c.status === 'analyzing') ? 'Processing' : STATUS_LABEL[c.status];
 
 const STATUS_LABEL: Record<ClipOut['status'], string> = {
   draft: 'Uploading',
@@ -62,7 +66,7 @@ function InProgress() {
               <Chip
                 tone={c.status === 'analyzed' ? 'azure' : c.status === 'unanalyzable' ? 'danger' : 'plain'}
               >
-                {STATUS_LABEL[c.status]}
+                {statusLabel(c)}
               </Chip>
             </Link>
           </li>
@@ -141,10 +145,10 @@ export function UploadPage() {
       });
       await uploadToStorage(upload_url, picked.file, picked.file.type, setProgress);
       rememberPreview(clip.id, picked.file);
-      const done = await complete.mutateAsync(clip.id);
-      // Analysis off: the clip is ready straight away, so the tags go on now.
-      if (!analyze && done.status === 'analyzed')
-        await tag.mutateAsync({ clipId: clip.id, tricks: cleanTags });
+      await complete.mutateAsync(clip.id);
+      // Analysis off: the names are known now, and the API takes them before
+      // the worker has finished preparing the video.
+      if (!analyze) await tag.mutateAsync({ clipId: clip.id, tricks: cleanTags.map((name) => ({ name })) });
       navigate(`/upload/${clip.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The upload failed. Try again.');
@@ -230,7 +234,7 @@ export function UploadPage() {
               description={
                 analyze
                   ? "We find each trick and score how you landed it. You'll name the tricks after."
-                  : 'No score. Your clip is ready to post as soon as it uploads; name the tricks now.'
+                  : 'No score. Name the tricks now; your clip is ready to post once the video is prepared.'
               }
               checked={analyze}
               onChange={setAnalyze}
@@ -280,12 +284,11 @@ export function UploadPage() {
           {analyze && apiMode === 'mock' && (
             <div className={styles.prototype}>
               <span className="label">Prototype: what the analyzer finds</span>
-              <Segmented
+              <Pills
                 label="Sample analysis result"
                 options={OUTCOMES}
                 value={outcome}
                 onChange={setOutcome}
-                block
               />
             </div>
           )}

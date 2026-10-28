@@ -13,9 +13,14 @@ the GitHub Actions pipelines that test and deploy it. Code: `infra/`,
 flowchart TB
     client(["Client"])
 
+    subgraph dns ["tricklens.com (Route 53 + one ACM certificate)"]
+        r53["Hosted zone<br/>apex · www · api · media"]
+    end
+
     subgraph edge ["Edge + identity"]
-        apigw["API Gateway HTTP API<br/>$default route"]
-        cf["CloudFront<br/>media (OAC)"]
+        apigw["API Gateway HTTP API<br/>api.tricklens.com<br/>$default route +<br/>throttled POST /bug-reports"]
+        cfsite["CloudFront: site (OAC)<br/>tricklens.com, www → apex"]
+        cf["CloudFront: media (OAC)<br/>media.tricklens.com"]
         cognito["Cognito tricklens-prod<br/>public web client"]
     end
 
@@ -36,6 +41,7 @@ flowchart TB
     end
 
     subgraph data ["Storage"]
+        site[("S3 site bucket<br/>the built web app")]
         s3[("S3 media bucket<br/>raw/ · processed/ · thumbs/")]
         ssm["SSM SecureString<br/>DATABASE_URL"]
         neon[("Neon Postgres<br/>outside AWS")]
@@ -47,6 +53,8 @@ flowchart TB
         budget["Budget<br/>$5/mo alarm"]
     end
 
+    client -. "resolves names" .-> r53
+    client -- "loads the app" --> cfsite --> site
     client --> apigw --> api
     client -- "sign up / log in" --> cognito
     client -- "presigned PUT" --> s3
@@ -65,10 +73,13 @@ flowchart TB
 |---|---|---|
 | ECR `tricklens`, `tricklens-worker` | `ecr.tf` | Two repos, each keeping its last 5 images. Separate repos so each has its own rollback history |
 | Lambda `tricklens-api` / `-worker` / `-rankings` | `lambda.tf` | API and rankings share the API image, selected by `image_config.command`. The worker has its own image |
-| API Gateway HTTP API | `api_gateway.tf` | One `$default` route, `AWS_PROXY` integration, payload format 2.0 |
+| API Gateway HTTP API | `api_gateway.tf` | A `$default` route, `AWS_PROXY` integration, payload format 2.0. `POST /bug-reports` has its own route to the same integration, only so the stage can throttle it (burst 5, 1 per second, across all callers): anyone can call it signed out ([API doc, Reports](api.md#reports)) |
 | SQS `tricklens-analysis` + DLQ | `sqs.tf` | Visibility timeout 1800s (6× the worker's 300s timeout); `maxReceiveCount` 3; event-source mapping with `batch_size = 1` and `maximum_concurrency` 5 (`var.worker_max_concurrency`) |
-| S3 media bucket | `s3.tf` | Bucket name includes the account id. 7-day expiry on `raw/`. Public access blocked, readable only by CloudFront |
-| CloudFront | `cloudfront.tf` | Origin Access Control to S3, `GET`/`HEAD` only, `PriceClass_100` |
+| S3 media bucket | `s3.tf` | Bucket name includes the account id. 7-day expiry on `raw/`. Public access blocked, readable only by CloudFront. CORS lets `https://tricklens.com` `PUT` presigned uploads (F4) |
+| CloudFront: media | `cloudfront.tf` | Origin Access Control to S3, `GET`/`HEAD` only, `PriceClass_100`. Served as `media.tricklens.com` (F4), which is the Lambdas' `CDN_BASE_URL`; the `*.cloudfront.net` name still works |
+| Domain: `tricklens.com` | `domain.tf` | The hosted zone is looked up, not managed (see [The domain](#the-domain)). One ACM certificate for the apex, `www`, `api` and `media`, validated by DNS; alias records for each |
+| S3 site bucket + CloudFront: site | `site.tf` | The built web app at `tricklens.com`, private bucket behind OAC. A CloudFront Function redirects `www` to the apex; 403/404 answer with `index.html` (a single-page app). Managed caching and security-headers policies |
+| API custom domain | `api_gateway.tf` | `api.tricklens.com`, regional, mapped to the `$default` stage. The `execute-api` URL keeps working and the smoke test still uses it |
 | Cognito `tricklens-prod` | `cognito.tf` | Email as username, email verification, public client (no secret), `USER_PASSWORD_AUTH` |
 | EventBridge rule | `eventbridge.tf` | Invokes the rankings Lambda on `var.rankings_schedule_expression` (`rate(30 minutes)`). Since 6c-3 each tick also runs the stuck-clip sweep (`app/sweep.py`), which needs only a schedule and the database |
 | SSM parameter | `secrets.tf` | `DATABASE_URL` as a SecureString (see [services](services.md#database_url-comes-from-ssm-in-production)) |
@@ -78,7 +89,9 @@ flowchart TB
 
 **Lambda environment.** All three functions get the same plain env vars
 (bucket, queue URL, CDN URL, Cognito IDs, the SSM parameter *name*), because
-`Settings` requires them all to construct. `AWS_REGION` and the other
+`Settings` requires them all to construct. `CORS_ORIGINS` is
+`https://tricklens.com` plus `var.extra_cors_origins` (empty: a local web
+app talks to the local API, never prod). `AWS_REGION` and the other
 reserved names are left out: Lambda injects them itself, and Terraform
 rejects them. `AWS_ENDPOINT_URL` is absent, which is what makes boto3 use
 real AWS (see [services](services.md)).
@@ -95,6 +108,40 @@ real AWS (see [services](services.md)).
 `versions.tf`/`providers.tf`/`backend.tf` and `variables.tf`/`outputs.tf`.
 `make tf-init` / `tf-plan` / `tf-apply` wrap the `terraform -chdir=infra`
 commands.
+
+## The domain
+
+`tricklens.com` was registered through Route 53 by hand (2026-10-27,
+decided with the user over buying elsewhere, so DNS and certificates stay
+in Terraform with no manual steps). Registration created the hosted zone,
+and the registration's nameservers point at that exact zone. So
+`domain.tf` only looks it up (`data "aws_route53_zone"`): if Terraform
+managed it, a destroy or replacement would hand out new nameservers and
+take the domain offline. Never create a second zone for the same name.
+
+| Name | Serves |
+|---|---|
+| `tricklens.com` | The web app (site CloudFront) |
+| `www.tricklens.com` | 301 to the apex, so saved passwords, the stored sign-in and CORS have one origin |
+| `api.tricklens.com` | The API (API Gateway custom domain) |
+| `media.tricklens.com` | Clip videos and thumbnails (media CloudFront) |
+
+One ACM certificate covers all four. CloudFront needs it in us-east-1,
+and the regional API domain needs it in the API's region, which is the
+same one. ACM renews it by itself while the validation records stay.
+Costs: the domain ~$15/year and the hosted zone $0.50/month; the
+certificate is free.
+
+Media URLs are built at response time from `CDN_BASE_URL` (the database
+stores keys, CLAUDE.md convention), so moving clips to `media.tricklens.com`
+needed no data change. The Lambdas take the name through its DNS record,
+so they switch only once it resolves.
+
+The CI roles needed Route 53 and ACM rights for this (`iam.tf`): the
+deploy role `acm:*`, Route 53 reads, and `ChangeResourceRecordSets` on this
+zone only (no zone create/delete); the plan role read-only. Like any
+change to a CI role's own permissions, that part is applied locally first
+([deployment guide](../deployment.md#fixing-the-ci-roles)).
 
 ## CI/CD pipeline
 

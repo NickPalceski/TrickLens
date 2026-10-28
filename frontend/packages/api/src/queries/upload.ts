@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError, unwrap } from '../client.ts';
 import { useApi } from '../context.tsx';
-import type { ClipOut } from '../types.ts';
+import type { ClipCreate, ClipOut, TrickTagIn } from '../types.ts';
 import { patchClip } from './cache.ts';
 import { keys } from './keys.ts';
 
@@ -35,6 +35,33 @@ export function uploadToStorage(
   });
 }
 
+/**
+ * Your unpublished clips (GET /users/me/drafts), newest first: uploading,
+ * being analyzed, ready to publish, or couldn't be scored. The upload page
+ * lists them so a clip you left mid-analysis isn't lost.
+ */
+export function useMyDrafts() {
+  const api = useApi();
+  return useQuery({
+    queryKey: keys.drafts,
+    queryFn: async () => unwrap(await api.GET('/users/me/drafts', { params: { query: { limit: 20 } } })),
+  });
+}
+
+/**
+ * Starts an upload (POST /clips): the clip row plus a presigned URL to PUT
+ * the file to. `analyze: false` posts it without a score; the worker still
+ * prepares the video.
+ */
+export function useCreateClip() {
+  const api = useApi();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: ClipCreate) => unwrap(await api.POST('/clips', { body })),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: keys.drafts }),
+  });
+}
+
 /** One of your clips, polled every 2s while it's queued or being analyzed. */
 export function useClipProgress(clipId: string) {
   const api = useApi();
@@ -45,7 +72,7 @@ export function useClipProgress(clipId: string) {
   });
 }
 
-/** POST /clips/{id}/complete: the upload landed, queue it for analysis. */
+/** POST /clips/{id}/complete: the upload landed, queue it for the worker. */
 export function useCompleteClip() {
   const api = useApi();
   const qc = useQueryClient();
@@ -59,12 +86,16 @@ export function useCompleteClip() {
   });
 }
 
-/** POST /clips/{id}/tricks: the trick names, in clip order (position = order). */
+/**
+ * POST /clips/{id}/tricks: the tags, in clip order. Each can say which
+ * analyzed trick it names (`analysis_index`); an analyzed trick left out is
+ * one the skater says isn't a trick (docs/components/frontend.md, Tagging tricks).
+ */
 export function useTagTricks() {
   const api = useApi();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ clipId, tricks }: { clipId: string; tricks: string[] }) =>
+    mutationFn: async ({ clipId, tricks }: { clipId: string; tricks: TrickTagIn[] }) =>
       unwrap(
         await api.POST('/clips/{clip_id}/tricks', {
           params: { path: { clip_id: clipId } },
@@ -76,8 +107,8 @@ export function useTagTricks() {
 }
 
 export interface PublishChoices {
-  /** One name per analyzed trick, in clip order; or the tags typed at upload. */
-  tricks: string[];
+  /** A name for each analyzed trick that is one, by `analysis_index`; or the tags typed at upload. */
+  tricks: TrickTagIn[];
   teamId: string | null;
   scoreIncluded: boolean;
 }

@@ -112,7 +112,8 @@ def _stub_score(clip_id: uuid.UUID) -> dict[str, Any]:
 async def _analyze_real(clip: Clip) -> dict[str, Any]:
     """Probe, transcode, analyze and thumbnail the raw upload, updating
     `clip`'s media fields in place. Returns the result in _stub_score's
-    shape.
+    shape, or `{"skipped": True}` for a clip posted without analysis
+    (`clip.analyze` false, F4): transcoded and thumbnailed, not scored.
 
     A bad *file* returns its media reason, and nothing is uploaded. An
     exception from the analyzer itself (pipeline.analyze has no S3 or
@@ -154,27 +155,30 @@ async def _analyze_real(clip: Clip) -> dict[str, Any]:
         )
 
         thumb_at_ms = info.duration_ms // 2
-        try:
-            res = await asyncio.to_thread(
-                pipeline.analyze,
-                processed,
-                settings.yolox_model_path,
-                settings.pose_model_path,
-                f"clip {clip.id}",
-            )
-        except Exception:
-            log.exception("worker: clip %s analysis crashed", clip.id)
-            result: dict[str, Any] = {"confidence": 0.0, "failure_reason": ANALYSIS_FAILED}
+        if not clip.analyze:
+            result: dict[str, Any] = {"skipped": True}
         else:
-            _log_analysis(clip.id, res)
-            thumb_at_ms = res.thumb_at_ms
-            result = {
-                "confidence": round(res.confidence, 2),
-                "failure_reason": res.failure_reason,
-                "steeze_breakdown": res.breakdown,
-                "steeze_score": res.steeze_score,
-                "details": res.details(),
-            }
+            try:
+                res = await asyncio.to_thread(
+                    pipeline.analyze,
+                    processed,
+                    settings.yolox_model_path,
+                    settings.pose_model_path,
+                    f"clip {clip.id}",
+                )
+            except Exception:
+                log.exception("worker: clip %s analysis crashed", clip.id)
+                result = {"confidence": 0.0, "failure_reason": ANALYSIS_FAILED}
+            else:
+                _log_analysis(clip.id, res)
+                thumb_at_ms = res.thumb_at_ms
+                result = {
+                    "confidence": round(res.confidence, 2),
+                    "failure_reason": res.failure_reason,
+                    "steeze_breakdown": res.breakdown,
+                    "steeze_score": res.steeze_score,
+                    "details": res.details(),
+                }
         await asyncio.to_thread(media.thumbnail, processed, thumb, thumb_at_ms)
 
         processed_key = f"{PREFIX_PROCESSED}/{clip.id}.mp4"
@@ -349,8 +353,18 @@ async def _process_message(body: dict[str, Any], receive_count: int = 1) -> None
 
         if get_settings().analyzer == "real":
             result = await _analyze_real(clip)
-        else:
+        elif clip.analyze:
             result = _stub_score(clip.id)
+        else:
+            result = {"skipped": True}
+
+        if result.get("skipped"):
+            # Posted without analysis: ready to tag and publish, with no
+            # score and no analysis row (docs/components/analyzer.md, Worker).
+            clip.status = ClipStatus.ANALYZED
+            await db.commit()
+            log.info("worker: clip %s -> %s (not analyzed, by request)", clip_id, clip.status)
+            return
 
         db.add(
             Analysis(

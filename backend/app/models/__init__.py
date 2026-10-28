@@ -12,11 +12,13 @@ from app.models.enums import (
     ClipStatus,
     JoinPolicy,
     JoinRequestKind,
+    ReportKind,
     SkateStyle,
     Stance,
     TeamLevel,
     TeamRole,
 )
+from app.models.report import Report
 from app.models.social import ClipView, Comment, Follow, Like
 from app.models.team import Team, TeamJoinRequest, TeamMember
 from app.models.user import Profile, User
@@ -35,6 +37,8 @@ __all__ = [
     "JoinRequestKind",
     "Like",
     "Profile",
+    "Report",
+    "ReportKind",
     "SkateStyle",
     "Stance",
     "Team",

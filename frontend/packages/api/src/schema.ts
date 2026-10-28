@@ -4,6 +4,28 @@
  */
 
 export interface paths {
+    "/bug-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report Bug
+         * @description Signed in or out (a broken login is a bug too). Signed in, the report
+         *     records who sent it, so we can follow up. API Gateway throttles this
+         *     route on its own (infra/api_gateway.tf), since anyone can call it.
+         */
+        post: operations["report_bug_bug_reports_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/clips": {
         parameters: {
             query?: never;
@@ -37,6 +59,30 @@ export interface paths {
         get: operations["read_clip_clips__clip_id__get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/clips/{clip_id}/analysis-reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Report Analysis
+         * @description Your own clip, analyzed or couldn't be scored. Never changes the
+         *     score or the clip's status. The server snapshots the analysis as it is
+         *     now; with `share_video`, the snapshot also records the processed
+         *     video's key (the transcode under processed/ isn't deleted, unlike the
+         *     raw upload).
+         */
+        post: operations["report_analysis_clips__clip_id__analysis_reports_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -203,7 +249,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Tag Tricks */
+        /**
+         * Tag Tricks
+         * @description Replaces the clip's tags. A tag can say which analyzed trick it names
+         *     (`analysis_index`); an analyzed trick nobody names is one the skater
+         *     says isn't a trick (docs/components/frontend.md, Tagging tricks).
+         */
         post: operations["tag_tricks_clips__clip_id__tricks_post"];
         delete?: never;
         options?: never;
@@ -410,6 +461,27 @@ export interface paths {
         patch: operations["update_team_teams__slug__patch"];
         trace?: never;
     };
+    "/teams/{slug}/clips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Team Clips
+         * @description The team's published clips (tagged to it before publishing), newest
+         *     first, keyset-paginated like the feed.
+         */
+        get: operations["list_team_clips_teams__slug__clips_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/teams/{slug}/follow": {
         parameters: {
             query?: never;
@@ -520,6 +592,27 @@ export interface paths {
         };
         /** List Join Requests */
         get: operations["list_join_requests_teams__slug__join_requests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/teams/{slug}/join-requests/mine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read My Join Request
+         * @description Whether you've asked to join (a self-service request, not an invite),
+         *     so a team page can show "Request sent" after a reload. 200 either way.
+         */
+        get: operations["read_my_join_request_teams__slug__join_requests_mine_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -641,6 +734,28 @@ export interface paths {
         patch: operations["update_me_users_me_patch"];
         trace?: never;
     };
+    "/users/me/drafts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Drafts
+         * @description Your clips that aren't published yet (uploading, queued, analyzing,
+         *     ready, or couldn't be scored), newest first, so one left mid-analysis
+         *     can be found again.
+         */
+        get: operations["list_my_drafts_users_me_drafts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/me/profile": {
         parameters: {
             query?: never;
@@ -658,6 +773,29 @@ export interface paths {
         patch: operations["update_profile_users_me_profile_patch"];
         trace?: never;
     };
+    "/users/me/teams": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List My Teams
+         * @description Teams you're a member of, with your role (`my_role`), by name. A team
+         *     you own that's still forming is included (`founded: false`); one you're
+         *     only invited to found isn't, since you're not a member yet (that's
+         *     GET /teams/invites/mine).
+         */
+        get: operations["list_my_teams_users_me_teams_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/{username}": {
         parameters: {
             query?: never;
@@ -667,6 +805,28 @@ export interface paths {
         };
         /** Read Public */
         get: operations["read_public_users__username__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/users/{username}/clips": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List User Clips
+         * @description A user's published clips, newest first, keyset-paginated like the
+         *     feed. Clips taken out of their average (`score_included: false`) are
+         *     listed too; the profile marks them.
+         */
+        get: operations["list_user_clips_users__username__clips_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -721,10 +881,43 @@ export interface components {
             tricks: components["schemas"]["AnalyzedTrickOut"][];
         };
         /**
+         * AnalysisReportCreate
+         * @description Body for POST /clips/{clip_id}/analysis-reports. Only what the
+         *     skater says: the server snapshots the analysis itself.
+         */
+        AnalysisReportCreate: {
+            /**
+             * App Version
+             * @default
+             */
+            app_version: string;
+            /** Note */
+            note?: string | null;
+            /**
+             * Problems
+             * @default []
+             */
+            problems: ("missed_trick" | "extra_trick" | "wrong_landed" | "timing_off" | "score_off" | "should_have_scored" | "wrong_reason")[];
+            /** Score Direction */
+            score_direction?: ("too_high" | "too_low") | null;
+            /**
+             * Share Video
+             * @default false
+             */
+            share_video: boolean;
+            /**
+             * Subscores
+             * @default []
+             */
+            subscores: string[];
+            /** Trick Index */
+            trick_index?: number | null;
+        };
+        /**
          * AnalyzedTrickOut
          * @description One trick the analyzer found in the clip (6c-3), in clip order. Not
          *     the user's trick tags (`ClipOut.tricks`): the analyzer never names a
-         *     trick, and nothing matches the two up.
+         *     trick. A tag says which of these it names with `analysis_index`.
          */
         AnalyzedTrickOut: {
             /** Confidence */
@@ -741,12 +934,45 @@ export interface components {
             touchdown_ms?: number | null;
         };
         /**
+         * BugContext
+         * @description Sent automatically with a bug report, and listed to the person on
+         *     the form before they send it.
+         */
+        BugContext: {
+            /** Api Mode */
+            api_mode: string;
+            /** App Version */
+            app_version: string;
+            /** Theme */
+            theme: string;
+            /** User Agent */
+            user_agent: string;
+            /** Viewport */
+            viewport: string;
+        };
+        /**
+         * BugReportCreate
+         * @description Body for POST /bug-reports, signed in or out.
+         */
+        BugReportCreate: {
+            context: components["schemas"]["BugContext"];
+            /** Description */
+            description: string;
+            /** Page */
+            page?: string | null;
+        };
+        /**
          * ClipCreate
          * @description Body for POST /clips. duration_ms/source_fps are read off the
          *     browser's <video> element, so a draft has something to show. The worker
          *     overwrites both with ffprobe's values (6a).
          */
         ClipCreate: {
+            /**
+             * Analyze
+             * @default true
+             */
+            analyze: boolean;
             /** Content Type */
             content_type: string;
             /** Duration Ms */
@@ -767,6 +993,11 @@ export interface components {
         /** ClipOut */
         ClipOut: {
             analysis?: components["schemas"]["AnalysisOut"] | null;
+            /**
+             * Analyze
+             * @default true
+             */
+            analyze: boolean;
             author: components["schemas"]["UserBrief"];
             /**
              * Comment Count
@@ -950,6 +1181,17 @@ export interface components {
          * @enum {string}
          */
         JoinPolicy: "open" | "request" | "invite_only";
+        /**
+         * MyJoinRequestOut
+         * @description GET /teams/{slug}/join-requests/mine: whether the caller has asked to
+         *     join (`TeamOut` doesn't say), so "Request sent" survives a reload.
+         */
+        MyJoinRequestOut: {
+            /** Created At */
+            created_at?: string | null;
+            /** Pending */
+            pending: boolean;
+        };
         /** ProfileOut */
         ProfileOut: {
             /** Bearings */
@@ -987,6 +1229,19 @@ export interface components {
             /** Wheels */
             wheels?: string | null;
         };
+        /** ReportCreated */
+        ReportCreated: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
         /**
          * SkateStyle
          * @enum {string}
@@ -999,13 +1254,15 @@ export interface components {
         Stance: "regular" | "goofy";
         /**
          * TagTricksRequest
-         * @description Body for POST /clips/{id}/tricks. Plain names for now — get-or-create
-         *     against `tricks`, no fuzzy/alias matching yet (see docs/components/
-         *     data-model.md's design notes).
+         * @description Body for POST /clips/{id}/tricks, replacing any earlier tags, in line
+         *     order. Each item is a plain name or a `TrickTagIn`; an analyzed trick
+         *     left out (one the skater says isn't a trick) simply isn't tagged.
+         *     Names are get-or-create against `tricks`, no fuzzy/alias matching yet
+         *     (see docs/components/data-model.md's design notes).
          */
         TagTricksRequest: {
             /** Tricks */
-            tricks: string[];
+            tricks: (string | components["schemas"]["TrickTagIn"])[];
         };
         /**
          * TeamBrief
@@ -1190,6 +1447,8 @@ export interface components {
         };
         /** TrickOut */
         TrickOut: {
+            /** Analysis Index */
+            analysis_index?: number | null;
             /** Canonical Name */
             canonical_name: string;
             /**
@@ -1197,6 +1456,16 @@ export interface components {
              * Format: uuid
              */
             id: string;
+        };
+        /**
+         * TrickTagIn
+         * @description One tag: a trick name, and which analyzed trick it names.
+         */
+        TrickTagIn: {
+            /** Analysis Index */
+            analysis_index?: number | null;
+            /** Name */
+            name: string;
         };
         /**
          * UserBrief
@@ -1345,6 +1614,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    report_bug_bug_reports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BugReportCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_clip_clips_post: {
         parameters: {
             query?: never;
@@ -1396,6 +1698,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClipOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    report_analysis_clips__clip_id__analysis_reports_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                clip_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AnalysisReportCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCreated"];
                 };
             };
             /** @description Validation Error */
@@ -2055,6 +2392,40 @@ export interface operations {
             };
         };
     };
+    list_team_clips_teams__slug__clips_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     follow_team_teams__slug__follow_post: {
         parameters: {
             query?: never;
@@ -2290,6 +2661,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TeamJoinRequestOut"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_my_join_request_teams__slug__join_requests_mine_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MyJoinRequestOut"];
                 };
             };
             /** @description Validation Error */
@@ -2548,6 +2950,38 @@ export interface operations {
             };
         };
     };
+    list_my_drafts_users_me_drafts_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedPage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_profile_users_me_profile_patch: {
         parameters: {
             query?: never;
@@ -2581,6 +3015,26 @@ export interface operations {
             };
         };
     };
+    list_my_teams_users_me_teams_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TeamOut"][];
+                };
+            };
+        };
+    };
     read_public_users__username__get: {
         parameters: {
             query?: never;
@@ -2599,6 +3053,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_user_clips_users__username__clips_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
+            header?: never;
+            path: {
+                username: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedPage"];
                 };
             };
             /** @description Validation Error */

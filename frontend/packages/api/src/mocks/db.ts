@@ -1,7 +1,8 @@
 // In-memory state behind the mock API, so likes, follows, comments,
 // uploads, teams and profile edits stick for the session (and reset
 // between tests). Also simulates the worker: a completed upload moves
-// queued → analyzing → analyzed / unanalyzable on a timer.
+// queued → analyzing → analyzed / unanalyzable on a timer (with analysis
+// off, the same stages with no analysis at the end).
 import type { ClipOut, CommentOut, UserBrief, UserMe, UserPublic } from '../types.ts';
 import {
   brief,
@@ -28,8 +29,6 @@ const STAGE_MS = isTest ? { queued: 0, analyzing: 0 } : { queued: 1500, analyzin
 interface Upload {
   /** The PUT to the presigned URL arrived. */
   uploaded: boolean;
-  /** The proposed POST /clips `analyze` flag. */
-  analyze: boolean;
   completedAt?: number;
   outcome: MockOutcome;
 }
@@ -42,7 +41,7 @@ export interface MockState {
   uploads: Map<string, Upload>;
   /** What the next completed upload's analysis turns out to be. */
   nextOutcome: MockOutcome;
-  /** Reports received (PROPOSED routes), newest last. Tests read these. */
+  /** Reports received, newest last. Tests read these. */
   reports: { kind: 'analysis' | 'bug'; id: string; clip_id?: string; body: unknown; created_at: string }[];
 }
 
@@ -105,6 +104,11 @@ function advance(c: ClipOut): void {
     c.status = 'analyzing';
     return;
   }
+  if (!c.analyze) {
+    // Posted without analysis: the worker only prepares the video.
+    c.status = 'analyzed';
+    return;
+  }
   const analysis = simulatedAnalysis(up.outcome);
   c.analysis = analysis;
   c.steeze_score = scoreOf(analysis);
@@ -144,7 +148,7 @@ export function feedClips(): ClipOut[] {
     .sort(newestFirst);
 }
 
-/** Your clips that aren't published yet (PROPOSED GET /users/me/drafts). */
+/** Your clips that aren't published yet (GET /users/me/drafts). */
 export function draftClips(): ClipOut[] {
   return state.clips
     .filter((c) => c.author.username === ME_USERNAME && c.status !== 'published')
